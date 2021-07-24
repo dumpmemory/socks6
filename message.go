@@ -35,7 +35,6 @@ type Endpoint struct {
 func (e Endpoint) Network() string {
 	return e.NetString
 }
-
 func (e Endpoint) String() string {
 	var s string
 	if e.AddressType == AF_DomainName {
@@ -65,6 +64,8 @@ func (e Endpoint) AddressSize() int {
 		return -1
 	}
 }
+
+// when padding domain name: `12 example.com 0`, not `11 example.com 0`
 func (e Endpoint) Padding() int {
 	if e.AddressType == AF_DomainName {
 		slen := e.Address[0] + 1
@@ -103,6 +104,23 @@ type Request struct {
 	RequestToken uint32
 	UseToken     bool
 	TokenToSpend uint32
+}
+
+func (r *Request) BufferSize(buf []byte) int {
+	if len(buf) < 12 {
+		return 12
+	}
+	lOption := binary.BigEndian.Uint16(buf[2:])
+	lAddr := 4
+	switch buf[7] {
+	case AF_DomainName:
+		lAddr = int(buf[8]) + 1
+	case AF_IPv4:
+		lAddr = 4
+	case AF_IPv6:
+		lAddr = 16
+	}
+	return int(lOption) + lAddr + 8
 }
 
 func (r *Request) Serialize(buf []byte) (int, error) {
@@ -195,6 +213,7 @@ func (r *Request) Deserialize(buf []byte) (int, error) {
 		if op.Length() > lOption {
 			break
 		}
+		lOption -= op.Length()
 		pOption += int(op.Length())
 		switch op.Kind() {
 		case K_STACK:
@@ -320,7 +339,37 @@ func GroupStackOption(c, r StackOptionData) (StackOptionData, StackOptionData, S
 	return cc, rr, tt
 }
 func (s *StackOptionData) ApplyOption(o StackOption) {
-
+	switch o.Level() {
+	case LV_IP:
+		switch o.Code() {
+		case C_TOS:
+			*s.TOS = TOSOption(o).TOS()
+		case C_HAPPY_EYEBALL:
+			*s.HappyEyeball = HappyEyeballOption(o).Availability()
+		case C_TTL:
+			*s.TTL = TTLOption(o).TTL()
+		case C_NO_FRAGMENTATION:
+			*s.DF = NoFragmentationOption(o).Availability()
+		}
+	case LV_TCP:
+		switch o.Code() {
+		case C_TFO:
+			*s.TFO = TFOOption(o).PayloadSize()
+		case C_MULTIPATH:
+			*s.MPTCP = MultipathOption(o).Availability()
+		case C_BACKLOG:
+			*s.Backlog = BacklogOption(o).Backlog()
+		}
+	case LV_UDP:
+		switch o.Code() {
+		case C_UDP_ERROR:
+			*s.UDPError = UDPErrorOption(o).Availability()
+		case C_PORT_PARITY:
+			p := PortParityOption(o)
+			*s.Parity = p.Parity()
+			*s.Reserve = p.Reserve()
+		}
+	}
 }
 func (s StackOptionData) Serialize(buf []byte, leg byte) (int, error) {
 	p := 0
@@ -376,7 +425,7 @@ type AuthenticationReply struct {
 	Type byte
 	// options
 	SelectedMethod byte
-	MethodData     []*AuthenticationDataOption
+	MethodData     map[byte][]byte
 
 	InSession    bool
 	SessionValid bool
@@ -385,6 +434,84 @@ type AuthenticationReply struct {
 	NewWindowSize uint32
 	UsingToken    bool
 	TokenValid    bool
+}
+
+func (a *AuthenticationReply) BufferSize(buf []byte) int {
+	if len(buf) < 4 {
+		return 4
+	}
+	return int(binary.BigEndian.Uint16(buf[2:]) + 4)
+}
+func (a *AuthenticationReply) Serialize(buf []byte) (int, error) {
+	buf[0] = 6
+	buf[1] = a.Type
+	pOption := 4
+	if a.SelectedMethod != A_NONE {
+		o := AuthenticationMethodSelectionOptionCtor(buf[pOption:], a.SelectedMethod)
+		pOption += int(Option(o).Length())
+	}
+	for m, d := range a.MethodData {
+		o := AuthenticationDataOptionCtor(buf[pOption:], m, uint16(len(d)))
+		pOption += int(Option(o).Length())
+		copy(o[4:], d)
+	}
+	if a.InSession {
+		if a.SessionValid {
+			SessionOKOptionCtor(buf[pOption:])
+		} else {
+			SessionInvalidOptionCtor(buf[pOption:])
+		}
+		pOption += 4
+		if a.NewWindowSize > 0 {
+			o := IdempotenceWindowOptionCtor(buf[pOption:], a.NewWindowBase, a.NewWindowSize)
+			pOption += int(Option(o).Length())
+		}
+		if a.UsingToken {
+			if a.TokenValid {
+				IdempotenceAcceptedOptionCtor(buf[pOption:])
+			} else {
+				IdempotenceRejectedOptionCtor(buf[pOption:])
+			}
+			pOption += 4
+		}
+	}
+	binary.BigEndian.PutUint16(buf[2:], uint16(pOption-4))
+	return pOption, nil
+}
+func (a *AuthenticationReply) Deserialize(buf []byte) (int, error) {
+	if buf[0] != 6 {
+		return 0, errors.New(ERR_MAGIC)
+	}
+	a.Type = buf[1]
+	lOption := binary.BigEndian.Uint16(buf[2:])
+	pOption := 4
+	for lOption >= 4 {
+		b := buf[pOption:]
+		op := Option(b)
+		pOption += int(op.Length())
+		lOption -= op.Length()
+		switch op.Kind() {
+		case K_AUTH_DATA:
+			d := AuthenticationDataOption(b)
+			a.MethodData[d.Method()] = d.AuthenticationData()
+		case K_AUTH_SELECTION:
+			s := AuthenticationMethodSelectionOption(b)
+			a.SelectedMethod = s.Method()
+		case K_SESSION_OK:
+			a.SessionValid = true
+		case K_SESSION_INVALID:
+			a.SessionValid = false
+		case K_IDEMPOTENCE_ACCEPTED:
+			a.TokenValid = true
+		case K_IDEMPOTENCE_REJECTED:
+			a.TokenValid = false
+		case K_IDEMPOTENCE_WINDOW:
+			i := IdempotenceWindowOption(b)
+			a.NewWindowBase = i.WindowBase()
+			a.NewWindowSize = i.WindowSize()
+		}
+	}
+	return int(lOption) + 4, nil
 }
 
 const (

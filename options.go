@@ -30,7 +30,7 @@ type Option []byte
 func OptionCtor(o Option, kind, length uint16) Option {
 	binary.BigEndian.PutUint16(o, kind)
 	binary.BigEndian.PutUint16(o[2:], length)
-	return o
+	return o[:length]
 }
 func (o Option) Kind() uint16 {
 	return binary.BigEndian.Uint16(o)
@@ -39,7 +39,7 @@ func (o Option) Length() uint16 {
 	return binary.BigEndian.Uint16(o[2:])
 }
 func (o Option) OptionData() []byte {
-	return o[4:]
+	return o[4:o.Length()]
 }
 func (o Option) Validate() error {
 	if len(o) < int(o.Length()) || o.Length() < 4 {
@@ -95,7 +95,7 @@ func (o StackOption) Code() byte {
 	return o[5]
 }
 func (o StackOption) StackOptionData() []byte {
-	return o[6:]
+	return o[6:Option(o).Length()]
 }
 func (o StackOption) Validate() error {
 	if err := Option(o).Validate(); err != nil {
@@ -554,7 +554,7 @@ func (o AuthenticationDataOption) Method() byte {
 	return o[4]
 }
 func (o AuthenticationDataOption) AuthenticationData() []byte {
-	return o[5:]
+	return o[5:Option(o).Length()]
 }
 func (o AuthenticationDataOption) Validate() error {
 	if err := Option(o).Validate(); err != nil {
@@ -595,7 +595,7 @@ func SessionIDOptionCtor(o Option, id []byte) SessionIDOption {
 	return SessionIDOption(o)
 }
 func (o SessionIDOption) ID() []byte {
-	return o[4:]
+	return o[4:Option(o).Length()]
 }
 func (o SessionIDOption) Validate() error {
 	if err := Option(o).Validate(); err != nil {

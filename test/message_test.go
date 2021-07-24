@@ -31,3 +31,11 @@ func TestOption(t *testing.T) {
 		t.Fail()
 	}
 }
+func TestRequest(t *testing.T) {
+	req := []byte{6, 1, 0, 0, 0, 80, 0, 1, 127, 0, 0, 1}
+	r := socks6.Request{}
+	r.Deserialize(req)
+	if r.Endpoint.String() != "127.0.0.1:80" {
+		t.Fail()
+	}
+}
