@@ -125,6 +125,7 @@ const (
 )
 
 type Request struct {
+	Version     byte
 	CommandCode byte
 	Endpoint    Endpoint
 
