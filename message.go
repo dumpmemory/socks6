@@ -1,12 +1,11 @@
 package socks6
 
 import (
-	"encoding"
+	"bytes"
 	"encoding/binary"
 	"errors"
 	"net"
 	"strconv"
-	"strings"
 )
 
 const (
@@ -20,8 +19,9 @@ const (
 )
 
 type Message interface {
-	encoding.BinaryMarshaler
-	encoding.BinaryUnmarshaler
+	//encoding.BinaryMarshaler
+	//encoding.BinaryUnmarshaler
+
 }
 
 type Endpoint struct {
@@ -37,41 +37,79 @@ func (e Endpoint) Network() string {
 }
 func (e Endpoint) String() string {
 	var s string
-	if e.AddressType == AF_DomainName {
-		l := e.Address[0]
-		s = string(e.Address[1 : 1+l])
-		s = strings.Trim(s, string([]byte{0}))
-	} else if e.AddressType == AF_IPv4 {
+	switch e.AddressType {
+	case AF_DomainName:
+		s = string(e.Address)
+	case AF_IPv4:
 		ip := net.IP(e.Address[:4])
 		s = ip.String()
-	} else if e.AddressType == AF_IPv6 {
+	case AF_IPv6:
 		ip := net.IP(e.Address[:16])
 		s = "[" + ip.String() + "]"
-	} else {
-		return ""
+	default:
+		s = ""
 	}
 	return s + ":" + strconv.FormatInt(int64(e.Port), 10)
 }
-func (e Endpoint) AddressSize() int {
-	if e.AddressType == AF_DomainName {
-		slen := e.Address[0] + 1
-		return int((slen/4 + 1) * 4)
-	} else if e.AddressType == AF_IPv4 {
-		return 4
-	} else if e.AddressType == AF_IPv6 {
-		return 16
-	} else {
-		return -1
+func (e *Endpoint) DeserializeAddress(b []byte) (int, error) {
+	switch e.AddressType {
+	case AF_IPv4:
+		if len(b) < 4 {
+			return 0, errors.New(ERR_LENGTH)
+		}
+		e.Address = b
+		return 4, nil
+	case AF_IPv6:
+		if len(b) < 16 {
+			return 0, errors.New(ERR_LENGTH)
+		}
+		e.Address = b
+		return 16, nil
+	case AF_DomainName:
+		if len(b) < 2 {
+			return 0, errors.New(ERR_LENGTH)
+		}
+		al := b[0]
+		if len(b) < int(al)+1 {
+			return 0, errors.New(ERR_LENGTH)
+		}
+		e.Address = bytes.TrimRight(b[1:al+1], "\u0000")
+		return int(al) + 1, nil
+	default:
+		return 0, errors.New(ERR_ENUM)
 	}
 }
-
-// when padding domain name: `12 example.com 0`, not `11 example.com 0`
-func (e Endpoint) Padding() int {
-	if e.AddressType == AF_DomainName {
-		slen := e.Address[0] + 1
-		return int(slen % 4)
+func (e Endpoint) SerializeAddress(b []byte) (int, error) {
+	l := 4
+	switch e.AddressType {
+	case AF_IPv4:
+		l = 4
+	case AF_IPv6:
+		l = 16
+	case AF_DomainName:
+		l = len(e.Address) + 1
 	}
-	return 0
+	if len(b) < l {
+		return 0, errors.New(ERR_LENGTH)
+	}
+	switch e.AddressType {
+	case AF_IPv4, AF_IPv6:
+		copy(b, e.Address)
+		return l, nil
+	case AF_DomainName:
+		p := l % 4
+		if len(b) < l+p {
+			return 0, errors.New(ERR_LENGTH)
+		}
+		for i := 0; i < p; i++ {
+			b[l+i] = 0
+		}
+		copy(b, e.Address)
+		return l + p, nil
+	default:
+		return 0, errors.New(ERR_MAGIC)
+	}
+
 }
 
 const (
@@ -120,6 +158,7 @@ func (r *Request) BufferSize(buf []byte) int {
 	case AF_IPv6:
 		lAddr = 16
 	}
+	// TODO: initial data
 	return int(lOption) + lAddr + 8
 }
 
@@ -130,7 +169,11 @@ func (r *Request) Serialize(buf []byte) (int, error) {
 	binary.BigEndian.PutUint16(buf[4:], r.Endpoint.Port)
 	buf[6] = 0
 	buf[7] = r.Endpoint.AddressType
-	hLen := r.Endpoint.AddressSize() + 8
+	hLen, err := r.Endpoint.SerializeAddress(buf[8:])
+	if err != nil {
+		return 0, err
+	}
+	hLen += 8
 	pOption := hLen
 
 	if len(r.Methods) > 0 {
@@ -202,8 +245,11 @@ func (r *Request) Deserialize(buf []byte) (int, error) {
 	r.Endpoint = Endpoint{}
 	r.Endpoint.Port = binary.BigEndian.Uint16(buf[4:])
 	r.Endpoint.AddressType = buf[7]
-	r.Endpoint.Address = buf[8:]
-	pOption := r.Endpoint.AddressSize() + 8
+	pOption, err := r.Endpoint.DeserializeAddress(buf[8:])
+	if err != nil {
+		return 0, err
+	}
+	pOption += 8
 	r.ClientLegStackOption = StackOptionData{}
 	r.RemoteLegStackOption = StackOptionData{}
 	r.MethodData = map[byte][]byte{}
@@ -247,7 +293,7 @@ func (r *Request) Deserialize(buf []byte) (int, error) {
 	if lInitialData > 0 {
 		r.InitialData = buf[pOption : pOption+lInitialData]
 	}
-	return 0, nil
+	return pOption, nil
 }
 
 type StackOptionData struct {

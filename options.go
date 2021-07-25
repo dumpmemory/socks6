@@ -27,10 +27,13 @@ const (
 
 type Option []byte
 
-func OptionCtor(o Option, kind, length uint16) Option {
+func OptionCtor(o Option, kind, length uint16) (Option, error) {
+	if len(o) < int(length) || length < 4 {
+		return nil, errors.New(ERR_LENGTH)
+	}
 	binary.BigEndian.PutUint16(o, kind)
 	binary.BigEndian.PutUint16(o[2:], length)
-	return o[:length]
+	return o[:length], nil
 }
 func (o Option) Kind() uint16 {
 	return binary.BigEndian.Uint16(o)
@@ -42,7 +45,7 @@ func (o Option) OptionData() []byte {
 	return o[4:o.Length()]
 }
 func (o Option) Validate() error {
-	if len(o) < int(o.Length()) || o.Length() < 4 {
+	if len(o) < 4 || len(o) < int(o.Length()) {
 		return errors.New(ERR_LENGTH)
 	}
 	return nil
