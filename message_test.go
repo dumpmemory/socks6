@@ -49,7 +49,7 @@ func TestRequest(t *testing.T) {
 
 func TestEndpoint(t *testing.T) {
 	ep := socks6.Endpoint{
-		AddressType: socks6.AF_DomainName,
+		AddressType: socks6.AddressTypeDomainName,
 		Port:        80,
 		NetString:   "tcp",
 	}

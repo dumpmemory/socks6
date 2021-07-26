@@ -105,13 +105,21 @@ type DefaultAuthenticator struct {
 	sessions       map[uint64]ClientID // TODO: id size is not always 8B,session timeout
 }
 
+// todo: authenticate return this one instead
+type AuthenticationResult struct {
+	Success        bool
+	SelectedMethod byte
+	ClientID       ClientID
+	SessionID      []byte
+}
+
 func (d DefaultAuthenticator) Authenticate(req socks6.Request) (bool, socks6.AuthenticationReply, byte, ClientID) {
 	if !d.DisableSession && req.SessionID != nil {
 		sid64 := binary.BigEndian.Uint64(req.SessionID)
 		if d.sessions[sid64] == "" || req.RequestTeardown {
 			// fail fast
 			sar := socks6.AuthenticationReply{
-				Type:         socks6.AUTH_FAIL,
+				Type:         socks6.AuthenticationReplyFail,
 				InSession:    true,
 				SessionValid: false,
 			}
@@ -121,7 +129,7 @@ func (d DefaultAuthenticator) Authenticate(req socks6.Request) (bool, socks6.Aut
 	}
 
 	sar := socks6.AuthenticationReply{
-		Type: socks6.AUTH_SUCCESS,
+		Type: socks6.AuthenticationReplySuccess,
 	}
 	return true, sar, 0, ""
 }

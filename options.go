@@ -8,21 +8,21 @@ import (
 
 const (
 	_ uint16 = iota
-	K_STACK
-	K_AUTH_ADVERTISEMENT
-	K_AUTH_SELECTION
-	K_AUTH_DATA
-	K_SESSION_REQUEST
-	K_SESSION_ID
+	OptionKindStack
+	OptionKindAuthenticationMethodAdvertisement
+	OptionKindAuthenticationMethodSelection
+	OptionKindAuthenticationMethodData
+	OptionKindSessionRequest
+	OptionKindSessionID
 	_
-	K_SESSION_OK
-	K_SESSION_INVALID
-	K_SESSION_TEARDOWN
-	K_TOKEN_REQUEST
-	K_IDEMPOTENCE_WINDOW
-	K_IDEMPOTENCE_EXPENDITURE
-	K_IDEMPOTENCE_ACCEPTED
-	K_IDEMPOTENCE_REJECTED
+	OptionKindSessionOK
+	OptionKindSessionInvalid
+	OptionKindSessionTeardown
+	OptionKindTokenRequest
+	OptionKindIdempotenceWindow
+	OptionKindIdempotenceExpenditure
+	OptionKindIdempotenceAccepted
+	OptionKindIdempotenceRejected
 )
 
 type Option []byte
@@ -52,37 +52,37 @@ func (o Option) Validate() error {
 }
 
 const (
-	LEG_CLIENT_PROXY byte = 1
-	LEG_PROXY_REMOTE byte = 2
-	LEG_BOTH         byte = 3
+	StackOptionLegClientProxy byte = 1
+	StackOptionLegProxyRemote byte = 2
+	StackOptionLegBoth        byte = 3
 )
 const (
 	_ byte = iota
-	LV_IP
-	LV_IPv4
-	LV_IPv6
-	LV_TCP
-	LV_UDP
+	StackOptionLevelIP
+	StackOptionLevelIPv4
+	StackOptionLevelIPv6
+	StackOptionLevelTCP
+	StackOptionLevelUDP
 )
 const (
 	// lv1
-	C_TOS              byte = 1
-	C_HAPPY_EYEBALL    byte = 2
-	C_TTL              byte = 3
-	C_NO_FRAGMENTATION byte = 4
+	StackOptionCodeIPTOS          byte = 1
+	StackOptionCodeIPHappyEyeball byte = 2
+	StackOptionCodeIPTTL          byte = 3
+	StackOptionCodeIPDF           byte = 4
 	// lv4
-	C_TFO       byte = 1
-	C_MULTIPATH byte = 2
-	C_BACKLOG   byte = 3
+	StackOptionCodeTCPTFO       byte = 1
+	StackOptionCodeTCPMultipath byte = 2
+	StackOptionCodeTCPBacklog   byte = 3
 	//lv5
-	C_UDP_ERROR   byte = 1
-	C_PORT_PARITY byte = 2
+	StackOptionCodeUDPUDPError   byte = 1
+	StackOptionCodeUDPPortParity byte = 2
 )
 
 type StackOption Option
 
 func StackOptionCtor(o Option, leg, level, code byte, length uint16) StackOption {
-	OptionCtor(o, K_STACK, length)
+	OptionCtor(o, OptionKindStack, length)
 	o4 := (leg << 6 & 0b11000000) | (level & 0b00111111)
 	o[4] = o4
 	o[5] = code
@@ -117,7 +117,7 @@ func (o StackOption) Validate() error {
 type TOSOption StackOption
 
 func TOSOptionCtor(o Option, leg, tos byte) TOSOption {
-	StackOptionCtor(o, leg, LV_IP, C_TOS, 8)
+	StackOptionCtor(o, leg, StackOptionLevelIP, StackOptionCodeIPTOS, 8)
 	o[6] = tos
 	return TOSOption(o)
 }
@@ -132,7 +132,7 @@ func (o TOSOption) Validate() error {
 		return errors.New(ERR_LENGTH)
 	}
 	s := StackOption(o)
-	if s.Code() != C_TOS || s.Level() != LV_IP {
+	if s.Code() != StackOptionCodeIPTOS || s.Level() != StackOptionLevelIP {
 		return errors.New(ERR_TYPE)
 	}
 	if o[7] != 0 {
@@ -142,25 +142,25 @@ func (o TOSOption) Validate() error {
 }
 
 const (
-	HAPPY_EYEBALL_NO  = 0x01
-	HAPPY_EYEBALL_YES = 0x02
+	stackHappyEyeballOptionNo  = 0x01
+	stackHappyEyeballOptionYes = 0x02
 )
 
 type HappyEyeballOption StackOption
 
 func HappyEyeballOptionCtor(o Option, availability bool) HappyEyeballOption {
-	StackOptionCtor(o, LEG_PROXY_REMOTE, LV_IP, C_HAPPY_EYEBALL, 8)
+	StackOptionCtor(o, StackOptionLegProxyRemote, StackOptionLevelIP, StackOptionCodeIPHappyEyeball, 8)
 	if availability {
-		o[6] = HAPPY_EYEBALL_YES
+		o[6] = stackHappyEyeballOptionYes
 	} else {
-		o[6] = HAPPY_EYEBALL_NO
+		o[6] = stackHappyEyeballOptionNo
 	}
 	return HappyEyeballOption(o)
 }
 func (o HappyEyeballOption) Availability() bool {
-	if o[6] == HAPPY_EYEBALL_YES {
+	if o[6] == stackHappyEyeballOptionYes {
 		return true
-	} else if o[6] == HAPPY_EYEBALL_NO {
+	} else if o[6] == stackHappyEyeballOptionNo {
 		return false
 	}
 	log.Printf("Invalid happy eyeball availability %d, treat as false", o[6])
@@ -174,13 +174,13 @@ func (o HappyEyeballOption) Validate() error {
 		return errors.New(ERR_LENGTH)
 	}
 	s := StackOption(o)
-	if s.Code() != C_HAPPY_EYEBALL || s.Level() != LV_IP {
+	if s.Code() != StackOptionCodeIPHappyEyeball || s.Level() != StackOptionLevelIP {
 		return errors.New(ERR_TYPE)
 	}
-	if s.Leg() != LEG_PROXY_REMOTE {
+	if s.Leg() != StackOptionLegProxyRemote {
 		return errors.New(ERR_LEG)
 	}
-	if o[6] != HAPPY_EYEBALL_YES && o[6] != HAPPY_EYEBALL_NO {
+	if o[6] != stackHappyEyeballOptionYes && o[6] != stackHappyEyeballOptionNo {
 		return errors.New(ERR_ENUM)
 	}
 	if o[7] != 0 {
@@ -192,7 +192,7 @@ func (o HappyEyeballOption) Validate() error {
 type TTLOption StackOption
 
 func TTLOptionCtor(o Option, leg, ttl byte) TTLOption {
-	StackOptionCtor(o, leg, LV_IP, C_TTL, 8)
+	StackOptionCtor(o, leg, StackOptionLevelIP, StackOptionCodeIPTTL, 8)
 	o[6] = ttl
 	return TTLOption(o)
 }
@@ -207,7 +207,7 @@ func (o TTLOption) Validate() error {
 		return errors.New(ERR_LENGTH)
 	}
 	s := StackOption(o)
-	if s.Code() != C_TTL || s.Level() != LV_IP {
+	if s.Code() != StackOptionCodeIPTTL || s.Level() != StackOptionLevelIP {
 		return errors.New(ERR_TYPE)
 	}
 	if o[7] != 0 {
@@ -217,25 +217,25 @@ func (o TTLOption) Validate() error {
 }
 
 const (
-	NO_FRAGMENTATION_NO  = 0x01
-	NO_FRAGMENTATION_YES = 0x02
+	stackDFOptionNo  = 0x01
+	stackDFOptionYes = 0x02
 )
 
 type NoFragmentationOption StackOption
 
 func NoFragmentationOptionCtor(o Option, leg byte, availability bool) NoFragmentationOption {
-	StackOptionCtor(o, leg, LV_IP, C_NO_FRAGMENTATION, 8)
+	StackOptionCtor(o, leg, StackOptionLevelIP, StackOptionCodeIPDF, 8)
 	if availability {
-		o[6] = NO_FRAGMENTATION_YES
+		o[6] = stackDFOptionYes
 	} else {
-		o[6] = NO_FRAGMENTATION_NO
+		o[6] = stackDFOptionNo
 	}
 	return NoFragmentationOption(o)
 }
 func (o NoFragmentationOption) Availability() bool {
-	if o[6] == NO_FRAGMENTATION_YES {
+	if o[6] == stackDFOptionYes {
 		return true
-	} else if o[6] == NO_FRAGMENTATION_NO {
+	} else if o[6] == stackDFOptionNo {
 		return false
 	}
 	log.Printf("Invalid no fragmentation availability %d, treat as false", o[6])
@@ -249,10 +249,10 @@ func (o NoFragmentationOption) Validate() error {
 		return errors.New(ERR_LENGTH)
 	}
 	s := StackOption(o)
-	if s.Code() != C_NO_FRAGMENTATION || s.Level() != LV_IP {
+	if s.Code() != StackOptionCodeIPDF || s.Level() != StackOptionLevelIP {
 		return errors.New(ERR_TYPE)
 	}
-	if o[6] != NO_FRAGMENTATION_YES && o[6] != NO_FRAGMENTATION_NO {
+	if o[6] != stackDFOptionYes && o[6] != stackDFOptionNo {
 		return errors.New(ERR_ENUM)
 	}
 	if o[7] != 0 {
@@ -263,9 +263,9 @@ func (o NoFragmentationOption) Validate() error {
 
 type TFOOption StackOption
 
-func TFOOptionCtor(o Option, payload_size uint16) TFOOption {
-	StackOptionCtor(o, LEG_PROXY_REMOTE, LV_TCP, C_TFO, 8)
-	binary.BigEndian.PutUint16(o[6:], payload_size)
+func TFOOptionCtor(o Option, payloadSize uint16) TFOOption {
+	StackOptionCtor(o, StackOptionLegProxyRemote, StackOptionLevelTCP, StackOptionCodeTCPTFO, 8)
+	binary.BigEndian.PutUint16(o[6:], payloadSize)
 	return TFOOption(o)
 }
 func (o TFOOption) PayloadSize() uint16 {
@@ -279,35 +279,35 @@ func (o TFOOption) Validate() error {
 		return errors.New(ERR_LENGTH)
 	}
 	s := StackOption(o)
-	if s.Code() != C_TFO || s.Level() != LV_TCP {
+	if s.Code() != StackOptionCodeTCPTFO || s.Level() != StackOptionLevelTCP {
 		return errors.New(ERR_TYPE)
 	}
-	if s.Leg() != LEG_PROXY_REMOTE {
+	if s.Leg() != StackOptionLegProxyRemote {
 		return errors.New(ERR_LEG)
 	}
 	return nil
 }
 
 const (
-	MULTIPATH_NO  = 0x01
-	MULTIPATH_YES = 0x02
+	stackMultipathOptionNo  = 0x01
+	stackMultipathOptionYes = 0x02
 )
 
 type MultipathOption StackOption
 
 func MultipathOptionCtor(o Option, availability bool) MultipathOption {
-	StackOptionCtor(o, LEG_PROXY_REMOTE, LV_TCP, C_MULTIPATH, 8)
+	StackOptionCtor(o, StackOptionLegProxyRemote, StackOptionLevelTCP, StackOptionCodeTCPMultipath, 8)
 	if availability {
-		o[6] = MULTIPATH_YES
+		o[6] = stackMultipathOptionYes
 	} else {
-		o[6] = MULTIPATH_NO
+		o[6] = stackMultipathOptionNo
 	}
 	return MultipathOption(o)
 }
 func (o MultipathOption) Availability() bool {
-	if o[6] == MULTIPATH_YES {
+	if o[6] == stackMultipathOptionYes {
 		return true
-	} else if o[6] == MULTIPATH_NO {
+	} else if o[6] == stackMultipathOptionNo {
 		return false
 	}
 	log.Printf("Invalid multipath availability %d, treat as false", o[6])
@@ -321,13 +321,13 @@ func (o MultipathOption) Validate() error {
 		return errors.New(ERR_LENGTH)
 	}
 	s := StackOption(o)
-	if s.Code() != C_MULTIPATH || s.Level() != LV_TCP {
+	if s.Code() != StackOptionCodeTCPMultipath || s.Level() != StackOptionLevelTCP {
 		return errors.New(ERR_TYPE)
 	}
-	if s.Leg() != LEG_PROXY_REMOTE {
+	if s.Leg() != StackOptionLegProxyRemote {
 		return errors.New(ERR_LEG)
 	}
-	if o[6] != MULTIPATH_YES && o[6] != MULTIPATH_NO {
+	if o[6] != stackMultipathOptionYes && o[6] != stackMultipathOptionNo {
 		return errors.New(ERR_ENUM)
 	}
 	if o[7] != 0 {
@@ -339,7 +339,7 @@ func (o MultipathOption) Validate() error {
 type BacklogOption StackOption
 
 func BacklogOptionCtor(o Option, backlog uint16) BacklogOption {
-	StackOptionCtor(o, LEG_PROXY_REMOTE, LV_TCP, C_BACKLOG, 8)
+	StackOptionCtor(o, StackOptionLegProxyRemote, StackOptionLevelTCP, StackOptionCodeTCPBacklog, 8)
 	binary.BigEndian.PutUint16(o[6:], backlog)
 	return BacklogOption(o)
 }
@@ -354,35 +354,35 @@ func (o BacklogOption) Validate() error {
 		return errors.New(ERR_LENGTH)
 	}
 	s := StackOption(o)
-	if s.Code() != C_BACKLOG || s.Level() != LV_TCP {
+	if s.Code() != StackOptionCodeTCPBacklog || s.Level() != StackOptionLevelTCP {
 		return errors.New(ERR_TYPE)
 	}
-	if s.Leg() != LEG_PROXY_REMOTE {
+	if s.Leg() != StackOptionLegProxyRemote {
 		return errors.New(ERR_LEG)
 	}
 	return nil
 }
 
 const (
-	UDP_ERROR_NO  = 0x01
-	UDP_ERROR_YES = 0x02
+	stackUDPErrorOptionNo  = 0x01
+	stackUDPErrorOptionYes = 0x02
 )
 
 type UDPErrorOption StackOption
 
 func UDPErrorOptionCtor(o Option, availability bool) UDPErrorOption {
-	StackOptionCtor(o, LEG_PROXY_REMOTE, LV_UDP, C_UDP_ERROR, 8)
+	StackOptionCtor(o, StackOptionLegProxyRemote, StackOptionLevelUDP, StackOptionCodeUDPUDPError, 8)
 	if availability {
-		o[6] = UDP_ERROR_YES
+		o[6] = stackUDPErrorOptionYes
 	} else {
-		o[6] = UDP_ERROR_NO
+		o[6] = stackUDPErrorOptionNo
 	}
 	return UDPErrorOption(o)
 }
 func (o UDPErrorOption) Availability() bool {
-	if o[6] == UDP_ERROR_YES {
+	if o[6] == stackUDPErrorOptionYes {
 		return true
-	} else if o[6] == UDP_ERROR_NO {
+	} else if o[6] == stackUDPErrorOptionNo {
 		return false
 	}
 	log.Printf("Invalid udp error availability %d, treat as false", o[6])
@@ -396,13 +396,13 @@ func (o UDPErrorOption) Validate() error {
 		return errors.New(ERR_LENGTH)
 	}
 	s := StackOption(o)
-	if s.Code() != C_UDP_ERROR || s.Level() != LV_UDP {
+	if s.Code() != StackOptionCodeUDPUDPError || s.Level() != StackOptionLevelUDP {
 		return errors.New(ERR_TYPE)
 	}
-	if s.Leg() != LEG_PROXY_REMOTE {
+	if s.Leg() != StackOptionLegProxyRemote {
 		return errors.New(ERR_LEG)
 	}
-	if o[6] != UDP_ERROR_YES && o[6] != UDP_ERROR_NO {
+	if o[6] != stackUDPErrorOptionYes && o[6] != stackUDPErrorOptionNo {
 		return errors.New(ERR_ENUM)
 	}
 	if o[7] != 0 {
@@ -412,23 +412,23 @@ func (o UDPErrorOption) Validate() error {
 }
 
 const (
-	PORT_PARITY_NO   = 0
-	PORT_PARITY_EVEN = 1
-	PORT_PARITY_ODD  = 2
+	stackPortParityOptionParityNo   = 0
+	stackPortParityOptionParityEven = 1
+	stackPortParityOptionParityOdd  = 2
 
-	PORT_PARITY_RESERVE_NO  = 0
-	PORT_PARITY_RESERVE_YES = 1
+	stackPortParityOptionReserveNo  = 0
+	stackPortParityOptionReserveYes = 1
 )
 
 type PortParityOption StackOption
 
 func PortParityOptionCtor(o Option, parity byte, reserve bool) PortParityOption {
-	StackOptionCtor(o, LEG_PROXY_REMOTE, LV_UDP, C_PORT_PARITY, 8)
+	StackOptionCtor(o, StackOptionLegProxyRemote, StackOptionLevelUDP, StackOptionCodeUDPPortParity, 8)
 	o[6] = parity
 	if reserve {
-		o[7] = PORT_PARITY_RESERVE_YES
+		o[7] = stackPortParityOptionReserveYes
 	} else {
-		o[7] = PORT_PARITY_RESERVE_NO
+		o[7] = stackPortParityOptionReserveNo
 	}
 	return PortParityOption(o)
 }
@@ -436,9 +436,9 @@ func (o PortParityOption) Parity() byte {
 	return o[6]
 }
 func (o PortParityOption) Reserve() bool {
-	if o[7] == PORT_PARITY_RESERVE_YES {
+	if o[7] == stackPortParityOptionReserveYes {
 		return true
-	} else if o[7] == PORT_PARITY_RESERVE_NO {
+	} else if o[7] == stackPortParityOptionReserveNo {
 		return false
 	}
 	log.Printf("Invalid port parity reserve %d, treat as false", o[7])
@@ -452,25 +452,25 @@ func (o PortParityOption) Validate() error {
 		return errors.New(ERR_LENGTH)
 	}
 	s := StackOption(o)
-	if s.Code() != C_PORT_PARITY || s.Level() != LV_UDP {
+	if s.Code() != StackOptionCodeUDPPortParity || s.Level() != StackOptionLevelUDP {
 		return errors.New(ERR_TYPE)
 	}
-	if s.Leg() != LEG_PROXY_REMOTE {
+	if s.Leg() != StackOptionLegProxyRemote {
 		return errors.New(ERR_LEG)
 	}
-	if o[6] != PORT_PARITY_NO && o[6] != PORT_PARITY_EVEN && o[6] != PORT_PARITY_ODD {
+	if o[6] != stackPortParityOptionParityNo && o[6] != stackPortParityOptionParityEven && o[6] != stackPortParityOptionParityOdd {
 		return errors.New(ERR_ENUM)
 	}
-	if o[7] != PORT_PARITY_RESERVE_YES && o[7] != PORT_PARITY_RESERVE_NO {
+	if o[7] != stackPortParityOptionReserveYes && o[7] != stackPortParityOptionReserveNo {
 		return errors.New(ERR_ENUM)
 	}
 	return nil
 }
 
 const (
-	A_NONE              byte = 0
-	A_GSSAPI            byte = 1
-	A_USERNAME_PASSWORD byte = 2
+	AuthenticationMethodNone             byte = 0
+	AuthenticationMethodGSSAPI           byte = 1
+	AuthenticationMethodUsernamePassword byte = 2
 )
 
 type AuthenticationMethodAdvertisementOption Option
@@ -483,7 +483,7 @@ func AuthenticationMethodAdvertisementOptionCtor(o Option, methods []byte, initi
 	lload := len(m) + 2
 	// "line count" * 4 + head length
 	length := (lload/4+1)*4 + 4
-	OptionCtor(o, K_AUTH_ADVERTISEMENT, uint16(length))
+	OptionCtor(o, OptionKindAuthenticationMethodAdvertisement, uint16(length))
 	binary.BigEndian.PutUint16(o[4:], uint16(initial_data_length))
 
 	p := 6
@@ -513,7 +513,7 @@ func (o AuthenticationMethodAdvertisementOption) Validate() error {
 	if s.Length()%4 != 0 {
 		return errors.New(ERR_PADDING)
 	}
-	if s.Kind() != K_AUTH_ADVERTISEMENT {
+	if s.Kind() != OptionKindAuthenticationMethodAdvertisement {
 		return errors.New(ERR_TYPE)
 	}
 	if o.InitialDataLength() > 2^14 {
@@ -525,7 +525,7 @@ func (o AuthenticationMethodAdvertisementOption) Validate() error {
 type AuthenticationMethodSelectionOption Option
 
 func AuthenticationMethodSelectionOptionCtor(o Option, method byte) AuthenticationMethodSelectionOption {
-	OptionCtor(o, K_AUTH_SELECTION, 8)
+	OptionCtor(o, OptionKindAuthenticationMethodSelection, 8)
 	o[4] = method
 	return AuthenticationMethodSelectionOption(o)
 }
@@ -540,7 +540,7 @@ func (o AuthenticationMethodSelectionOption) Validate() error {
 	if s.Length() != 8 {
 		return errors.New(ERR_LENGTH)
 	}
-	if s.Kind() != K_AUTH_SELECTION {
+	if s.Kind() != OptionKindAuthenticationMethodSelection {
 		return errors.New(ERR_TYPE)
 	}
 	return nil
@@ -549,7 +549,7 @@ func (o AuthenticationMethodSelectionOption) Validate() error {
 type AuthenticationDataOption Option
 
 func AuthenticationDataOptionCtor(o Option, method byte, length uint16) AuthenticationDataOption {
-	OptionCtor(o, K_AUTH_DATA, length)
+	OptionCtor(o, OptionKindAuthenticationMethodData, length)
 	o[4] = method
 	return AuthenticationDataOption(o)
 }
@@ -564,7 +564,7 @@ func (o AuthenticationDataOption) Validate() error {
 		return err
 	}
 	s := Option(o)
-	if s.Kind() != K_AUTH_DATA {
+	if s.Kind() != OptionKindAuthenticationMethodData {
 		return errors.New(ERR_TYPE)
 	}
 	return nil
@@ -573,7 +573,7 @@ func (o AuthenticationDataOption) Validate() error {
 type SessionRequestOption Option
 
 func SessionRequestOptionCtor(o Option) SessionRequestOption {
-	OptionCtor(o, K_SESSION_REQUEST, 4)
+	OptionCtor(o, OptionKindSessionRequest, 4)
 	return SessionRequestOption(o)
 }
 func (o SessionRequestOption) Validate() error {
@@ -584,7 +584,7 @@ func (o SessionRequestOption) Validate() error {
 	if s.Length() != 4 {
 		return errors.New(ERR_LENGTH)
 	}
-	if s.Kind() != K_SESSION_REQUEST {
+	if s.Kind() != OptionKindSessionRequest {
 		return errors.New(ERR_TYPE)
 	}
 	return nil
@@ -593,7 +593,7 @@ func (o SessionRequestOption) Validate() error {
 type SessionIDOption Option
 
 func SessionIDOptionCtor(o Option, id []byte) SessionIDOption {
-	OptionCtor(o, K_SESSION_ID, uint16(len(id)+4))
+	OptionCtor(o, OptionKindSessionID, uint16(len(id)+4))
 	copy(o[4:], id)
 	return SessionIDOption(o)
 }
@@ -608,7 +608,7 @@ func (o SessionIDOption) Validate() error {
 	if s.Length()%4 != 0 {
 		return errors.New(ERR_PADDING)
 	}
-	if s.Kind() != K_SESSION_ID {
+	if s.Kind() != OptionKindSessionID {
 		return errors.New(ERR_TYPE)
 	}
 	return nil
@@ -617,7 +617,7 @@ func (o SessionIDOption) Validate() error {
 type SessionOKOption Option
 
 func SessionOKOptionCtor(o Option) SessionOKOption {
-	OptionCtor(o, K_SESSION_OK, 4)
+	OptionCtor(o, OptionKindSessionOK, 4)
 	return SessionOKOption(o)
 }
 func (o SessionOKOption) Validate() error {
@@ -628,7 +628,7 @@ func (o SessionOKOption) Validate() error {
 	if s.Length() != 4 {
 		return errors.New(ERR_LENGTH)
 	}
-	if s.Kind() != K_SESSION_OK {
+	if s.Kind() != OptionKindSessionOK {
 		return errors.New(ERR_TYPE)
 	}
 	return nil
@@ -637,7 +637,7 @@ func (o SessionOKOption) Validate() error {
 type SessionInvalidOption Option
 
 func SessionInvalidOptionCtor(o Option) SessionInvalidOption {
-	OptionCtor(o, K_SESSION_INVALID, 4)
+	OptionCtor(o, OptionKindSessionInvalid, 4)
 	return SessionInvalidOption(o)
 }
 func (o SessionInvalidOption) Validate() error {
@@ -648,7 +648,7 @@ func (o SessionInvalidOption) Validate() error {
 	if s.Length() != 4 {
 		return errors.New(ERR_LENGTH)
 	}
-	if s.Kind() != K_SESSION_INVALID {
+	if s.Kind() != OptionKindSessionInvalid {
 		return errors.New(ERR_TYPE)
 	}
 	return nil
@@ -657,7 +657,7 @@ func (o SessionInvalidOption) Validate() error {
 type SessionTeardownOption Option
 
 func SessionTeardownOptionCtor(o Option) SessionTeardownOption {
-	OptionCtor(o, K_SESSION_TEARDOWN, 4)
+	OptionCtor(o, OptionKindSessionTeardown, 4)
 	return SessionTeardownOption(o)
 }
 func (o SessionTeardownOption) Validate() error {
@@ -668,7 +668,7 @@ func (o SessionTeardownOption) Validate() error {
 	if s.Length() != 4 {
 		return errors.New(ERR_LENGTH)
 	}
-	if s.Kind() != K_SESSION_TEARDOWN {
+	if s.Kind() != OptionKindSessionTeardown {
 		return errors.New(ERR_TYPE)
 	}
 	return nil
@@ -677,7 +677,7 @@ func (o SessionTeardownOption) Validate() error {
 type TokenRequestOption Option
 
 func TokenRequestOptionCtor(o Option, window_size uint32) TokenRequestOption {
-	OptionCtor(o, K_TOKEN_REQUEST, 8)
+	OptionCtor(o, OptionKindTokenRequest, 8)
 	binary.BigEndian.PutUint32(o[4:], window_size)
 	return TokenRequestOption(o)
 }
@@ -692,7 +692,7 @@ func (o TokenRequestOption) Validate() error {
 	if s.Length() != 8 {
 		return errors.New(ERR_LENGTH)
 	}
-	if s.Kind() != K_TOKEN_REQUEST {
+	if s.Kind() != OptionKindTokenRequest {
 		return errors.New(ERR_TYPE)
 	}
 	return nil
@@ -701,7 +701,7 @@ func (o TokenRequestOption) Validate() error {
 type IdempotenceWindowOption Option
 
 func IdempotenceWindowOptionCtor(o Option, window_base, window_size uint32) IdempotenceWindowOption {
-	OptionCtor(o, K_IDEMPOTENCE_WINDOW, 12)
+	OptionCtor(o, OptionKindIdempotenceWindow, 12)
 	binary.BigEndian.PutUint32(o[4:], window_base)
 	binary.BigEndian.PutUint32(o[8:], window_size)
 	return IdempotenceWindowOption(o)
@@ -721,7 +721,7 @@ func (o IdempotenceWindowOption) Validate() error {
 	if s.Length() != 12 {
 		return errors.New(ERR_LENGTH)
 	}
-	if s.Kind() != K_IDEMPOTENCE_WINDOW {
+	if s.Kind() != OptionKindIdempotenceWindow {
 		return errors.New(ERR_TYPE)
 	}
 	return nil
@@ -730,7 +730,7 @@ func (o IdempotenceWindowOption) Validate() error {
 type IdempotenceExpenditureOption Option
 
 func IdempotenceExpenditureOptionCtor(o Option, token uint32) IdempotenceExpenditureOption {
-	OptionCtor(o, K_IDEMPOTENCE_EXPENDITURE, 8)
+	OptionCtor(o, OptionKindIdempotenceExpenditure, 8)
 	binary.BigEndian.PutUint32(o[4:], token)
 	return IdempotenceExpenditureOption(o)
 }
@@ -746,7 +746,7 @@ func (o IdempotenceExpenditureOption) Validate() error {
 	if s.Length() != 8 {
 		return errors.New(ERR_LENGTH)
 	}
-	if s.Kind() != K_IDEMPOTENCE_EXPENDITURE {
+	if s.Kind() != OptionKindIdempotenceExpenditure {
 		return errors.New(ERR_TYPE)
 	}
 	return nil
@@ -755,7 +755,7 @@ func (o IdempotenceExpenditureOption) Validate() error {
 type IdempotenceAcceptedOption Option
 
 func IdempotenceAcceptedOptionCtor(o Option) IdempotenceAcceptedOption {
-	OptionCtor(o, K_IDEMPOTENCE_ACCEPTED, 4)
+	OptionCtor(o, OptionKindIdempotenceAccepted, 4)
 	return IdempotenceAcceptedOption(o)
 }
 
@@ -767,7 +767,7 @@ func (o IdempotenceAcceptedOption) Validate() error {
 	if s.Length() != 4 {
 		return errors.New(ERR_LENGTH)
 	}
-	if s.Kind() != K_IDEMPOTENCE_ACCEPTED {
+	if s.Kind() != OptionKindIdempotenceAccepted {
 		return errors.New(ERR_TYPE)
 	}
 	return nil
@@ -776,7 +776,7 @@ func (o IdempotenceAcceptedOption) Validate() error {
 type IdempotenceRejectedOption Option
 
 func IdempotenceRejectedOptionCtor(o Option) IdempotenceRejectedOption {
-	OptionCtor(o, K_IDEMPOTENCE_REJECTED, 4)
+	OptionCtor(o, OptionKindIdempotenceRejected, 4)
 	return IdempotenceRejectedOption(o)
 }
 
@@ -788,7 +788,7 @@ func (o IdempotenceRejectedOption) Validate() error {
 	if s.Length() != 4 {
 		return errors.New(ERR_LENGTH)
 	}
-	if s.Kind() != K_IDEMPOTENCE_REJECTED {
+	if s.Kind() != OptionKindIdempotenceRejected {
 		return errors.New(ERR_TYPE)
 	}
 	return nil
@@ -799,7 +799,7 @@ type UsernamePasswordAuthenticationDataOption AuthenticationDataOption
 func UsernamePasswordAuthenticationDataOptionCtor(o Option, username, password []byte) UsernamePasswordAuthenticationDataOption {
 	l := len(username) + len(password) + 3 + 5
 	length := (l/4 + 1) * 4
-	AuthenticationDataOptionCtor(o, A_USERNAME_PASSWORD, uint16(length))
+	AuthenticationDataOptionCtor(o, AuthenticationMethodUsernamePassword, uint16(length))
 	lu := len(username)
 	o[5] = 1
 	o[6] = byte(lu)
@@ -852,7 +852,7 @@ const (
 type UsernamePasswordReplyAuthenticationDataOption AuthenticationDataOption
 
 func UsernamePasswordReplyAuthenticationDataOptionCtor(o Option, success bool) UsernamePasswordReplyAuthenticationDataOption {
-	AuthenticationDataOptionCtor(o, A_USERNAME_PASSWORD, 8)
+	AuthenticationDataOptionCtor(o, AuthenticationMethodUsernamePassword, 8)
 	o[5] = 1
 	if success {
 		o[6] = USERNAME_PASSWORD_SUCCESS

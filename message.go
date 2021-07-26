@@ -38,12 +38,12 @@ func (e Endpoint) Network() string {
 func (e Endpoint) String() string {
 	var s string
 	switch e.AddressType {
-	case AF_DomainName:
+	case AddressTypeDomainName:
 		s = string(e.Address)
-	case AF_IPv4:
+	case AddressTypeIPv4:
 		ip := net.IP(e.Address[:4])
 		s = ip.String()
-	case AF_IPv6:
+	case AddressTypeIPv6:
 		ip := net.IP(e.Address[:16])
 		s = "[" + ip.String() + "]"
 	default:
@@ -53,19 +53,19 @@ func (e Endpoint) String() string {
 }
 func (e *Endpoint) DeserializeAddress(b []byte) (int, error) {
 	switch e.AddressType {
-	case AF_IPv4:
+	case AddressTypeIPv4:
 		if len(b) < 4 {
 			return 0, errors.New(ERR_LENGTH)
 		}
 		e.Address = b
 		return 4, nil
-	case AF_IPv6:
+	case AddressTypeIPv6:
 		if len(b) < 16 {
 			return 0, errors.New(ERR_LENGTH)
 		}
 		e.Address = b
 		return 16, nil
-	case AF_DomainName:
+	case AddressTypeDomainName:
 		if len(b) < 2 {
 			return 0, errors.New(ERR_LENGTH)
 		}
@@ -82,21 +82,21 @@ func (e *Endpoint) DeserializeAddress(b []byte) (int, error) {
 func (e Endpoint) SerializeAddress(b []byte) (int, error) {
 	l := 4
 	switch e.AddressType {
-	case AF_IPv4:
+	case AddressTypeIPv4:
 		l = 4
-	case AF_IPv6:
+	case AddressTypeIPv6:
 		l = 16
-	case AF_DomainName:
+	case AddressTypeDomainName:
 		l = len(e.Address) + 1
 	}
 	if len(b) < l {
 		return 0, errors.New(ERR_LENGTH)
 	}
 	switch e.AddressType {
-	case AF_IPv4, AF_IPv6:
+	case AddressTypeIPv4, AddressTypeIPv6:
 		copy(b, e.Address)
 		return l, nil
-	case AF_DomainName:
+	case AddressTypeDomainName:
 		p := l % 4
 		if len(b) < l+p {
 			return 0, errors.New(ERR_LENGTH)
@@ -113,15 +113,15 @@ func (e Endpoint) SerializeAddress(b []byte) (int, error) {
 }
 
 const (
-	CMD_NOOP byte = iota
-	CMD_CONNECT
-	CMD_BIND
-	CMD_UDP_ASSOCIATE
+	CommandNoop byte = iota
+	CommandConnect
+	CommandBind
+	CommandUdpAssociate
 )
 const (
-	AF_IPv4       byte = 1
-	AF_DomainName byte = 3
-	AF_IPv6       byte = 4
+	AddressTypeIPv4       byte = 1
+	AddressTypeDomainName byte = 3
+	AddressTypeIPv6       byte = 4
 )
 
 type Request struct {
@@ -152,11 +152,11 @@ func (r *Request) BufferSize(buf []byte) int {
 	lOption := binary.BigEndian.Uint16(buf[2:])
 	lAddr := 4
 	switch buf[7] {
-	case AF_DomainName:
+	case AddressTypeDomainName:
 		lAddr = int(buf[8]) + 1
-	case AF_IPv4:
+	case AddressTypeIPv4:
 		lAddr = 4
-	case AF_IPv6:
+	case AddressTypeIPv6:
 		lAddr = 16
 	}
 	// TODO: initial data
@@ -214,17 +214,17 @@ func (r *Request) Serialize(buf []byte) (int, error) {
 		}
 	}
 	cs, sr, csr := GroupStackOption(r.ClientLegStackOption, r.RemoteLegStackOption)
-	l, e := cs.Serialize(buf[pOption:], LEG_CLIENT_PROXY)
+	l, e := cs.Serialize(buf[pOption:], StackOptionLegClientProxy)
 	if e != nil {
 		return 0, e
 	}
 	pOption += l
-	l, e = sr.Serialize(buf[pOption:], LEG_PROXY_REMOTE)
+	l, e = sr.Serialize(buf[pOption:], StackOptionLegProxyRemote)
 	if e != nil {
 		return 0, e
 	}
 	pOption += l
-	l, e = csr.Serialize(buf[pOption:], LEG_BOTH)
+	l, e = csr.Serialize(buf[pOption:], StackOptionLegBoth)
 	if e != nil {
 		return 0, e
 	}
@@ -263,30 +263,30 @@ func (r *Request) Deserialize(buf []byte) (int, error) {
 		lOption -= op.Length()
 		pOption += int(op.Length())
 		switch op.Kind() {
-		case K_STACK:
+		case OptionKindStack:
 			s := StackOption(b)
-			if s.Leg()&LEG_CLIENT_PROXY > 0 {
+			if s.Leg()&StackOptionLegClientProxy > 0 {
 				r.ClientLegStackOption.ApplyOption(s)
 			}
-			if s.Leg()&LEG_PROXY_REMOTE > 0 {
+			if s.Leg()&StackOptionLegProxyRemote > 0 {
 				r.RemoteLegStackOption.ApplyOption(s)
 			}
-		case K_AUTH_ADVERTISEMENT:
+		case OptionKindAuthenticationMethodAdvertisement:
 			a := AuthenticationMethodAdvertisementOption(b)
 			r.Methods = a.Methods()
 			lInitialData = int(a.InitialDataLength())
-		case K_AUTH_DATA:
+		case OptionKindAuthenticationMethodData:
 			d := AuthenticationDataOption(b)
 			r.MethodData[d.Method()] = d.AuthenticationData()
-		case K_SESSION_REQUEST:
+		case OptionKindSessionRequest:
 			r.RequestSession = true
-		case K_SESSION_ID:
+		case OptionKindSessionID:
 			r.SessionID = SessionIDOption(b).ID()
-		case K_SESSION_TEARDOWN:
+		case OptionKindSessionTeardown:
 			r.RequestTeardown = true
-		case K_TOKEN_REQUEST:
+		case OptionKindTokenRequest:
 			r.RequestToken = TokenRequestOption(b).WindowSize()
-		case K_IDEMPOTENCE_EXPENDITURE:
+		case OptionKindIdempotenceExpenditure:
 			r.UseToken = true
 			r.TokenToSpend = IdempotenceExpenditureOption(b).Token()
 		}
@@ -387,31 +387,31 @@ func GroupStackOption(c, r StackOptionData) (StackOptionData, StackOptionData, S
 }
 func (s *StackOptionData) ApplyOption(o StackOption) {
 	switch o.Level() {
-	case LV_IP:
+	case StackOptionLevelIP:
 		switch o.Code() {
-		case C_TOS:
+		case StackOptionCodeIPTOS:
 			*s.TOS = TOSOption(o).TOS()
-		case C_HAPPY_EYEBALL:
+		case StackOptionCodeIPHappyEyeball:
 			*s.HappyEyeball = HappyEyeballOption(o).Availability()
-		case C_TTL:
+		case StackOptionCodeIPTTL:
 			*s.TTL = TTLOption(o).TTL()
-		case C_NO_FRAGMENTATION:
+		case StackOptionCodeIPDF:
 			*s.DF = NoFragmentationOption(o).Availability()
 		}
-	case LV_TCP:
+	case StackOptionLevelTCP:
 		switch o.Code() {
-		case C_TFO:
+		case StackOptionCodeTCPTFO:
 			*s.TFO = TFOOption(o).PayloadSize()
-		case C_MULTIPATH:
+		case StackOptionCodeTCPMultipath:
 			*s.MPTCP = MultipathOption(o).Availability()
-		case C_BACKLOG:
+		case StackOptionCodeTCPBacklog:
 			*s.Backlog = BacklogOption(o).Backlog()
 		}
-	case LV_UDP:
+	case StackOptionLevelUDP:
 		switch o.Code() {
-		case C_UDP_ERROR:
+		case StackOptionCodeUDPUDPError:
 			*s.UDPError = UDPErrorOption(o).Availability()
-		case C_PORT_PARITY:
+		case StackOptionCodeUDPPortParity:
 			p := PortParityOption(o)
 			*s.Parity = p.Parity()
 			*s.Reserve = p.Reserve()
@@ -464,8 +464,8 @@ type VersionMismatchReply struct {
 }
 
 const (
-	AUTH_SUCCESS = 0
-	AUTH_FAIL    = 1
+	AuthenticationReplySuccess = 0
+	AuthenticationReplyFail    = 1
 )
 
 type AuthenticationReply struct {
@@ -493,7 +493,7 @@ func (a *AuthenticationReply) Serialize(buf []byte) (int, error) {
 	buf[0] = 6
 	buf[1] = a.Type
 	pOption := 4
-	if a.SelectedMethod != A_NONE {
+	if a.SelectedMethod != AuthenticationMethodNone {
 		o := AuthenticationMethodSelectionOptionCtor(buf[pOption:], a.SelectedMethod)
 		pOption += int(Option(o).Length())
 	}
@@ -538,21 +538,21 @@ func (a *AuthenticationReply) Deserialize(buf []byte) (int, error) {
 		pOption += int(op.Length())
 		lOption -= op.Length()
 		switch op.Kind() {
-		case K_AUTH_DATA:
+		case OptionKindAuthenticationMethodData:
 			d := AuthenticationDataOption(b)
 			a.MethodData[d.Method()] = d.AuthenticationData()
-		case K_AUTH_SELECTION:
+		case OptionKindAuthenticationMethodSelection:
 			s := AuthenticationMethodSelectionOption(b)
 			a.SelectedMethod = s.Method()
-		case K_SESSION_OK:
+		case OptionKindSessionOK:
 			a.SessionValid = true
-		case K_SESSION_INVALID:
+		case OptionKindSessionInvalid:
 			a.SessionValid = false
-		case K_IDEMPOTENCE_ACCEPTED:
+		case OptionKindIdempotenceAccepted:
 			a.TokenValid = true
-		case K_IDEMPOTENCE_REJECTED:
+		case OptionKindIdempotenceRejected:
 			a.TokenValid = false
-		case K_IDEMPOTENCE_WINDOW:
+		case OptionKindIdempotenceWindow:
 			i := IdempotenceWindowOption(b)
 			a.NewWindowBase = i.WindowBase()
 			a.NewWindowSize = i.WindowSize()
@@ -562,15 +562,15 @@ func (a *AuthenticationReply) Deserialize(buf []byte) (int, error) {
 }
 
 const (
-	RE_SUCCESS byte = iota
-	RE_SERVFAIL
-	RE_RULE_NOT_ALLOW
-	RE_NET_UNREACHABLE
-	RE_HOST_UNREACHABLE
-	RE_CONNECTION_REFUSED
-	RE_TTL_EXPIRE
-	RE_ADDRESS_NOT_SUPPORT
-	RE_TIMEOUT
+	OperationReplySuccess byte = iota
+	OperationReplyServerFailure
+	OperationReplyNotAllowedByRule
+	OperationReplyNetworkUnreachable
+	OperationReplyHostUnreachable
+	OperationReplyConnectionRefused
+	OperationReplyTTLExpired
+	OperationReplyAddressNotSupported
+	OperationReplyTimeout
 )
 
 type OperationReply struct {

@@ -2,6 +2,6 @@ package socks6
 
 const (
 	// TODO: IANA consideration
-	SOCKS6_PORT  = 1080
-	SOCKS6S_PORT = 8389
+	SOCKS6CleartextPort = 1080
+	SOCKS6TLSPort       = 8389
 )
