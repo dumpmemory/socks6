@@ -43,7 +43,19 @@ func setsocks6optTcpClient(fd uintptr, opt socks6.StackOptionData) socks6.StackO
 		if err != nil {
 			printSetsockoptError(err)
 		}
-		v, err := syscall.GetsockoptInt(h, syscall.IPPROTO_IP, DF)
+		v, err := syscall.GetsockoptInt(h, syscall.IPPROTO_IP, syscall.IP_TTL)
+		if err != nil {
+			printSetsockoptError(err)
+		}
+		real := byte(v)
+		rep.TTL = &real
+	}
+	if opt.TOS != nil {
+		err := syscall.SetsockoptInt(h, syscall.IPPROTO_IP, syscall.IP_TOS, int(*opt.TOS))
+		if err != nil {
+			printSetsockoptError(err)
+		}
+		v, err := syscall.GetsockoptInt(h, syscall.IPPROTO_IP, syscall.IP_TOS)
 		if err != nil {
 			printSetsockoptError(err)
 		}
