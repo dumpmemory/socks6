@@ -44,9 +44,4 @@ func TestOption(t *testing.T) {
 	if e == nil {
 		t.Fail()
 	}
-	o = socks6.Option([]byte{0, 0, 0})
-	e = o.Validate()
-	if e == nil {
-		t.Fail()
-	}
 }

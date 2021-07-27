@@ -4,25 +4,30 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
+
 	"net"
 	"strconv"
 )
 
-const (
-	ERR_LENGTH  = "length out of range"
-	ERR_TYPE    = "type mismatch"
-	ERR_LEG     = "stack option wrong leg"
-	ERR_PADDING = "padding should be 0"
-	ERR_ALIGN   = "not aligned"
-	ERR_ENUM    = "unexpected enum value"
-	ERR_MAGIC   = "magic number error"
-)
-
-type Message interface {
-	//encoding.BinaryMarshaler
-	//encoding.BinaryUnmarshaler
-
+type ErrTooShort struct {
+	ExpectedLen int
 }
+
+func (e ErrTooShort) Error() string {
+	return "buffer too short, need at least " + strconv.FormatInt(int64(e.ExpectedLen), 10)
+}
+
+func addExpectedLen(e error, l int) error {
+	if ets, ok := e.(ErrTooShort); ok {
+		return ErrTooShort{ExpectedLen: ets.ExpectedLen + l}
+	}
+	return e
+}
+
+var ErrEnumValue = errors.New("unexpected enum value")
+var ErrVersion = errors.New("version is not 6")
+var ErrParse = errors.New("can't parse message")
+var ErrAddressTypeNotSupport = errors.New("unknown address type")
 
 type Endpoint struct {
 	Port        uint16
@@ -55,28 +60,28 @@ func (e *Endpoint) DeserializeAddress(b []byte) (int, error) {
 	switch e.AddressType {
 	case AddressTypeIPv4:
 		if len(b) < 4 {
-			return 0, errors.New(ERR_LENGTH)
+			return 0, ErrTooShort{ExpectedLen: 4}
 		}
 		e.Address = b
 		return 4, nil
 	case AddressTypeIPv6:
 		if len(b) < 16 {
-			return 0, errors.New(ERR_LENGTH)
+			return 0, ErrTooShort{ExpectedLen: 16}
 		}
 		e.Address = b
 		return 16, nil
 	case AddressTypeDomainName:
 		if len(b) < 2 {
-			return 0, errors.New(ERR_LENGTH)
+			return 0, ErrTooShort{ExpectedLen: 2}
 		}
 		al := b[0]
 		if len(b) < int(al)+1 {
-			return 0, errors.New(ERR_LENGTH)
+			return 0, ErrTooShort{ExpectedLen: int(al) + 1}
 		}
 		e.Address = bytes.TrimRight(b[1:al+1], "\u0000")
 		return int(al) + 1, nil
 	default:
-		return 0, errors.New(ERR_ENUM)
+		return 0, ErrEnumValue
 	}
 }
 func (e Endpoint) SerializeAddress(b []byte) (int, error) {
@@ -90,16 +95,16 @@ func (e Endpoint) SerializeAddress(b []byte) (int, error) {
 		l = len(e.Address) + 1
 	}
 	if len(b) < l {
-		return 0, errors.New(ERR_LENGTH)
+		return 0, ErrTooShort{ExpectedLen: l}
 	}
 	switch e.AddressType {
 	case AddressTypeIPv4, AddressTypeIPv6:
 		copy(b, e.Address)
 		return l, nil
 	case AddressTypeDomainName:
-		p := l % 4
+		p := (4 - l%4) % 4
 		if len(b) < l+p {
-			return 0, errors.New(ERR_LENGTH)
+			return 0, ErrTooShort{l + p}
 		}
 		for i := 0; i < p; i++ {
 			b[l+i] = 0
@@ -107,22 +112,9 @@ func (e Endpoint) SerializeAddress(b []byte) (int, error) {
 		copy(b, e.Address)
 		return l + p, nil
 	default:
-		return 0, errors.New(ERR_MAGIC)
+		return 0, ErrEnumValue
 	}
-
 }
-
-const (
-	CommandNoop byte = iota
-	CommandConnect
-	CommandBind
-	CommandUdpAssociate
-)
-const (
-	AddressTypeIPv4       byte = 1
-	AddressTypeDomainName byte = 3
-	AddressTypeIPv6       byte = 4
-)
 
 type Request struct {
 	Version     byte
@@ -145,25 +137,10 @@ type Request struct {
 	TokenToSpend uint32
 }
 
-func (r *Request) BufferSize(buf []byte) int {
-	if len(buf) < 12 {
-		return 12
-	}
-	lOption := binary.BigEndian.Uint16(buf[2:])
-	lAddr := 4
-	switch buf[7] {
-	case AddressTypeDomainName:
-		lAddr = int(buf[8]) + 1
-	case AddressTypeIPv4:
-		lAddr = 4
-	case AddressTypeIPv6:
-		lAddr = 16
-	}
-	// TODO: initial data
-	return int(lOption) + lAddr + 8
-}
-
 func (r *Request) Serialize(buf []byte) (int, error) {
+	if len(buf) < 10 {
+		return 0, ErrTooShort{ExpectedLen: 10}
+	}
 	buf[0] = 6
 	buf[1] = r.CommandCode
 	// optionlength, tbd
@@ -172,32 +149,47 @@ func (r *Request) Serialize(buf []byte) (int, error) {
 	buf[7] = r.Endpoint.AddressType
 	hLen, err := r.Endpoint.SerializeAddress(buf[8:])
 	if err != nil {
-		return 0, err
+		return 0, addExpectedLen(err, 8)
 	}
 	hLen += 8
 	pOption := hLen
 
 	if len(r.Methods) > 0 {
-		o := AuthenticationMethodAdvertisementOptionCtor(buf[pOption:], r.Methods, len(r.InitialData))
+		o, err := AuthenticationMethodAdvertisementOptionCtor(buf[pOption:], r.Methods, len(r.InitialData))
+		if err != nil {
+			return 0, err
+		}
 		pOption += int(Option(o).Length())
 
 		for m, md := range r.MethodData {
-			o := AuthenticationDataOptionCtor(buf[pOption:], m, uint16(len(md)+5))
+			o, err := AuthenticationDataOptionCtor(buf[pOption:], m, uint16(len(md)+5))
+			if err != nil {
+				return 0, addExpectedLen(err, pOption)
+			}
 			copy(o[5:], md)
 			pOption += int(Option(o).Length())
 		}
 	}
 	inSession := true
 	if len(r.SessionID) > 0 {
-		o := SessionIDOptionCtor(buf[pOption:], r.SessionID)
+		o, err := SessionIDOptionCtor(buf[pOption:], r.SessionID)
+		if err != nil {
+			return 0, addExpectedLen(err, pOption)
+		}
 		pOption += int(Option(o).Length())
 
 		if r.RequestTeardown {
-			o := SessionTeardownOptionCtor(buf[pOption:])
+			o, err := SessionTeardownOptionCtor(buf[pOption:])
+			if err != nil {
+				return 0, addExpectedLen(err, pOption)
+			}
 			pOption += int(Option(o).Length())
 		}
 	} else if r.RequestSession {
-		o := SessionRequestOptionCtor(buf[pOption:])
+		o, err := SessionRequestOptionCtor(buf[pOption:])
+		if err != nil {
+			return 0, addExpectedLen(err, pOption)
+		}
 		pOption += int(Option(o).Length())
 	} else {
 		inSession = false
@@ -205,28 +197,34 @@ func (r *Request) Serialize(buf []byte) (int, error) {
 
 	if inSession {
 		if r.RequestToken > 0 {
-			o := TokenRequestOptionCtor(buf[pOption:], r.RequestToken)
+			o, err := TokenRequestOptionCtor(buf[pOption:], r.RequestToken)
+			if err != nil {
+				return 0, addExpectedLen(err, pOption)
+			}
 			pOption += int(Option(o).Length())
 		}
 		if r.UseToken {
-			o := IdempotenceExpenditureOptionCtor(buf[pOption:], r.TokenToSpend)
+			o, err := IdempotenceExpenditureOptionCtor(buf[pOption:], r.TokenToSpend)
+			if err != nil {
+				return 0, addExpectedLen(err, pOption)
+			}
 			pOption += int(Option(o).Length())
 		}
 	}
 	cs, sr, csr := GroupStackOption(r.ClientLegStackOption, r.RemoteLegStackOption)
-	l, e := cs.Serialize(buf[pOption:], StackOptionLegClientProxy)
-	if e != nil {
-		return 0, e
+	l, err := cs.Serialize(buf[pOption:], StackOptionLegClientProxy)
+	if err != nil {
+		return 0, addExpectedLen(err, pOption)
 	}
 	pOption += l
-	l, e = sr.Serialize(buf[pOption:], StackOptionLegProxyRemote)
-	if e != nil {
-		return 0, e
+	l, err = sr.Serialize(buf[pOption:], StackOptionLegProxyRemote)
+	if err != nil {
+		return 0, addExpectedLen(err, pOption)
 	}
 	pOption += l
-	l, e = csr.Serialize(buf[pOption:], StackOptionLegBoth)
-	if e != nil {
-		return 0, e
+	l, err = csr.Serialize(buf[pOption:], StackOptionLegBoth)
+	if err != nil {
+		return 0, addExpectedLen(err, pOption)
 	}
 	pOption += l
 
@@ -237,12 +235,15 @@ func (r *Request) Serialize(buf []byte) (int, error) {
 }
 
 func (r *Request) Deserialize(buf []byte) (int, error) {
+	if len(buf) < 10 {
+		return 0, ErrTooShort{ExpectedLen: 10}
+	}
 	if buf[0] != 6 {
-		return 0, errors.New(ERR_MAGIC)
+		return 0, ErrVersion
 	}
 	lInitialData := 0
 	r.CommandCode = buf[1]
-	lOption := binary.BigEndian.Uint16(buf[2:])
+	lOption := int(binary.BigEndian.Uint16(buf[2:]))
 	r.Endpoint = Endpoint{}
 	r.Endpoint.Port = binary.BigEndian.Uint16(buf[4:])
 	r.Endpoint.AddressType = buf[7]
@@ -254,14 +255,18 @@ func (r *Request) Deserialize(buf []byte) (int, error) {
 	r.ClientLegStackOption = StackOptionData{}
 	r.RemoteLegStackOption = StackOptionData{}
 	r.MethodData = map[byte][]byte{}
+	if lOption+pOption > len(buf) {
+		return 0, ErrTooShort{ExpectedLen: lOption + pOption}
+	}
 	for lOption >= 4 {
 		b := buf[pOption:]
 		op := Option(b)
-		if op.Length() > lOption {
-			break
+		l := int(op.Length())
+		lOption -= l
+		pOption += l
+		if lOption < 0 {
+			return 0, ErrParse
 		}
-		lOption -= op.Length()
-		pOption += int(op.Length())
 		switch op.Kind() {
 		case OptionKindStack:
 			s := StackOption(b)
@@ -291,10 +296,13 @@ func (r *Request) Deserialize(buf []byte) (int, error) {
 			r.TokenToSpend = IdempotenceExpenditureOption(b).Token()
 		}
 	}
+	if len(buf) < pOption+lInitialData {
+		return 0, ErrTooShort{ExpectedLen: pOption + lInitialData}
+	}
 	if lInitialData > 0 {
 		r.InitialData = buf[pOption : pOption+lInitialData]
 	}
-	return pOption, nil
+	return pOption + lInitialData, nil
 }
 
 type StackOptionData struct {
@@ -421,39 +429,66 @@ func (s *StackOptionData) ApplyOption(o StackOption) {
 func (s StackOptionData) Serialize(buf []byte, leg byte) (int, error) {
 	p := 0
 	if s.TOS != nil {
-		o := TOSOptionCtor(buf[p:], leg, *s.TOS)
+		o, err := TOSOptionCtor(buf[p:], leg, *s.TOS)
+		if err != nil {
+			return 0, addExpectedLen(err, p)
+		}
 		p += int(Option(o).Length())
 	}
 	if s.HappyEyeball != nil {
-		o := HappyEyeballOptionCtor(buf[p:], *s.HappyEyeball)
+		o, err := HappyEyeballOptionCtor(buf[p:], *s.HappyEyeball)
+		if err != nil {
+			return 0, addExpectedLen(err, p)
+		}
 		p += int(Option(o).Length())
 	}
 	if s.TTL != nil {
-		o := TTLOptionCtor(buf[p:], leg, *s.TTL)
+		o, err := TTLOptionCtor(buf[p:], leg, *s.TTL)
+		if err != nil {
+			return 0, addExpectedLen(err, p)
+		}
 		p += int(Option(o).Length())
 	}
 	if s.DF != nil {
-		o := NoFragmentationOptionCtor(buf[p:], leg, *s.DF)
+		o, err := NoFragmentationOptionCtor(buf[p:], leg, *s.DF)
+		if err != nil {
+			return 0, addExpectedLen(err, p)
+		}
 		p += int(Option(o).Length())
 	}
 	if s.TFO != nil {
-		o := TFOOptionCtor(buf[p:], *s.TFO)
+		o, err := TFOOptionCtor(buf[p:], *s.TFO)
+		if err != nil {
+			return 0, addExpectedLen(err, p)
+		}
 		p += int(Option(o).Length())
 	}
 	if s.MPTCP != nil {
-		o := MultipathOptionCtor(buf[p:], *s.MPTCP)
+		o, err := MultipathOptionCtor(buf[p:], *s.MPTCP)
+		if err != nil {
+			return 0, addExpectedLen(err, p)
+		}
 		p += int(Option(o).Length())
 	}
 	if s.Backlog != nil {
-		o := BacklogOptionCtor(buf[p:], *s.Backlog)
+		o, err := BacklogOptionCtor(buf[p:], *s.Backlog)
+		if err != nil {
+			return 0, addExpectedLen(err, p)
+		}
 		p += int(Option(o).Length())
 	}
 	if s.UDPError != nil {
-		o := UDPErrorOptionCtor(buf[p:], *s.UDPError)
+		o, err := UDPErrorOptionCtor(buf[p:], *s.UDPError)
+		if err != nil {
+			return 0, addExpectedLen(err, p)
+		}
 		p += int(Option(o).Length())
 	}
 	if s.Parity != nil && s.Reserve != nil {
-		o := PortParityOptionCtor(buf[p:], *s.Parity, *s.Reserve)
+		o, err := PortParityOptionCtor(buf[p:], *s.Parity, *s.Reserve)
+		if err != nil {
+			return 0, addExpectedLen(err, p)
+		}
 		p += int(Option(o).Length())
 	}
 	return p, nil
@@ -483,41 +518,53 @@ type AuthenticationReply struct {
 	TokenValid    bool
 }
 
-func (a *AuthenticationReply) BufferSize(buf []byte) int {
-	if len(buf) < 4 {
-		return 4
-	}
-	return int(binary.BigEndian.Uint16(buf[2:]) + 4)
-}
 func (a *AuthenticationReply) Serialize(buf []byte) (int, error) {
 	buf[0] = 6
 	buf[1] = a.Type
 	pOption := 4
 	if a.SelectedMethod != AuthenticationMethodNone {
-		o := AuthenticationMethodSelectionOptionCtor(buf[pOption:], a.SelectedMethod)
+		o, err := AuthenticationMethodSelectionOptionCtor(buf[pOption:], a.SelectedMethod)
+		if err != nil {
+			return 0, addExpectedLen(err, pOption)
+		}
 		pOption += int(Option(o).Length())
 	}
 	for m, d := range a.MethodData {
-		o := AuthenticationDataOptionCtor(buf[pOption:], m, uint16(len(d)))
+		o, err := AuthenticationDataOptionCtor(buf[pOption:], m, uint16(len(d)))
+		if err != nil {
+			return 0, addExpectedLen(err, pOption)
+		}
 		pOption += int(Option(o).Length())
 		copy(o[4:], d)
 	}
 	if a.InSession {
+		var err error
 		if a.SessionValid {
-			SessionOKOptionCtor(buf[pOption:])
+			_, err = SessionOKOptionCtor(buf[pOption:])
 		} else {
-			SessionInvalidOptionCtor(buf[pOption:])
+			_, err = SessionInvalidOptionCtor(buf[pOption:])
+		}
+		if err != nil {
+			return 0, addExpectedLen(err, pOption)
 		}
 		pOption += 4
 		if a.NewWindowSize > 0 {
-			o := IdempotenceWindowOptionCtor(buf[pOption:], a.NewWindowBase, a.NewWindowSize)
+			o, err := IdempotenceWindowOptionCtor(buf[pOption:], a.NewWindowBase, a.NewWindowSize)
+			if err != nil {
+				return 0, addExpectedLen(err, pOption)
+			}
 			pOption += int(Option(o).Length())
 		}
 		if a.UsingToken {
+
 			if a.TokenValid {
-				IdempotenceAcceptedOptionCtor(buf[pOption:])
+				_, err = IdempotenceAcceptedOptionCtor(buf[pOption:])
 			} else {
-				IdempotenceRejectedOptionCtor(buf[pOption:])
+				_, err = IdempotenceRejectedOptionCtor(buf[pOption:])
+			}
+
+			if err != nil {
+				return 0, addExpectedLen(err, pOption)
 			}
 			pOption += 4
 		}
@@ -526,17 +573,27 @@ func (a *AuthenticationReply) Serialize(buf []byte) (int, error) {
 	return pOption, nil
 }
 func (a *AuthenticationReply) Deserialize(buf []byte) (int, error) {
+	if len(buf) < 4 {
+		return 0, ErrTooShort{ExpectedLen: 4}
+	}
 	if buf[0] != 6 {
-		return 0, errors.New(ERR_MAGIC)
+		return 0, ErrParse
 	}
 	a.Type = buf[1]
-	lOption := binary.BigEndian.Uint16(buf[2:])
+	lOption := int(binary.BigEndian.Uint16(buf[2:]))
+	if len(buf) < int(lOption)+4 {
+		return 0, ErrTooShort{int(lOption) + 4}
+	}
 	pOption := 4
 	for lOption >= 4 {
 		b := buf[pOption:]
 		op := Option(b)
-		pOption += int(op.Length())
-		lOption -= op.Length()
+		l := int(Option(b).Length())
+		pOption += l
+		lOption -= l
+		if lOption < 0 {
+			return 0, ErrParse
+		}
 		switch op.Kind() {
 		case OptionKindAuthenticationMethodData:
 			d := AuthenticationDataOption(b)
@@ -561,18 +618,6 @@ func (a *AuthenticationReply) Deserialize(buf []byte) (int, error) {
 	return int(lOption) + 4, nil
 }
 
-const (
-	OperationReplySuccess byte = iota
-	OperationReplyServerFailure
-	OperationReplyNotAllowedByRule
-	OperationReplyNetworkUnreachable
-	OperationReplyHostUnreachable
-	OperationReplyConnectionRefused
-	OperationReplyTTLExpired
-	OperationReplyAddressNotSupported
-	OperationReplyTimeout
-)
-
 type OperationReply struct {
 	ReplyCode byte
 	Endpoint  Endpoint
@@ -583,13 +628,97 @@ type OperationReply struct {
 	SessionID []byte
 }
 
-const (
-	_ byte = iota
-	U_ASSOC_INIT
-	U_ASSOC_ACK
-	U_DGRAM
-	U_ERROR
-)
+func (o *OperationReply) Serialize(buf []byte) (int, error) {
+	if len(buf) < 10 {
+		return 0, ErrTooShort{ExpectedLen: 10}
+	}
+	buf[0] = 6
+	buf[1] = o.ReplyCode
+	binary.BigEndian.PutUint16(buf[4:], o.Endpoint.Port)
+	buf[7] = o.Endpoint.AddressType
+
+	eLen, err := o.Endpoint.SerializeAddress(buf[8:])
+	if err != nil {
+		if ets, ok := err.(ErrTooShort); ok {
+			return 0, ErrTooShort{ExpectedLen: ets.ExpectedLen + 8}
+		}
+		return 0, err
+	}
+	pOption := eLen + 8
+	if len(o.SessionID) > 0 {
+		op, err := SessionIDOptionCtor(buf[pOption:], o.SessionID)
+		if err != nil {
+			return 0, addExpectedLen(err, pOption)
+		}
+		pOption += int(Option(op).Length())
+	}
+	cs, sr, csr := GroupStackOption(o.ClientLegStackOption, o.RemoteLegStackOption)
+	l, err := cs.Serialize(buf[pOption:], StackOptionLegClientProxy)
+	if err != nil {
+		return 0, addExpectedLen(err, pOption)
+	}
+	pOption += l
+	l, err = sr.Serialize(buf[pOption:], StackOptionLegClientProxy)
+	if err != nil {
+		return 0, addExpectedLen(err, pOption)
+	}
+	pOption += l
+	l, err = csr.Serialize(buf[pOption:], StackOptionLegClientProxy)
+	if err != nil {
+		return 0, addExpectedLen(err, pOption)
+	}
+	pOption += l
+	binary.BigEndian.PutUint16(buf[2:], uint16(pOption-8))
+	return pOption, nil
+}
+func (o *OperationReply) Deserialize(buf []byte) (int, error) {
+	if len(buf) < 10 {
+		return 0, ErrTooShort{ExpectedLen: 10}
+	}
+	if buf[0] != 0 {
+		return 0, ErrParse
+	}
+	o.ReplyCode = buf[1]
+	lOption := int(binary.BigEndian.Uint16(buf[2:]))
+	o.Endpoint = Endpoint{}
+	o.Endpoint.Port = binary.BigEndian.Uint16(buf[4:])
+	o.Endpoint.AddressType = buf[7]
+	lAddr, err := o.Endpoint.DeserializeAddress(buf[8:])
+	if err != nil {
+		return 0, addExpectedLen(err, 8+lOption)
+	}
+	if len(buf) < lAddr+lOption+8 {
+		return 0, ErrTooShort{ExpectedLen: lAddr + lOption + 8}
+	}
+
+	o.ClientLegStackOption = StackOptionData{}
+	o.RemoteLegStackOption = StackOptionData{}
+
+	pOption := lAddr + 8
+	for lOption >= 4 {
+		b := buf[pOption:]
+		op := Option(b)
+		l := int(op.Length())
+		lOption -= l
+		pOption += l
+		if lOption < 0 {
+			return 0, ErrParse
+		}
+		switch op.Kind() {
+		case OptionKindStack:
+			s := StackOption(b)
+			if s.Leg()&StackOptionLegClientProxy > 0 {
+				o.ClientLegStackOption.ApplyOption(s)
+			}
+			if s.Leg()&StackOptionLegProxyRemote > 0 {
+				o.RemoteLegStackOption.ApplyOption(s)
+			}
+		case OptionKindSessionID:
+			o.SessionID = SessionIDOption(b).ID()
+		}
+	}
+	return pOption, nil
+}
 
 type UDPHeader struct {
 	Type          byte

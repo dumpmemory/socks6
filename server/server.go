@@ -2,6 +2,7 @@ package server
 
 import (
 	_ "crypto/tls"
+	"io"
 	"log"
 	"net"
 	"syscall"
@@ -51,44 +52,21 @@ func (s *Server) handleConn(conn *net.TCPConn) {
 	req := socks6.Request{}
 	buf := make([]byte, 0, 64)
 	p := 0
-	for {
-		requiredSize := req.BufferSize(buf)
-		if requiredSize > len(buf) {
-			buf = append(buf, make([]byte, requiredSize-len(buf))...)
-		}
-		if requiredSize > p {
-			expectRead := requiredSize - p
-			actualRead, err := conn.Read(buf[p:requiredSize])
-			p += actualRead
-			if err != nil {
-				log.Println(err)
-				conn.Close()
-				return
-			}
-			if actualRead != expectRead {
-				log.Println("unexpected read size")
-				conn.Close()
-				return
-			}
-			if buf[0] != 6 {
-				log.Println("unexpected version", buf[0])
-				conn.Write([]byte{6})
-				conn.Close()
-				return
-			}
-		} else {
-			l, err := req.Deserialize(buf[:p])
-			if err != nil {
-				log.Println(err)
-				conn.Close()
-				return
-			}
-			if l != p {
-				log.Println("unexpected read size")
-				conn.Close()
-				return
-			}
+	for n := 0; n < 16; n++ {
+		_, err := req.Deserialize(buf)
+		if err == nil {
 			break
+		}
+		tooShort, ok := err.(socks6.ErrTooShort)
+		if !ok {
+			// handle error
+			return
+		}
+		nRead := tooShort.ExpectedLen - p
+		_, e := io.ReadFull(conn, buf[p:nRead])
+		if e != nil {
+			// early eof
+			return
 		}
 	}
 	ok, rep, _, cid := s.authenticator.Authenticate(req)
