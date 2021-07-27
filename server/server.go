@@ -2,10 +2,14 @@ package server
 
 import (
 	_ "crypto/tls"
+	"errors"
 	"io"
 	"log"
 	"net"
+	"os"
+	"sync"
 	"syscall"
+	"time"
 
 	_ "github.com/pion/dtls/v2"
 	"github.com/studentmain/socks6"
@@ -49,38 +53,23 @@ func (s *Server) startTCP(addr string) {
 
 func (s *Server) handleConn(conn *net.TCPConn) {
 	defer conn.Close()
+	mrw := socks6.MessageReaderWriter{}
 	req := socks6.Request{}
-	buf := make([]byte, 0, 64)
-	p := 0
-	for n := 0; n < 16; n++ {
-		_, err := req.Deserialize(buf)
-		if err == nil {
-			break
-		}
-		tooShort, ok := err.(socks6.ErrTooShort)
-		if !ok {
-			// handle error
-			return
-		}
-		nRead := tooShort.ExpectedLen - p
-		_, e := io.ReadFull(conn, buf[p:nRead])
-		if e != nil {
-			// early eof
-			return
-		}
+	l, err := mrw.DeserializeFrom(&req, conn)
+	log.Print(l)
+	log.Print(err)
+	log.Print(req)
+	if err != nil {
+		return
 	}
+
 	ok, rep, _, cid := s.authenticator.Authenticate(req)
 	log.Println(cid)
-	buf = make([]byte, 1024)
-	l, err := rep.Serialize(buf)
+	err = mrw.SerializeTo(&rep, conn)
 	if err != nil {
 		log.Fatal(err)
 	}
-	_, err = conn.Write(buf[:l])
-	if err != nil {
-		log.Print(err)
-		return
-	}
+
 	if !ok {
 		// TODO: slow path
 		// TODO: wait client?
@@ -92,9 +81,12 @@ func (s *Server) handleConn(conn *net.TCPConn) {
 
 	if s.Rule != nil {
 		if !s.Rule(req.CommandCode, req.Endpoint, conn.RemoteAddr(), cid) {
-			_ = socks6.OperationReply{
-				ReplyCode: socks6.OperationReplyNotAllowedByRule,
-			}
+			mrw.SerializeTo(
+				&socks6.OperationReply{
+					ReplyCode: socks6.OperationReplyNotAllowedByRule,
+				},
+				conn,
+			)
 			return
 		}
 	}
@@ -104,15 +96,45 @@ func (s *Server) handleConn(conn *net.TCPConn) {
 			// report error
 			return
 		}
+		defer c.Close()
 
 		c.Write(req.InitialData)
 		// reply,start proxy
-		_ = socks6.OperationReply{
-			ReplyCode:            socks6.OperationReplySuccess,
-			RemoteLegStackOption: r,
-		}
+		go mrw.SerializeTo(
+			&socks6.OperationReply{
+				ReplyCode:            socks6.OperationReplySuccess,
+				RemoteLegStackOption: r,
+			},
+			conn,
+		)
+		relay(c, conn)
 	}
 }
+
+// relay copies between left and right bidirectionally
+// copy pasted from go-shadowsocks2
+func relay(left, right net.Conn) error {
+	var err, err1 error
+	var wg sync.WaitGroup
+	var wait = 5 * time.Second
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		_, err1 = io.Copy(right, left)
+		right.SetReadDeadline(time.Now().Add(wait)) // unblock read on right
+	}()
+	_, err = io.Copy(left, right)
+	left.SetReadDeadline(time.Now().Add(wait)) // unblock read on left
+	wg.Wait()
+	if err1 != nil && !errors.Is(err1, os.ErrDeadlineExceeded) { // requires Go 1.15+
+		return err1
+	}
+	if err != nil && !errors.Is(err, os.ErrDeadlineExceeded) {
+		return err
+	}
+	return nil
+}
+
 func makeDestConn(req socks6.Request) (net.Conn, socks6.StackOptionData, error) {
 	rso := req.RemoteLegStackOption
 	supported := socks6.StackOptionData{}

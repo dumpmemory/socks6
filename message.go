@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
+	"io"
 
 	"net"
 	"strconv"
@@ -116,6 +117,65 @@ func (e Endpoint) SerializeAddress(b []byte) (int, error) {
 	}
 }
 
+type Message interface {
+	Serialize(buf []byte) (int, error)
+	Deserialize(buf []byte) (int, error)
+}
+
+type MessageReaderWriter struct{}
+
+func (m MessageReaderWriter) DeserializeFrom(msg Message, r io.Reader) (int, error) {
+	buf := []byte{}
+	p := 0
+	for i := 0; i < 64; i++ {
+		l, err := msg.Deserialize(buf)
+
+		if err == nil {
+			return l, err
+		}
+		if ets, ok := err.(ErrTooShort); ok {
+			nRead := ets.ExpectedLen - p
+			buf = append(buf, make([]byte, nRead)...)
+			nActual, err := io.ReadFull(r, buf[p:ets.ExpectedLen])
+			if nRead != nActual {
+				return 0, io.ErrNoProgress
+			}
+			if err != nil {
+				return 0, err
+			}
+			p = ets.ExpectedLen
+		} else {
+			return 0, err
+		}
+	}
+	return p, nil
+}
+
+func (m MessageReaderWriter) Serialize(msg Message) ([]byte, error) {
+	buf := []byte{}
+	for i := 0; i < 64; i++ {
+		l, err := msg.Serialize(buf)
+		if err == nil {
+			return buf[:l], err
+		}
+		if ets, ok := err.(ErrTooShort); ok {
+			buf = make([]byte, ets.ExpectedLen*2)
+		} else {
+			return nil, err
+		}
+	}
+	return nil, ErrParse
+}
+
+func (m MessageReaderWriter) SerializeTo(msg Message, w io.Writer) error {
+	b, err := m.Serialize(msg)
+	if err != nil {
+		return err
+	}
+	_, err = w.Write(b)
+	return err
+}
+
 type Request struct {
 	Version     byte
 	CommandCode byte
@@ -157,7 +217,7 @@ func (r *Request) Serialize(buf []byte) (int, error) {
 	if len(r.Methods) > 0 {
 		o, err := AuthenticationMethodAdvertisementOptionCtor(buf[pOption:], r.Methods, len(r.InitialData))
 		if err != nil {
-			return 0, err
+			return 0, addExpectedLen(err, pOption)
 		}
 		pOption += int(Option(o).Length())
 
@@ -249,7 +309,7 @@ func (r *Request) Deserialize(buf []byte) (int, error) {
 	r.Endpoint.AddressType = buf[7]
 	pOption, err := r.Endpoint.DeserializeAddress(buf[8:])
 	if err != nil {
-		return 0, err
+		return 0, addExpectedLen(err, 8+lOption)
 	}
 	pOption += 8
 	r.ClientLegStackOption = StackOptionData{}
@@ -519,6 +579,9 @@ type AuthenticationReply struct {
 }
 
 func (a *AuthenticationReply) Serialize(buf []byte) (int, error) {
+	if len(buf) < 4 {
+		return 0, ErrTooShort{ExpectedLen: 4}
+	}
 	buf[0] = 6
 	buf[1] = a.Type
 	pOption := 4
