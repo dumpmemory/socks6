@@ -1,5 +1,7 @@
 # SOCKS 6 Golang implementation
 
+Not production ready.
+
 ## Progress
 
 currently based on draft 11
@@ -7,11 +9,12 @@ currently based on draft 11
 ### What works
 
 - TCP relay
+- Some stack option (remote leg only)
 - Noop ?
 - Bind ? 
 - Bind with backlog ? (backlog is simulated)
 - Session ?
-- Some stack option (remote leg only)
+- TLS ?
 
 ### TODO list
 
@@ -19,11 +22,10 @@ currently based on draft 11
 - UDP
 - Token
 - Authentication
-- TLS
 - DTLS
 - Client API
 - Test coverage
-- Remove spagehtti code in handleConn
+- Follow golang conventions
 - ...
 
 ### Not TODO

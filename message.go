@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
-	"io"
 	"regexp"
 	"strings"
 
@@ -146,60 +145,6 @@ func (e Endpoint) SerializeAddress(b []byte) (int, error) {
 type Message interface {
 	Serialize(buf []byte) (int, error)
 	Deserialize(buf []byte) (int, error)
-}
-
-type MessageReaderWriter struct{}
-
-func (m MessageReaderWriter) DeserializeFrom(msg Message, r io.Reader) (int, error) {
-	buf := []byte{}
-	p := 0
-	for i := 0; i < 64; i++ {
-		l, err := msg.Deserialize(buf)
-
-		if err == nil {
-			return l, err
-		}
-		if ets, ok := err.(ErrTooShort); ok {
-			nRead := ets.ExpectedLen - p
-			buf = append(buf, make([]byte, nRead)...)
-			nActual, err := io.ReadFull(r, buf[p:ets.ExpectedLen])
-			if nRead != nActual {
-				return 0, io.ErrNoProgress
-			}
-			if err != nil {
-				return 0, err
-			}
-			p = ets.ExpectedLen
-		} else {
-			return 0, err
-		}
-	}
-	return p, nil
-}
-
-func (m MessageReaderWriter) Serialize(msg Message) ([]byte, error) {
-	buf := []byte{}
-	for i := 0; i < 64; i++ {
-		l, err := msg.Serialize(buf)
-		if err == nil {
-			return buf[:l], err
-		}
-		if ets, ok := err.(ErrTooShort); ok {
-			buf = make([]byte, ets.ExpectedLen*2)
-		} else {
-			return nil, err
-		}
-	}
-	return nil, ErrParse
-}
-
-func (m MessageReaderWriter) SerializeTo(msg Message, w io.Writer) error {
-	b, err := m.Serialize(msg)
-	if err != nil {
-		return err
-	}
-	_, err = w.Write(b)
-	return err
 }
 
 type Request struct {
@@ -579,15 +524,6 @@ func (s StackOptionData) Serialize(buf []byte, leg byte) (int, error) {
 	}
 	return p, nil
 }
-
-type VersionMismatchReply struct {
-	// v=6
-}
-
-const (
-	AuthenticationReplySuccess = 0
-	AuthenticationReplyFail    = 1
-)
 
 type AuthenticationReply struct {
 	Type byte

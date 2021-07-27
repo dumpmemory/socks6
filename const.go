@@ -20,6 +20,11 @@ const (
 )
 
 const (
+	AuthenticationReplySuccess = 0
+	AuthenticationReplyFail    = 1
+)
+
+const (
 	OperationReplySuccess byte = iota
 	OperationReplyServerFailure
 	OperationReplyNotAllowedByRule

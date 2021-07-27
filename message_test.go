@@ -42,7 +42,7 @@ func TestRequest(t *testing.T) {
 	if r.Endpoint.String() != "example.com:80" {
 		t.Fail()
 	}
-	if !byteArrayEq(r.InitialData, []byte{1, 2, 3, 4}) {
+	if !socks6.ByteArrayEqual(r.InitialData, []byte{1, 2, 3, 4}) {
 		t.Fail()
 	}
 }
