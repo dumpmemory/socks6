@@ -66,3 +66,7 @@ func setsocks6optTcpClient(fd uintptr, opt socks6.StackOptionData) socks6.StackO
 
 	return rep
 }
+
+func setsocks6optTcpServer(fd uintptr, opt socks6.StackOptionData) socks6.StackOptionData {
+	return setsocks6optTcpClient(fd, opt)
+}

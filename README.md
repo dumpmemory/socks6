@@ -7,19 +7,23 @@ currently based on draft 11
 ### What works
 
 - TCP relay
+- Noop ?
+- Bind ? 
+- Bind with backlog ? (backlog is simulated)
+- Session ?
 - Some stack option (remote leg only)
 
 ### TODO list
 
 - Other platform
 - UDP
-- BIND
-- Session & Token
+- Token
 - Authentication
 - TLS
 - DTLS
 - Client API
 - Test coverage
+- Remove spagehtti code in handleConn
 - ...
 
 ### Not TODO

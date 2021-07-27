@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	_ "crypto/tls"
 	"errors"
 	"io"
@@ -13,6 +14,7 @@ import (
 
 	_ "github.com/pion/dtls/v2"
 	"github.com/studentmain/socks6"
+	"golang.org/x/sync/semaphore"
 )
 
 type Server struct {
@@ -21,14 +23,23 @@ type Server struct {
 	udpListener  *net.UDPConn
 	dtlsListener *net.Listener
 
-	udpAssociations map[uint64]bool
-	authenticator   DefaultAuthenticator
+	udpAssociations       map[uint64]bool
+	authenticator         DefaultAuthenticator
+	backloggedConnections map[string]backloggedConnectionInfo
 
 	Rule func(op byte, dst, src net.Addr, cid ClientID) bool
 }
 
+type backloggedConnectionInfo struct {
+	sessionId  []byte
+	clientConn chan net.Conn
+	done       chan int
+	remoteAddr string
+}
+
 func (s *Server) Start() {
-	s.startTCP(":10888")
+	s.authenticator.MethodSelector.AddMethod(NoneAuthentication{})
+	s.startTCP(net.JoinHostPort("", "10888"))
 }
 
 // todo: stop
@@ -63,14 +74,15 @@ func (s *Server) handleConn(conn *net.TCPConn) {
 		return
 	}
 
-	ok, rep, _, cid := s.authenticator.Authenticate(req)
-	log.Println(cid)
+	auth, rep := s.authenticator.Authenticate(req)
+
+	log.Println(auth.ClientID)
 	err = mrw.SerializeTo(&rep, conn)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	if !ok {
+	if !auth.Success {
 		// TODO: slow path
 		// TODO: wait client?
 		return
@@ -80,7 +92,7 @@ func (s *Server) handleConn(conn *net.TCPConn) {
 	log.Print("auth finish")
 
 	if s.Rule != nil {
-		if !s.Rule(req.CommandCode, req.Endpoint, conn.RemoteAddr(), cid) {
+		if !s.Rule(req.CommandCode, req.Endpoint, conn.RemoteAddr(), auth.ClientID) {
 			mrw.SerializeTo(
 				&socks6.OperationReply{
 					ReplyCode: socks6.OperationReplyNotAllowedByRule,
@@ -104,10 +116,143 @@ func (s *Server) handleConn(conn *net.TCPConn) {
 			&socks6.OperationReply{
 				ReplyCode:            socks6.OperationReplySuccess,
 				RemoteLegStackOption: r,
+				SessionID:            auth.SessionID,
 			},
 			conn,
 		)
 		relay(c, conn)
+	} else if req.CommandCode == socks6.CommandNoop {
+		mrw.SerializeTo(
+			&socks6.OperationReply{
+				ReplyCode: socks6.OperationReplySuccess,
+				SessionID: auth.SessionID,
+			},
+			conn,
+		)
+	} else if req.CommandCode == socks6.CommandBind {
+		l, r, err := makeDestListener(req)
+		if err != nil {
+			log.Print(err)
+			// todo reply err
+			return
+		}
+
+		// find corresponding backlog conn
+		reqAddr := req.Endpoint.String()
+		if backlogged, ok := s.backloggedConnections[reqAddr]; ok {
+			if false /*auth.SessionID == backlogged.sessionId*/ {
+				return
+			}
+			backlogged.clientConn <- conn
+			<-backlogged.done
+		}
+
+		backloggedBind := req.RemoteLegStackOption.Backlog != nil
+		nBacklog := *req.RemoteLegStackOption.Backlog
+		if backloggedBind {
+			r.Backlog = &nBacklog
+		}
+		mrw.SerializeTo(
+			&socks6.OperationReply{
+				ReplyCode:            socks6.OperationReplySuccess,
+				SessionID:            auth.SessionID,
+				RemoteLegStackOption: r,
+			},
+			conn,
+		)
+		if !backloggedBind {
+			defer l.Close()
+			rconn, err := l.Accept()
+			if err != nil {
+				return
+			}
+			defer rconn.Close()
+			raddr := rconn.RemoteAddr()
+			ep := socks6.Endpoint{}
+			ep.ParseEndpoint(raddr.String())
+			go mrw.SerializeTo(
+				&socks6.OperationReply{
+					ReplyCode: socks6.OperationReplySuccess,
+					SessionID: auth.SessionID,
+					Endpoint:  ep,
+				},
+				conn,
+			)
+			relay(conn, rconn)
+		} else {
+			// watch control conn eof
+			ctx, eof := context.WithCancel(context.Background())
+			go func() {
+				drain(conn)
+				// clear backlogged conn
+				for k, v := range s.backloggedConnections {
+					if /*v.sessionId == auth.SessionID*/ true && len(v.sessionId) > 0 {
+						delete(s.backloggedConnections, k)
+					}
+				}
+				// close listener
+				l.Close()
+				// cancel ctx
+				eof()
+			}()
+			// emulated backlog
+			sem := semaphore.NewWeighted(int64(nBacklog))
+			for {
+				// wait other conn accepted
+				err = sem.Acquire(ctx, 1)
+				rconn, err := l.Accept()
+				if err != nil {
+					return
+				}
+				defer rconn.Close()
+				if err != nil {
+					return
+				}
+				// put bci info
+				raddr := rconn.RemoteAddr().String()
+				bci := backloggedConnectionInfo{
+					sessionId:  auth.SessionID,
+					clientConn: make(chan net.Conn),
+					done:       make(chan int),
+					remoteAddr: raddr,
+				}
+				s.backloggedConnections[raddr] = bci
+				// send op reply 2
+				ep := socks6.Endpoint{}
+				ep.ParseEndpoint(raddr)
+				go mrw.SerializeTo(
+					&socks6.OperationReply{
+						ReplyCode: socks6.OperationReplySuccess,
+						SessionID: auth.SessionID,
+						Endpoint:  ep,
+					},
+					conn,
+				)
+				var conn2 net.Conn
+				select {
+				case <-ctx.Done():
+					return
+				// wait accept bind
+				case conn2 = <-bci.clientConn:
+					sem.Release(1)
+					delete(s.backloggedConnections, raddr)
+					defer func() {
+						bci.done <- 1
+					}()
+					relay(rconn, conn2)
+				}
+			}
+		}
+	}
+}
+
+func drain(conn net.Conn) error {
+	b := make([]byte, 32)
+	for {
+		_, err := conn.Read(b)
+		if err != nil {
+			return err
+		}
 	}
 }
 
@@ -161,4 +306,19 @@ func makeDestConn(req socks6.Request) (net.Conn, socks6.StackOptionData, error) 
 	}
 	c, e := d.Dial("tcp", req.Endpoint.String())
 	return c, supported, e
+}
+
+func makeDestListener(req socks6.Request) (net.Listener, socks6.StackOptionData, error) {
+	supported := socks6.StackOptionData{}
+	cfg := net.ListenConfig{
+		Control: func(network, address string, c syscall.RawConn) error {
+			c.Control(
+				func(fd uintptr) {
+					supported = setsocks6optTcpServer(fd, req.RemoteLegStackOption)
+				})
+			return nil
+		},
+	}
+	l, err := cfg.Listen(context.Background(), "tcp", "")
+	return l, supported, err
 }

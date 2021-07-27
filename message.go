@@ -5,6 +5,8 @@ import (
 	"encoding/binary"
 	"errors"
 	"io"
+	"regexp"
+	"strings"
 
 	"net"
 	"strconv"
@@ -57,6 +59,30 @@ func (e Endpoint) String() string {
 	}
 	return s + ":" + strconv.FormatInt(int64(e.Port), 10)
 }
+func (e *Endpoint) ParseEndpoint(s string) error {
+	rhost, rports, err := net.SplitHostPort(s)
+	if err != nil {
+		return err
+	}
+	re := regexp.MustCompile(`[a-zA-Z]`)
+	if strings.Contains(rhost, ":") {
+		e.AddressType = AddressTypeIPv6
+		e.Address = net.ParseIP(rhost)
+	} else if re.MatchString(rhost) {
+		e.AddressType = AddressTypeDomainName
+		e.Address = []byte(rhost)
+	} else {
+		e.AddressType = AddressTypeIPv4
+		e.Address = net.ParseIP(rhost)
+	}
+	rport, err := strconv.ParseUint(rports, 10, 16)
+	e.Port = uint16(rport)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
 func (e *Endpoint) DeserializeAddress(b []byte) (int, error) {
 	switch e.AddressType {
 	case AddressTypeIPv4:
