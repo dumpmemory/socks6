@@ -264,14 +264,11 @@ func (s *Server) handleBindNoBacklog(l net.Listener, conn net.Conn, req socks6.R
 		return
 	}
 	defer rconn.Close()
-	raddr := rconn.RemoteAddr()
-	ep := socks6.Endpoint{}
-	ep.ParseEndpoint(raddr.String())
 	go socks6.WriteMessageTo(
 		&socks6.OperationReply{
 			ReplyCode: socks6.OperationReplySuccess,
 			SessionID: auth.SessionID,
-			Endpoint:  ep,
+			Endpoint:  socks6.NewEndpoint(rconn.RemoteAddr().String()),
 		},
 		conn,
 	)
@@ -321,13 +318,11 @@ func (s *Server) handleBindBacklog(
 		}
 		s.backloggedConnections[raddr] = bci
 		// send op reply 2
-		ep := socks6.Endpoint{}
-		ep.ParseEndpoint(raddr)
 		go socks6.WriteMessageTo(
 			&socks6.OperationReply{
 				ReplyCode: socks6.OperationReplySuccess,
 				SessionID: auth.SessionID,
-				Endpoint:  ep,
+				Endpoint:  socks6.NewEndpoint(raddr),
 			},
 			conn,
 		)

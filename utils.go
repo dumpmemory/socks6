@@ -54,7 +54,7 @@ func writeMessage(msg Message) ([]byte, error) {
 			return nil, err
 		}
 	}
-	return nil, ErrParse
+	return nil, ErrFormat
 }
 
 func WriteMessageTo(msg Message, w io.Writer) error {

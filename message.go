@@ -19,6 +19,11 @@ func (e ErrTooShort) Error() string {
 	return "buffer too short, need at least " + strconv.FormatInt(int64(e.ExpectedLen), 10)
 }
 
+func (e ErrTooShort) Is(t error) bool {
+	_, ok := t.(ErrTooShort)
+	return ok
+}
+
 func addExpectedLen(e error, l int) error {
 	if ets, ok := e.(ErrTooShort); ok {
 		return ErrTooShort{ExpectedLen: ets.ExpectedLen + l}
@@ -28,7 +33,7 @@ func addExpectedLen(e error, l int) error {
 
 var ErrEnumValue = errors.New("unexpected enum value")
 var ErrVersion = errors.New("version is not 6")
-var ErrParse = errors.New("can't parse message")
+var ErrFormat = errors.New("wrong message format")
 var ErrAddressTypeNotSupport = errors.New("unknown address type")
 
 type Endpoint struct {
@@ -36,11 +41,19 @@ type Endpoint struct {
 	AddressType byte
 	Address     []byte
 
-	NetString string
+	Net string
 }
 
+func NewEndpoint(addr string) Endpoint {
+	r := Endpoint{}
+	err := r.parseEndpoint(addr)
+	if err != nil {
+		return Endpoint{}
+	}
+	return r
+}
 func (e Endpoint) Network() string {
-	return e.NetString
+	return e.Net
 }
 func (e Endpoint) String() string {
 	var s string
@@ -52,13 +65,11 @@ func (e Endpoint) String() string {
 		s = ip.String()
 	case AddressTypeIPv6:
 		ip := net.IP(e.Address[:16])
-		s = "[" + ip.String() + "]"
-	default:
-		s = ""
+		s = ip.String()
 	}
-	return s + ":" + strconv.FormatInt(int64(e.Port), 10)
+	return net.JoinHostPort(s, strconv.FormatInt(int64(e.Port), 10))
 }
-func (e *Endpoint) ParseEndpoint(s string) error {
+func (e *Endpoint) parseEndpoint(s string) error {
 	rhost, rports, err := net.SplitHostPort(s)
 	if err != nil {
 		return err
@@ -66,13 +77,13 @@ func (e *Endpoint) ParseEndpoint(s string) error {
 	re := regexp.MustCompile(`[a-zA-Z]`)
 	if strings.Contains(rhost, ":") {
 		e.AddressType = AddressTypeIPv6
-		e.Address = net.ParseIP(rhost)
+		e.Address = net.ParseIP(rhost).To16()
 	} else if re.MatchString(rhost) {
 		e.AddressType = AddressTypeDomainName
 		e.Address = []byte(rhost)
 	} else {
 		e.AddressType = AddressTypeIPv4
-		e.Address = net.ParseIP(rhost)
+		e.Address = net.ParseIP(rhost).To4()
 	}
 	rport, err := strconv.ParseUint(rports, 10, 16)
 	e.Port = uint16(rport)
@@ -111,7 +122,7 @@ func (e *Endpoint) DeserializeAddress(b []byte) (int, error) {
 	}
 }
 func (e Endpoint) SerializeAddress(b []byte) (int, error) {
-	l := 4
+	l := 0
 	switch e.AddressType {
 	case AddressTypeIPv4:
 		l = 4
@@ -119,6 +130,14 @@ func (e Endpoint) SerializeAddress(b []byte) (int, error) {
 		l = 16
 	case AddressTypeDomainName:
 		l = len(e.Address) + 1
+		// 4n+0=>(4n+0+3)/4*4=>(4n+3)/4*4=>4n
+		// 4n+1=>(4n+1+3)/4*4=>(4n+4)/4*4=>4(n+1)
+		// 4n+2=>(4n+2+3)/4*4=>(4n+4+1)/4*4=>4(n+1)
+		// 4n+3=>(4n+3+3)/4*4=>(4n+4+2)/4*4=>4(n+1)
+		expectedSize := (l + 3) / 4 * 4
+		if len(b) < expectedSize {
+			return 0, ErrTooShort{ExpectedLen: expectedSize}
+		}
 	}
 	if len(b) < l {
 		return 0, ErrTooShort{ExpectedLen: l}
@@ -129,13 +148,11 @@ func (e Endpoint) SerializeAddress(b []byte) (int, error) {
 		return l, nil
 	case AddressTypeDomainName:
 		p := (4 - l%4) % 4
-		if len(b) < l+p {
-			return 0, ErrTooShort{l + p}
-		}
 		for i := 0; i < p; i++ {
 			b[l+i] = 0
 		}
-		copy(b, e.Address)
+		b[0] = byte(l + p - 1)
+		copy(b[1:], e.Address)
 		return l + p, nil
 	default:
 		return 0, ErrEnumValue
@@ -296,7 +313,7 @@ func (r *Request) Deserialize(buf []byte) (int, error) {
 		lOption -= l
 		pOption += l
 		if lOption < 0 {
-			return 0, ErrParse
+			return 0, ErrFormat
 		}
 		switch op.Kind() {
 		case OptionKindStack:
@@ -602,7 +619,7 @@ func (a *AuthenticationReply) Deserialize(buf []byte) (int, error) {
 		return 0, ErrTooShort{ExpectedLen: 4}
 	}
 	if buf[0] != 6 {
-		return 0, ErrParse
+		return 0, ErrFormat
 	}
 	a.Type = buf[1]
 	lOption := int(binary.BigEndian.Uint16(buf[2:]))
@@ -617,7 +634,7 @@ func (a *AuthenticationReply) Deserialize(buf []byte) (int, error) {
 		pOption += l
 		lOption -= l
 		if lOption < 0 {
-			return 0, ErrParse
+			return 0, ErrFormat
 		}
 		switch op.Kind() {
 		case OptionKindAuthenticationMethodData:
@@ -701,7 +718,7 @@ func (o *OperationReply) Deserialize(buf []byte) (int, error) {
 		return 0, ErrTooShort{ExpectedLen: 10}
 	}
 	if buf[0] != 0 {
-		return 0, ErrParse
+		return 0, ErrFormat
 	}
 	o.ReplyCode = buf[1]
 	lOption := int(binary.BigEndian.Uint16(buf[2:]))
@@ -727,7 +744,7 @@ func (o *OperationReply) Deserialize(buf []byte) (int, error) {
 		lOption -= l
 		pOption += l
 		if lOption < 0 {
-			return 0, ErrParse
+			return 0, ErrFormat
 		}
 		switch op.Kind() {
 		case OptionKindStack:

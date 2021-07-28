@@ -3,7 +3,6 @@ package socks6
 import (
 	"encoding/binary"
 	"log"
-	"math"
 )
 
 const (
@@ -28,8 +27,11 @@ const (
 type Option []byte
 
 func OptionCtor(o Option, kind, length uint16) (Option, error) {
-	if len(o) < int(length) || length < 4 {
-		return nil, ErrTooShort{ExpectedLen: int(math.Max(float64(length), 4))}
+	if length < 4 {
+		return nil, ErrFormat
+	}
+	if len(o) < int(length) {
+		return nil, ErrTooShort{ExpectedLen: int(length)}
 	}
 	binary.BigEndian.PutUint16(o, kind)
 	binary.BigEndian.PutUint16(o[2:], length)
@@ -76,6 +78,12 @@ const (
 type StackOption Option
 
 func StackOptionCtor(o Option, leg, level, code byte, length uint16) (StackOption, error) {
+	if leg >= 0b100 || level >= 0b100_0000 || leg == 0 {
+		return nil, ErrEnumValue
+	}
+	if length < 6 {
+		return nil, ErrFormat
+	}
 	_, err := OptionCtor(o, OptionKindStack, length)
 	if err != nil {
 		return nil, err
@@ -137,7 +145,6 @@ func (o HappyEyeballOption) Availability() bool {
 	} else if o[6] == stackHappyEyeballOptionNo {
 		return false
 	}
-	log.Printf("Invalid happy eyeball availability %d, treat as false", o[6])
 	return false
 }
 
