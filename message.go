@@ -201,7 +201,6 @@ func (r *Request) Serialize(buf []byte) (int, error) {
 	}
 	hLen += 8
 	pOption := hLen
-
 	if len(r.Methods) > 0 {
 		o, err := AuthenticationMethodAdvertisementOptionCtor(buf[pOption:], r.Methods, len(r.InitialData))
 		if err != nil {

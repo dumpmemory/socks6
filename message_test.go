@@ -158,6 +158,7 @@ func TestRequest_Serialize(t *testing.T) {
 	r := socks6.Request{
 		CommandCode: 1,
 		Endpoint:    socks6.NewEndpoint("1.2.3.4:9961"),
+		MethodData:  map[byte][]byte{},
 	}
 	buf := make([]byte, 8+0xff+1+0xffff+0xffff)
 	l, err := r.Serialize(buf)
@@ -169,5 +170,28 @@ func TestRequest_Serialize(t *testing.T) {
 	_, err = r.Serialize(buf[:11])
 	assert.Equal(t, socks6.ErrTooShort{ExpectedLen: 12}, err)
 
-	// todo test for options
+	r.Methods = []byte{0xfe}
+	r.MethodData[0xfe] = []byte{1, 2, 3, 4}
+
+	r.SessionID = []byte{2, 3, 4, 5}
+	r.RequestTeardown = true
+	_, err = r.Serialize(buf)
+	assert.Nil(t, err)
+
+	r.SessionID = nil
+	r.RequestTeardown = false
+	r.RequestSession = true
+	r.RequestToken = 1024
+	_, err = r.Serialize(buf)
+	assert.Nil(t, err)
+
+	r.RequestToken = 0
+	r.SessionID = []byte{2, 3, 4, 5}
+	r.UseToken = true
+	r.TokenToSpend = 19260817
+	_, err = r.Serialize(buf)
+	assert.Nil(t, err)
+
+	// todo validate wireformat
+	// todo deal with the advanced error handling
 }

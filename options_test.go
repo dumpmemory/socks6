@@ -194,9 +194,138 @@ func TestAuthenticationMethodAdvertisementOption(t *testing.T) {
 	assert.Equal(t, []byte{2}, op.Methods())
 
 	buf := make([]byte, 12)
-	_, err := socks6.AuthenticationMethodAdvertisementOptionCtor(buf, []byte{1, 2, 3}, 5)
+	o, err := socks6.AuthenticationMethodAdvertisementOptionCtor(buf, []byte{1, 2, 3}, 5)
 	assert.Nil(t, err)
-	assert.Equal(t, []byte{0, 2, 0, 12, 0, 5, 1, 2, 3, 0, 0, 0}, buf)
+	assert.Equal(t, 12, len(o))
+	assert.Equal(t, []byte{0, 2, 0, 12, 0, 5}, buf[:6])
+	assert.ElementsMatch(t, []byte{1, 2, 3, 0, 0, 0}, buf[6:12])
 	_, err = socks6.AuthenticationMethodAdvertisementOptionCtor(buf[:1], []byte{1, 2, 3}, 0)
 	assert.Equal(t, socks6.ErrTooShort{ExpectedLen: 12}, err)
+}
+
+func TestAuthenticationMethodSelectionOption(t *testing.T) {
+	op := socks6.AuthenticationMethodSelectionOption([]byte{0, 3, 0, 8, 2, 0, 0, 0})
+	assert.Equal(t, byte(2), op.Method())
+
+	buf := make([]byte, 8)
+	_, err := socks6.AuthenticationMethodSelectionOptionCtor(buf, 1)
+	assert.Nil(t, err)
+	assert.Equal(t, []byte{0, 3, 0, 8, 1, 0, 0, 0}, buf)
+	_, err = socks6.AuthenticationMethodSelectionOptionCtor(buf[:1], 1)
+	assert.Equal(t, socks6.ErrTooShort{ExpectedLen: 8}, err)
+}
+
+func TestAuthenticationDataOption(t *testing.T) {
+	op := socks6.AuthenticationDataOption([]byte{0, 4, 0, 8, 1, 1, 2, 3})
+	assert.Equal(t, byte(1), op.Method())
+	assert.Equal(t, []byte{1, 2, 3}, op.AuthenticationData())
+
+	buf := make([]byte, 8)
+	_, err := socks6.AuthenticationDataOptionCtor(buf, 1, 8)
+	assert.Nil(t, err)
+	assert.Equal(t, []byte{0, 4, 0, 8, 1, 0, 0, 0}, buf)
+	_, err = socks6.AuthenticationDataOptionCtor(buf[:1], 1, 8)
+	assert.Equal(t, socks6.ErrTooShort{ExpectedLen: 8}, err)
+}
+
+func TestSessionRequestOption(t *testing.T) {
+	buf := make([]byte, 4)
+	_, err := socks6.SessionRequestOptionCtor(buf)
+	assert.Nil(t, err)
+	assert.Equal(t, []byte{0, 5, 0, 4}, buf)
+	_, err = socks6.SessionRequestOptionCtor(buf[:1])
+	assert.Equal(t, socks6.ErrTooShort{ExpectedLen: 4}, err)
+}
+
+func TestSessionIDOption(t *testing.T) {
+	op := socks6.SessionIDOption([]byte{0, 6, 0, 8, 1, 2, 3, 4})
+	assert.Equal(t, []byte{1, 2, 3, 4}, op.ID())
+
+	buf := make([]byte, 8)
+	_, err := socks6.SessionIDOptionCtor(buf, []byte{1, 2, 3, 4})
+	assert.Nil(t, err)
+	assert.Equal(t, []byte{0, 6, 0, 8, 1, 2, 3, 4}, buf)
+	_, err = socks6.SessionIDOptionCtor(buf[:1], []byte{1, 2, 3, 4})
+	assert.Equal(t, socks6.ErrTooShort{ExpectedLen: 8}, err)
+}
+
+func TestSessionOKOption(t *testing.T) {
+	buf := make([]byte, 4)
+	_, err := socks6.SessionOKOptionCtor(buf)
+	assert.Nil(t, err)
+	assert.Equal(t, []byte{0, 8, 0, 4}, buf)
+	_, err = socks6.SessionOKOptionCtor(buf[:1])
+	assert.Equal(t, socks6.ErrTooShort{ExpectedLen: 4}, err)
+}
+
+func TestSessionInvalidOption(t *testing.T) {
+	buf := make([]byte, 4)
+	_, err := socks6.SessionInvalidOptionCtor(buf)
+	assert.Nil(t, err)
+	assert.Equal(t, []byte{0, 9, 0, 4}, buf)
+	_, err = socks6.SessionInvalidOptionCtor(buf[:1])
+	assert.Equal(t, socks6.ErrTooShort{ExpectedLen: 4}, err)
+}
+
+func TestSessionTeardownOption(t *testing.T) {
+	buf := make([]byte, 4)
+	_, err := socks6.SessionTeardownOptionCtor(buf)
+	assert.Nil(t, err)
+	assert.Equal(t, []byte{0, 10, 0, 4}, buf)
+	_, err = socks6.SessionTeardownOptionCtor(buf[:1])
+	assert.Equal(t, socks6.ErrTooShort{ExpectedLen: 4}, err)
+}
+
+func TestTokenRequestOption(t *testing.T) {
+	op := socks6.TokenRequestOption([]byte{0, 11, 0, 8, 0, 0, 1, 0})
+	assert.Equal(t, uint32(256), op.WindowSize())
+
+	buf := make([]byte, 8)
+	_, err := socks6.TokenRequestOptionCtor(buf, 256)
+	assert.Nil(t, err)
+	assert.Equal(t, []byte{0, 11, 0, 8, 0, 0, 1, 0}, buf)
+	_, err = socks6.TokenRequestOptionCtor(buf[:1], 256)
+	assert.Equal(t, socks6.ErrTooShort{ExpectedLen: 8}, err)
+}
+
+func TestIdempotenceWindowOption(t *testing.T) {
+	op := socks6.IdempotenceWindowOption([]byte{0, 12, 0, 12, 0, 0, 1, 0, 0, 0, 2, 0})
+	assert.Equal(t, uint32(256), op.WindowBase())
+	assert.Equal(t, uint32(512), op.WindowSize())
+
+	buf := make([]byte, 12)
+	_, err := socks6.IdempotenceWindowOptionCtor(buf, 256, 512)
+	assert.Nil(t, err)
+	assert.Equal(t, []byte{0, 12, 0, 12, 0, 0, 1, 0, 0, 0, 2, 0}, buf)
+	_, err = socks6.IdempotenceWindowOptionCtor(buf[:1], 256, 512)
+	assert.Equal(t, socks6.ErrTooShort{ExpectedLen: 12}, err)
+}
+
+func TestIdempotenceExpenditureOption(t *testing.T) {
+	op := socks6.IdempotenceExpenditureOption([]byte{0, 13, 0, 8, 0, 0, 1, 0})
+	assert.Equal(t, uint32(256), op.Token())
+
+	buf := make([]byte, 8)
+	_, err := socks6.IdempotenceExpenditureOptionCtor(buf, 256)
+	assert.Nil(t, err)
+	assert.Equal(t, []byte{0, 13, 0, 8, 0, 0, 1, 0}, buf)
+	_, err = socks6.IdempotenceExpenditureOptionCtor(buf[:1], 256)
+	assert.Equal(t, socks6.ErrTooShort{ExpectedLen: 8}, err)
+}
+
+func TestIdempotenceAcceptedOption(t *testing.T) {
+	buf := make([]byte, 4)
+	_, err := socks6.IdempotenceAcceptedOptionCtor(buf)
+	assert.Nil(t, err)
+	assert.Equal(t, []byte{0, 14, 0, 4}, buf)
+	_, err = socks6.IdempotenceAcceptedOptionCtor(buf[:1])
+	assert.Equal(t, socks6.ErrTooShort{ExpectedLen: 4}, err)
+}
+func TestIdempotenceRejectedOption(t *testing.T) {
+	buf := make([]byte, 4)
+	_, err := socks6.IdempotenceRejectedOptionCtor(buf)
+	assert.Nil(t, err)
+	assert.Equal(t, []byte{0, 15, 0, 4}, buf)
+	_, err = socks6.IdempotenceRejectedOptionCtor(buf[:1])
+	assert.Equal(t, socks6.ErrTooShort{ExpectedLen: 4}, err)
 }

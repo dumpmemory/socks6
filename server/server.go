@@ -136,13 +136,19 @@ func (s *Server) startTLS(addr string) {
 }
 
 func (s *Server) handleConn(conn net.Conn) {
-	defer conn.Close()
+	dontClose := false
+	defer func() {
+		if !dontClose {
+			conn.Close()
+		}
+	}()
 	req := socks6.Request{}
 	l, err := socks6.ReadMessageFrom(&req, conn)
 	log.Print(l)
 	log.Print(err)
 	log.Print(req)
 	if err != nil {
+		// todo fallback
 		return
 	}
 
