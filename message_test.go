@@ -135,23 +135,143 @@ func TestEndpoint_Network(t *testing.T) {
 	assert.Equal(t, "tcp", ep.Network())
 }
 
-func extractOptions(buf []byte) []socks6.Option {
-	o := []socks6.Option{}
-	for p := 0; len(buf[p:]) > 0; {
-		op := socks6.Option(buf[p:])
-		p += int(op.Length())
-		o = append(o, op)
-	}
-	return o
-}
+func TestRequest_Deserialize(t *testing.T) {
+	r := socks6.Request{}
 
-func pickOption(o []socks6.Option, kind uint16) socks6.Option {
-	for _, v := range o {
-		if v.Kind() == kind {
-			return v
-		}
-	}
-	return nil
+	l, err := r.Deserialize([]byte{
+		6, 0, 0, 0,
+		0, 80, 0, 3,
+		11, 'e', 'x', 'a',
+		'm', 'p', 'l', 'e',
+		'.', 'c', 'o', 'm',
+		1, 2, 3, 4,
+	})
+	assert.Nil(t, err)
+	assert.Equal(t, 20, l)
+	assert.Equal(t, socks6.Request{
+		CommandCode: socks6.CommandNoop,
+		Endpoint:    socks6.NewEndpoint("example.com:80"),
+		MethodData:  map[byte][]byte{},
+	}, r)
+
+	_, err = r.Deserialize(nil)
+	assert.Equal(t, socks6.ErrTooShort{ExpectedLen: 1}, err)
+	_, err = r.Deserialize([]byte{6})
+	assert.Equal(t, socks6.ErrTooShort{ExpectedLen: 10}, err)
+	_, err = r.Deserialize([]byte{5, 1, 0})
+	assert.Equal(t, socks6.ErrVersion, err)
+	_, err = r.Deserialize([]byte{
+		6, 0, 0, 0,
+		0, 80, 0, 1,
+		127, 0, 0,
+	})
+	assert.Equal(t, socks6.ErrTooShort{ExpectedLen: 12}, err)
+	_, err = r.Deserialize([]byte{
+		6, 0, 0, 8,
+		0, 80, 0, 1,
+		127, 0, 0, 1,
+	})
+	assert.Equal(t, socks6.ErrTooShort{ExpectedLen: 20}, err)
+	_, err = r.Deserialize([]byte{
+		6, 0, 0, 8,
+		0, 80, 0, 1,
+		127, 0, 0, 1,
+		0, 2, 0, 8, 0, 64, 1, 0,
+	})
+	assert.Equal(t, socks6.ErrTooShort{ExpectedLen: 84}, err)
+	_, err = r.Deserialize([]byte{
+		6, 0, 0, 8,
+		0, 80, 0, 1,
+		127, 0, 0, 1,
+		0, 0, 0, 100, 0, 0, 0, 0,
+	})
+	assert.Equal(t, socks6.ErrFormat, err)
+
+	r = socks6.Request{}
+	l, err = r.Deserialize([]byte{
+		6, 0, 0, 8, 0, 80, 0, 1, 127, 0, 0, 1,
+		0, 2, 0, 8, 0, 4, 1, 0,
+		1, 2, 3, 4,
+		5, 6, 7, 8,
+	})
+	assert.Nil(t, err)
+	assert.Equal(t, 24, l)
+	assert.Equal(t, socks6.Request{
+		CommandCode: socks6.CommandNoop,
+		Endpoint:    socks6.NewEndpoint("127.0.0.1:80"),
+		MethodData:  map[byte][]byte{},
+		Methods:     []byte{1},
+		InitialData: []byte{1, 2, 3, 4},
+	}, r)
+
+	r = socks6.Request{}
+	l, err = r.Deserialize([]byte{
+		6, 0, 0, 72, 0, 80, 0, 1, 127, 0, 0, 1,
+		0, 1, 0, 8, 0b11_000001, 1, 3, 0,
+		0, 1, 0, 8, 0b01_000001, 2, 2, 0,
+		0, 1, 0, 8, 0b01_000001, 3, 3, 0,
+		0, 1, 0, 8, 0b01_000001, 4, 1, 0,
+		0, 1, 0, 8, 0b01_000100, 1, 2, 0,
+		0, 1, 0, 8, 0b01_000100, 2, 1, 0,
+		0, 1, 0, 8, 0b01_000100, 3, 2, 0,
+		0, 1, 0, 8, 0b01_000101, 1, 2, 0,
+		0, 1, 0, 8, 0b01_000101, 2, 3, 1,
+	})
+	assert.Nil(t, err)
+	assert.Equal(t, 84, l)
+	p3 := byte(3)
+	p512 := uint16(512)
+	pf := false
+	pt := true
+	assert.Equal(t, socks6.Request{
+		CommandCode: socks6.CommandNoop,
+		Endpoint:    socks6.NewEndpoint("127.0.0.1:80"),
+		MethodData:  map[byte][]byte{},
+		ClientLegStackOption: socks6.StackOptionData{
+			TOS:          &p3,
+			HappyEyeball: &pt,
+			TTL:          &p3,
+			DF:           &pf,
+
+			TFO:     &p512,
+			MPTCP:   &pf,
+			Backlog: &p512,
+
+			UDPError: &pt,
+			Parity:   &p3,
+			Reserve:  &pt,
+		},
+		RemoteLegStackOption: socks6.StackOptionData{
+			TOS: &p3,
+		},
+	}, r)
+
+	r = socks6.Request{}
+	l, err = r.Deserialize([]byte{
+		6, 0, 0, 56, 0, 80, 0, 1, 127, 0, 0, 1,
+		0, 2, 0, 8, 0, 0, 1, 0,
+		0, 4, 0, 12, 1, 1, 2, 3, 4, 5, 6, 7,
+		0, 5, 0, 4,
+		0, 6, 0, 12, 1, 2, 3, 4, 5, 6, 7, 8,
+		0, 10, 0, 4,
+		0, 11, 0, 8, 0, 0, 1, 0,
+		0, 13, 0, 8, 0, 0, 1, 0,
+		5, 6, 7, 8,
+	})
+	assert.Nil(t, err)
+	assert.Equal(t, 68, l)
+	assert.Equal(t, socks6.Request{
+		CommandCode:     socks6.CommandNoop,
+		Endpoint:        socks6.NewEndpoint("127.0.0.1:80"),
+		MethodData:      map[byte][]byte{1: {1, 2, 3, 4, 5, 6, 7}},
+		Methods:         []byte{1},
+		RequestSession:  true,
+		SessionID:       []byte{1, 2, 3, 4, 5, 6, 7, 8},
+		RequestTeardown: true,
+		RequestToken:    256,
+		UseToken:        true,
+		TokenToSpend:    256,
+	}, r)
 }
 
 func TestRequest_Serialize(t *testing.T) {
@@ -194,4 +314,17 @@ func TestRequest_Serialize(t *testing.T) {
 
 	// todo validate wireformat
 	// todo deal with the advanced error handling
+}
+
+// todo stackoptiondata test
+
+func TestAuthenticationReply_Deserialize(t *testing.T) {
+	a := socks6.AuthenticationReply{}
+
+	l, err := a.Deserialize([]byte{6, 1, 0, 0, 1, 2, 3, 4})
+	assert.Nil(t, err)
+	assert.Equal(t, 4, l)
+	assert.Equal(t, socks6.AuthenticationReply{
+		Type: socks6.AuthenticationReplyFail,
+	}, a)
 }

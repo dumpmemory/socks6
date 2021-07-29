@@ -99,13 +99,13 @@ func (e *Endpoint) DeserializeAddress(b []byte) (int, error) {
 		if len(b) < 4 {
 			return 0, ErrTooShort{ExpectedLen: 4}
 		}
-		e.Address = b
+		e.Address = b[:4]
 		return 4, nil
 	case AddressTypeIPv6:
 		if len(b) < 16 {
 			return 0, ErrTooShort{ExpectedLen: 16}
 		}
-		e.Address = b
+		e.Address = b[:16]
 		return 16, nil
 	case AddressTypeDomainName:
 		if len(b) < 2 {
@@ -282,11 +282,15 @@ func (r *Request) Serialize(buf []byte) (int, error) {
 }
 
 func (r *Request) Deserialize(buf []byte) (int, error) {
-	if len(buf) < 10 {
-		return 0, ErrTooShort{ExpectedLen: 10}
+	// special case to support fallback
+	if len(buf) < 1 {
+		return 0, ErrTooShort{ExpectedLen: 1}
 	}
 	if buf[0] != 6 {
 		return 0, ErrVersion
+	}
+	if len(buf) < 10 {
+		return 0, ErrTooShort{ExpectedLen: 10}
 	}
 	lInitialData := 0
 	r.CommandCode = buf[1]
@@ -445,31 +449,41 @@ func (s *StackOptionData) ApplyOption(o StackOption) {
 	case StackOptionLevelIP:
 		switch o.Code() {
 		case StackOptionCodeIPTOS:
-			*s.TOS = TOSOption(o).TOS()
+			t := TOSOption(o).TOS()
+			s.TOS = &t
 		case StackOptionCodeIPHappyEyeball:
-			*s.HappyEyeball = HappyEyeballOption(o).Availability()
+			a := HappyEyeballOption(o).Availability()
+			s.HappyEyeball = &a
 		case StackOptionCodeIPTTL:
-			*s.TTL = TTLOption(o).TTL()
+			t := TTLOption(o).TTL()
+			s.TTL = &t
 		case StackOptionCodeIPDF:
-			*s.DF = NoFragmentationOption(o).Availability()
+			a := NoFragmentationOption(o).Availability()
+			s.DF = &a
 		}
 	case StackOptionLevelTCP:
 		switch o.Code() {
 		case StackOptionCodeTCPTFO:
-			*s.TFO = TFOOption(o).PayloadSize()
+			p := TFOOption(o).PayloadSize()
+			s.TFO = &p
 		case StackOptionCodeTCPMultipath:
-			*s.MPTCP = MultipathOption(o).Availability()
+			a := MultipathOption(o).Availability()
+			s.MPTCP = &a
 		case StackOptionCodeTCPBacklog:
-			*s.Backlog = BacklogOption(o).Backlog()
+			b := BacklogOption(o).Backlog()
+			s.Backlog = &b
 		}
 	case StackOptionLevelUDP:
 		switch o.Code() {
 		case StackOptionCodeUDPUDPError:
-			*s.UDPError = UDPErrorOption(o).Availability()
+			a := UDPErrorOption(o).Availability()
+			s.UDPError = &a
 		case StackOptionCodeUDPPortParity:
 			p := PortParityOption(o)
-			*s.Parity = p.Parity()
-			*s.Reserve = p.Reserve()
+			pp := p.Parity()
+			s.Parity = &pp
+			pr := p.Reserve()
+			s.Reserve = &pr
 		}
 	}
 }

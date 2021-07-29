@@ -338,8 +338,8 @@ func AuthenticationMethodAdvertisementOptionCtor(o Option, methods []byte, initi
 	return AuthenticationMethodAdvertisementOption(o), nil
 }
 func (o AuthenticationMethodAdvertisementOption) Methods() []byte {
-	e := len(o)
-	for i := 7; i < len(o); i++ {
+	e := Option(o).Length()
+	for i := uint16(7); i < Option(o).Length(); i++ {
 		if o[i] == 0 {
 			e = i
 		}
