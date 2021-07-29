@@ -9,9 +9,9 @@ currently based on draft 11
 ### What works
 
 - TCP relay
+- Bind
 - Some stack option (remote leg only)
 - Noop ?
-- Bind ? 
 - Bind with backlog ? (backlog is simulated)
 - Session ?
 - TLS ?

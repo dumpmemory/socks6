@@ -55,11 +55,13 @@ func (s *Server) startTCP(addr string) {
 	}
 
 	go func() {
-		c, err := s.tcpListener.AcceptTCP()
-		if err != nil {
-			log.Fatal(err)
+		for {
+			c, err := s.tcpListener.AcceptTCP()
+			if err != nil {
+				log.Fatal(err)
+			}
+			go s.handleConn(c)
 		}
-		go s.handleConn(c)
 	}()
 }
 
@@ -127,11 +129,13 @@ func (s *Server) startTLS(addr string) {
 	s.tlsListener = fd
 
 	go func() {
-		c, err := s.tlsListener.Accept()
-		if err != nil {
-			log.Fatal(err)
+		for {
+			c, err := s.tlsListener.Accept()
+			if err != nil {
+				log.Fatal(err)
+			}
+			go s.handleConn(c)
 		}
-		go s.handleConn(c)
 	}()
 }
 
@@ -228,6 +232,7 @@ func (s *Server) handleNoop(conn net.Conn, req socks6.Request, auth Authenticati
 
 func (s *Server) handleBind(conn net.Conn, req socks6.Request, auth AuthenticationResult) {
 	l, r, err := makeDestListener(req)
+	log.Print(l.Addr().String())
 	if err != nil {
 		log.Print(err)
 		// todo reply err
@@ -245,15 +250,19 @@ func (s *Server) handleBind(conn net.Conn, req socks6.Request, auth Authenticati
 	}
 
 	backloggedBind := req.RemoteLegStackOption.Backlog != nil
-	nBacklog := *req.RemoteLegStackOption.Backlog
+	nBacklog := uint16(0)
 	if backloggedBind {
+		nBacklog = *req.RemoteLegStackOption.Backlog
 		r.Backlog = &nBacklog
 	}
+
+	// write op reply 1
 	socks6.WriteMessageTo(
 		&socks6.OperationReply{
 			ReplyCode:            socks6.OperationReplySuccess,
 			SessionID:            auth.SessionID,
 			RemoteLegStackOption: r,
+			Endpoint:             socks6.NewEndpoint(l.Addr().String()),
 		},
 		conn,
 	)
@@ -270,7 +279,9 @@ func (s *Server) handleBindNoBacklog(l net.Listener, conn net.Conn, req socks6.R
 		return
 	}
 	defer rconn.Close()
-	go socks6.WriteMessageTo(
+
+	// op reply 2
+	socks6.WriteMessageTo(
 		&socks6.OperationReply{
 			ReplyCode: socks6.OperationReplySuccess,
 			SessionID: auth.SessionID,
@@ -286,6 +297,8 @@ func (s *Server) handleBindBacklog(
 	conn net.Conn,
 	req socks6.Request,
 	auth AuthenticationResult) {
+	// not tested
+
 	// watch control conn eof
 	ctx, eof := context.WithCancel(context.Background())
 	go func() {
@@ -421,6 +434,6 @@ func makeDestListener(req socks6.Request) (net.Listener, socks6.StackOptionData,
 			return nil
 		},
 	}
-	l, err := cfg.Listen(context.Background(), "tcp", "")
+	l, err := cfg.Listen(context.Background(), "tcp", req.Endpoint.String())
 	return l, supported, err
 }

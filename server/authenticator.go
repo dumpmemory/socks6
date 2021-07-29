@@ -29,6 +29,12 @@ func (a *AuthenticationMethodSelector) EnableMethod(m []string) {
 	}
 }
 func (a *AuthenticationMethodSelector) Authenticate(req socks6.Request) AuthenticationResult {
+	if len(a.idMap) == 0 {
+		return AuthenticationResult{
+			Success:        true,
+			SelectedMethod: socks6.AuthenticationMethodNone,
+		}
+	}
 	m := append(req.Methods, 0)
 	// todo: uniq
 	ia := byte(0)
