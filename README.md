@@ -15,11 +15,11 @@ currently based on draft 11
 - Bind with backlog ? (backlog is simulated)
 - Session ?
 - TLS ?
+- UDP ?
 
 ### TODO list
 
 - Other platform
-- UDP
 - Token
 - Authentication
 - DTLS

@@ -49,7 +49,7 @@ func writeMessage(msg Message) ([]byte, error) {
 			return buf[:l], err
 		}
 		if ets, ok := err.(ErrTooShort); ok {
-			buf = make([]byte, ets.ExpectedLen*2)
+			buf = make([]byte, ets.ExpectedLen)
 		} else {
 			return nil, err
 		}

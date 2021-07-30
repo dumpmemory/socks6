@@ -778,8 +778,122 @@ func (o *OperationReply) Deserialize(buf []byte) (int, error) {
 type UDPHeader struct {
 	Type          byte
 	AssociationID uint64
-	Length        uint16
-	//
-	Endpoint      Endpoint
+	// dgram & icmp
+	Endpoint Endpoint
+	// icmp
 	ErrorEndpoint Endpoint
+	ErrorCode     byte
+	// dgram
+	Data []byte
+}
+
+func (u *UDPHeader) Serialize(buf []byte) (int, error) {
+	switch u.Type {
+	case UDPMessageAssociationInit:
+	case UDPMessageAssociationAck:
+		if len(buf) < 12 {
+			return 0, ErrTooShort{ExpectedLen: 12}
+		}
+		buf[0] = 1
+		buf[1] = u.Type
+		binary.BigEndian.PutUint16(buf[2:], 12)
+		binary.BigEndian.PutUint64(buf[4:], u.AssociationID)
+		return 12, nil
+	case UDPMessageDatagram:
+		if len(buf) < 18 {
+			return 0, ErrTooShort{ExpectedLen: 18}
+		}
+		buf[0] = 1
+		buf[1] = u.Type
+		binary.BigEndian.PutUint64(buf[4:], u.AssociationID)
+		buf[12] = u.Endpoint.AddressType
+		binary.BigEndian.PutUint16(buf[14:], u.Endpoint.Port)
+		l, err := u.Endpoint.SerializeAddress(buf[16:])
+		if err != nil {
+			return 0, addExpectedLen(err, 16)
+		}
+		binary.BigEndian.PutUint16(buf[2:], uint16(16+l+len(u.Data)))
+		copy(buf[16+l:], u.Data)
+		return 16 + l + len(u.Data), nil
+	case UDPMessageError:
+		if len(buf) < 18 {
+			return 0, ErrTooShort{ExpectedLen: 18}
+		}
+		buf[0] = 1
+		buf[1] = u.Type
+		binary.BigEndian.PutUint64(buf[4:], u.AssociationID)
+		buf[12] = u.Endpoint.AddressType
+		binary.BigEndian.PutUint16(buf[14:], u.Endpoint.Port)
+		l, err := u.Endpoint.SerializeAddress(buf[16:])
+		if err != nil {
+			return 0, addExpectedLen(err, 16)
+		}
+		p := l + 16
+		if len(buf) < p+6 {
+			return 0, ErrTooShort{ExpectedLen: p + 6}
+		}
+		buf[p] = u.ErrorEndpoint.AddressType
+		buf[p+1] = u.ErrorCode
+		l, err = u.Endpoint.SerializeAddress(buf[p+4:])
+		if err != nil {
+			return 0, addExpectedLen(err, p+4)
+		}
+		binary.BigEndian.PutUint16(buf[2:], uint16(p+4+l))
+		return p + 4 + l, nil
+	}
+	return 0, ErrEnumValue
+}
+
+func (u *UDPHeader) Deserialize(buf []byte) (int, error) {
+	// todo socks5 fallback support?
+	if len(buf) < 12 {
+		return 0, ErrTooShort{ExpectedLen: 12}
+	}
+	lMsg := binary.BigEndian.Uint16(buf[2:])
+	if len(buf) < int(lMsg) {
+		return 0, ErrTooShort{ExpectedLen: int(lMsg)}
+	}
+	u.Type = buf[1]
+	u.AssociationID = binary.BigEndian.Uint64(buf[4:])
+
+	if u.Type == UDPMessageAssociationInit || u.Type == UDPMessageAssociationAck {
+		return 12, nil
+	}
+	if len(buf) < 18 {
+		return 0, ErrTooShort{ExpectedLen: 18}
+	}
+	u.Endpoint = Endpoint{
+		AddressType: buf[8],
+		Port:        binary.BigEndian.Uint16(buf[10:]),
+	}
+	l, err := u.Endpoint.DeserializeAddress(buf[12:])
+	if err != nil {
+		return 0, addExpectedLen(err, 12)
+	}
+	lFull := binary.BigEndian.Uint16(buf[2:])
+	if len(buf) < int(lFull) {
+		return 0, ErrTooShort{ExpectedLen: int(lFull)}
+	}
+	if int(lFull) < 12+l {
+		return 0, ErrFormat
+	}
+	u.Data = buf[12+l : lFull]
+
+	if u.Type == UDPMessageDatagram {
+		return int(lFull), nil
+	}
+
+	p := 12 + l
+	if len(buf) < p+6 {
+		return 0, ErrTooShort{ExpectedLen: p + 6}
+	}
+	u.ErrorCode = buf[p+1]
+	u.ErrorEndpoint = Endpoint{
+		AddressType: buf[p],
+	}
+	l, err = u.ErrorEndpoint.DeserializeAddress(buf[p+4:])
+	if err != nil {
+		return 0, addExpectedLen(err, p+l+4)
+	}
+	return p + l + 4, nil
 }

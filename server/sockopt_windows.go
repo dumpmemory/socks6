@@ -21,7 +21,7 @@ func setsockoptBtoi(b bool) int {
 	}
 	return val
 }
-func setsocks6optTcpClient(fd uintptr, opt socks6.StackOptionData) socks6.StackOptionData {
+func setsocks6optIp(fd uintptr, opt socks6.StackOptionData) socks6.StackOptionData {
 	const DF = 14
 	rep := socks6.StackOptionData{}
 	h := syscall.Handle(fd)
@@ -62,11 +62,20 @@ func setsocks6optTcpClient(fd uintptr, opt socks6.StackOptionData) socks6.StackO
 		real := byte(v)
 		rep.TTL = &real
 	}
-	// no tfo and mptcp for all platform
-
 	return rep
 }
 
+func setsocks6optTcpClient(fd uintptr, opt socks6.StackOptionData) socks6.StackOptionData {
+
+	// no tfo and mptcp for all platform
+
+	return setsocks6optIp(fd, opt)
+}
+
 func setsocks6optTcpServer(fd uintptr, opt socks6.StackOptionData) socks6.StackOptionData {
-	return setsocks6optTcpClient(fd, opt)
+	return setsocks6optIp(fd, opt)
+}
+
+func setsocks6optUdp(fd uintptr, opt socks6.StackOptionData) socks6.StackOptionData {
+	return setsocks6optIp(fd, opt)
 }

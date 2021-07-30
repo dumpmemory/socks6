@@ -1,8 +1,11 @@
 package server
 
 import (
+	"bytes"
 	"context"
+	"crypto/rand"
 	"crypto/tls"
+	"encoding/binary"
 	"errors"
 	"io"
 	"log"
@@ -12,7 +15,7 @@ import (
 	"syscall"
 	"time"
 
-	_ "github.com/pion/dtls/v2"
+	"github.com/pion/dtls/v2"
 	"github.com/studentmain/socks6"
 	"golang.org/x/sync/semaphore"
 )
@@ -21,11 +24,12 @@ type Server struct {
 	tcpListener  *net.TCPListener
 	tlsListener  net.Listener
 	udpListener  *net.UDPConn
-	dtlsListener *net.Listener
+	dtlsListener net.Listener
 
-	udpAssociations       map[uint64]bool
+	udpAssociations       map[uint64]udpAssociationInfo
 	authenticator         DefaultAuthenticator
 	backloggedConnections map[string]backloggedConnectionInfo
+	reservedPorts         map[string]udpReservedPort
 
 	Rule func(op byte, dst, src net.Addr, cid ClientID) bool
 }
@@ -35,6 +39,27 @@ type backloggedConnectionInfo struct {
 	clientConn chan net.Conn
 	done       chan int
 	remoteAddr string
+}
+
+type udpAssociationInfo struct {
+	tcp bool
+	// udp or dtls 5 tuple
+	dgramLocal  net.Addr
+	dgramRemote net.Addr
+	dgramNet    string
+
+	received chan int
+	downlink chan socks6.UDPHeader
+	conn     net.UDPConn
+
+	icmpError bool
+	// todo: how? allocate port when req?
+	reservedPort uint16
+}
+
+type udpReservedPort struct {
+	sessionId []byte
+	conn      *net.UDPConn
 }
 
 func (s *Server) Start() {
@@ -139,6 +164,35 @@ func (s *Server) startTLS(addr string) {
 	}()
 }
 
+func (s *Server) startUDP(addr string) {
+	addr2, err := net.ResolveUDPAddr("udp", addr)
+	if err != nil {
+		log.Fatal(err)
+	}
+	buf := make([]byte, 4096)
+	s.udpListener, err = net.ListenUDP("udp", addr2)
+	for {
+		l, raddr, err := s.udpListener.ReadFrom(buf)
+		if err != nil {
+			log.Print(err)
+		}
+		s.handleUDP(raddr, buf[:l])
+	}
+}
+
+func (s *Server) startDTLS(addr string) {
+	addr2, err := net.ResolveUDPAddr("udp", addr)
+	if err != nil {
+		log.Fatal(err)
+	}
+	cert, _ := tls.X509KeyPair([]byte(debugPem), []byte(debugKey))
+	s.dtlsListener, err = dtls.Listen("udp", addr2, &dtls.Config{
+		Certificates: []tls.Certificate{cert},
+	})
+
+	//todo figure out how dtls api works
+}
+
 func (s *Server) handleConn(conn net.Conn) {
 	dontClose := false
 	defer func() {
@@ -190,6 +244,8 @@ func (s *Server) handleConn(conn net.Conn) {
 		s.handleNoop(conn, req, auth)
 	case socks6.CommandBind:
 		s.handleBind(conn, req, auth)
+	case socks6.CommandUdpAssociate:
+		s.handleUDPAssociation(conn, req, auth)
 	default:
 		socks6.WriteMessageTo(
 			&socks6.OperationReply{
@@ -209,7 +265,7 @@ func (s *Server) handleConnect(conn net.Conn, req socks6.Request, auth Authentic
 	defer c.Close()
 	c.Write(req.InitialData)
 
-	go socks6.WriteMessageTo(
+	socks6.WriteMessageTo(
 		&socks6.OperationReply{
 			ReplyCode:            socks6.OperationReplySuccess,
 			RemoteLegStackOption: r,
@@ -361,6 +417,157 @@ func (s *Server) handleBindBacklog(
 	}
 }
 
+func (s *Server) handleUDPAssociation(conn net.Conn, req socks6.Request, auth AuthenticationResult) {
+	desired := req.Endpoint.String()
+	var c *net.UDPConn
+	r := socks6.StackOptionData{}
+	desc, ok := s.reservedPorts[desired]
+	if ok {
+		if socks6.ByteArrayEqual(auth.SessionID, desc.sessionId) {
+			c = desc.conn
+		}
+	} else {
+		cc, rr, err := makeDestUDP(req)
+		c = cc
+		r = rr
+		if err != nil {
+			// report error
+			return
+		}
+	}
+	defer c.Close()
+	socks6.WriteMessageTo(
+		&socks6.OperationReply{
+			ReplyCode:            socks6.OperationReplySuccess,
+			RemoteLegStackOption: r,
+			SessionID:            auth.SessionID,
+		},
+		conn,
+	)
+	b := make([]byte, 8)
+	_, err := rand.Read(b)
+	// todo unique associd
+	assocId := binary.BigEndian.Uint64(b)
+	if err != nil {
+		return
+	}
+	socks6.WriteMessageTo(
+		&socks6.UDPHeader{
+			Type:          socks6.UDPMessageAssociationInit,
+			AssociationID: assocId,
+		},
+		conn,
+	)
+	assoc := udpAssociationInfo{}
+	s.udpAssociations[assocId] = assoc
+
+	// read tcp uplink
+	go func() {
+		for {
+			h := socks6.UDPHeader{}
+			_, err := socks6.ReadMessageFrom(&h, conn)
+			if err != nil {
+				return
+			}
+			switch h.Type {
+			case socks6.UDPMessageDatagram:
+				if assoc.tcp {
+					// assoc to conn
+
+				} else if assoc.dgramNet == "" {
+					// not assoc yet
+					assoc.tcp = true
+					assoc.received <- 1
+				} else {
+					// another assoc
+					continue
+				}
+				if assocId != h.AssociationID {
+					continue
+				}
+				raddrStr := h.Endpoint.String()
+				raddr, err := net.ResolveUDPAddr("udp", raddrStr)
+				if err != nil {
+					continue
+				}
+				c.WriteTo(h.Data, raddr)
+			default:
+			}
+		}
+	}()
+
+	// send assoc confirm
+	<-assoc.received
+	socks6.WriteMessageTo(
+		&socks6.UDPHeader{
+			Type:          socks6.UDPMessageAssociationAck,
+			AssociationID: assocId,
+		},
+		conn,
+	)
+	go func() {
+		for {
+			buf := make([]byte, 4096)
+			l, raddr, err := c.ReadFrom(buf)
+			if err != nil {
+				log.Print(err)
+			}
+			h := socks6.UDPHeader{
+				Type:          socks6.UDPMessageDatagram,
+				AssociationID: assocId,
+				Endpoint:      socks6.NewEndpoint(raddr.String()),
+				Data:          make([]byte, l),
+			}
+			assoc.downlink <- h
+		}
+	}()
+	if assoc.tcp {
+		for {
+			h := <-assoc.downlink
+			socks6.WriteMessageTo(&h, conn)
+		}
+	} else {
+		drain(conn)
+	}
+}
+
+func (s *Server) handleUDP(addr net.Addr, buf []byte) {
+	h := socks6.UDPHeader{}
+	r := bytes.NewReader(buf)
+	_, err := socks6.ReadMessageFrom(&h, r)
+	if err != nil {
+		return
+	}
+	assocId := h.AssociationID
+	assoc, ok := s.udpAssociations[assocId]
+	// no assoc
+	if !ok {
+		return
+	}
+	// already assoc on tcp
+	if assoc.tcp {
+		return
+	}
+
+	// TODO udp & dtls
+	if assoc.dgramNet != "" {
+		if assoc.dgramLocal.String() != s.udpListener.LocalAddr().String() ||
+			assoc.dgramRemote.String() != addr.String() {
+			// another udp assoc
+			return
+		}
+		raddr, err := net.ResolveUDPAddr("udp", h.Endpoint.String())
+		if err != nil {
+			return
+		}
+		assoc.conn.WriteTo(h.Data, raddr)
+		return
+	} else {
+		assoc.received <- 1
+	}
+
+}
+
 func drain(conn net.Conn) error {
 	b := make([]byte, 32)
 	for {
@@ -436,4 +643,33 @@ func makeDestListener(req socks6.Request) (net.Listener, socks6.StackOptionData,
 	}
 	l, err := cfg.Listen(context.Background(), "tcp", req.Endpoint.String())
 	return l, supported, err
+}
+
+func makeDestUDP(req socks6.Request) (*net.UDPConn, socks6.StackOptionData, error) {
+	ep := req.Endpoint.String()
+	addr, err := net.ResolveUDPAddr("udp", ep)
+	op := socks6.StackOptionData{}
+	if err != nil {
+		log.Print(err)
+		return nil, op, err
+	}
+	// todo mcast?
+	uc, err := net.ListenUDP("udp", addr)
+	if err != nil {
+		log.Print(err)
+		return nil, op, err
+	}
+	op = prepareDestUDP(uc, req.RemoteLegStackOption)
+	return uc, op, nil
+}
+
+func prepareDestUDP(conn *net.UDPConn, opt socks6.StackOptionData) socks6.StackOptionData {
+	raw, _ := conn.SyscallConn()
+	op := socks6.StackOptionData{}
+
+	raw.Control(
+		func(fd uintptr) {
+			op = setsocks6optUdp(fd, opt)
+		})
+	return op
 }
