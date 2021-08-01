@@ -31,7 +31,7 @@ type Server struct {
 	udpListener  *net.UDPConn
 	dtlsListener net.Listener
 
-	udpAssociations       map[uint64]udpAssociationInfo
+	udpAssociations       map[uint64]*udpAssociationInfo
 	authenticator         DefaultAuthenticator
 	backloggedConnections map[string]backloggedConnectionInfo
 	reservedPorts         map[string]udpReservedPort
@@ -53,8 +53,8 @@ type udpAssociationInfo struct {
 	dgramRemote net.Addr
 	dgramNet    string
 
-	received chan int
-	downlink chan socks6.UDPHeader
+	received sync.Mutex
+	downlink func(b []byte) (int, error)
 	conn     net.UDPConn
 
 	icmpError bool
@@ -69,6 +69,9 @@ type udpReservedPort struct {
 
 func (s *Server) Start() {
 	// s.authenticator.MethodSelector.AddMethod(NoneAuthentication{})
+	s.udpAssociations = map[uint64]*udpAssociationInfo{}
+	s.backloggedConnections = map[string]backloggedConnectionInfo{}
+
 	cptxt := strconv.FormatUint(uint64(s.CleartextPort), 10)
 	cptxt = net.JoinHostPort(s.Address, cptxt)
 	eptxt := strconv.FormatUint(uint64(s.EncryptedPort), 10)
@@ -292,6 +295,7 @@ func (s *Server) handleConn(conn net.Conn) {
 func (s *Server) handleConnect(conn net.Conn, req socks6.Request, auth AuthenticationResult) {
 	c, r, err := makeDestConn(req)
 	if err != nil {
+		log.Print(err)
 		// report error
 		return
 	}
@@ -303,6 +307,7 @@ func (s *Server) handleConnect(conn net.Conn, req socks6.Request, auth Authentic
 			ReplyCode:            socks6.OperationReplySuccess,
 			RemoteLegStackOption: r,
 			SessionID:            auth.SessionID,
+			Endpoint:             socks6.NewEndpoint(c.LocalAddr().String()),
 		},
 		conn,
 	)
@@ -314,6 +319,7 @@ func (s *Server) handleNoop(conn net.Conn, req socks6.Request, auth Authenticati
 		&socks6.OperationReply{
 			ReplyCode: socks6.OperationReplySuccess,
 			SessionID: auth.SessionID,
+			Endpoint:  socks6.NewEndpoint("0.0.0.0:0"),
 		},
 		conn,
 	)
@@ -474,6 +480,7 @@ func (s *Server) handleUDPAssociation(conn net.Conn, req socks6.Request, auth Au
 			ReplyCode:            socks6.OperationReplySuccess,
 			RemoteLegStackOption: r,
 			SessionID:            auth.SessionID,
+			Endpoint:             socks6.NewEndpoint(c.LocalAddr().String()),
 		},
 		conn,
 	)
@@ -491,15 +498,18 @@ func (s *Server) handleUDPAssociation(conn net.Conn, req socks6.Request, auth Au
 		},
 		conn,
 	)
-	assoc := udpAssociationInfo{}
-	s.udpAssociations[assocId] = assoc
-
+	assoc := udpAssociationInfo{
+		conn: *c,
+	}
+	s.udpAssociations[assocId] = &assoc
+	assoc.received.Lock()
 	// read tcp uplink
 	go func() {
 		for {
 			h := socks6.UDPHeader{}
 			_, err := socks6.ReadMessageFrom(&h, conn)
 			if err != nil {
+				log.Print(err)
 				return
 			}
 			switch h.Type {
@@ -510,7 +520,10 @@ func (s *Server) handleUDPAssociation(conn net.Conn, req socks6.Request, auth Au
 				} else if assoc.dgramNet == "" {
 					// not assoc yet
 					assoc.tcp = true
-					assoc.received <- 1
+					assoc.downlink = func(b []byte) (int, error) {
+						return conn.Write(b)
+					}
+					assoc.received.Unlock()
 				} else {
 					// another assoc
 					continue
@@ -530,7 +543,7 @@ func (s *Server) handleUDPAssociation(conn net.Conn, req socks6.Request, auth Au
 	}()
 
 	// send assoc confirm
-	<-assoc.received
+	assoc.received.Lock()
 	socks6.WriteMessageTo(
 		&socks6.UDPHeader{
 			Type:          socks6.UDPMessageAssociationAck,
@@ -539,8 +552,8 @@ func (s *Server) handleUDPAssociation(conn net.Conn, req socks6.Request, auth Au
 		conn,
 	)
 	go func() {
+		buf := make([]byte, 4096)
 		for {
-			buf := make([]byte, 4096)
 			l, raddr, err := c.ReadFrom(buf)
 			if err != nil {
 				log.Print(err)
@@ -549,16 +562,22 @@ func (s *Server) handleUDPAssociation(conn net.Conn, req socks6.Request, auth Au
 				Type:          socks6.UDPMessageDatagram,
 				AssociationID: assocId,
 				Endpoint:      socks6.NewEndpoint(raddr.String()),
-				Data:          make([]byte, l),
+				Data:          buf[:l],
 			}
-			assoc.downlink <- h
+			b, err := socks6.WriteMessage(&h)
+
+			if err != nil {
+				log.Print(err)
+			}
+			_, err = assoc.downlink(b)
+			if err != nil {
+				log.Print(err)
+			}
 		}
 	}()
 	if assoc.tcp {
-		for {
-			h := <-assoc.downlink
-			socks6.WriteMessageTo(&h, conn)
-		}
+		// todo wait for conn close
+		time.Sleep(1 * time.Hour)
 	} else {
 		drain(conn)
 	}
@@ -582,6 +601,10 @@ func (s *Server) handleUDP(addr net.Addr, buf []byte) {
 		return
 	}
 
+	raddr, err := net.ResolveUDPAddr("udp", h.Endpoint.String())
+	if err != nil {
+		return
+	}
 	// TODO udp & dtls
 	if assoc.dgramNet != "" {
 		if assoc.dgramLocal.String() != s.udpListener.LocalAddr().String() ||
@@ -589,14 +612,20 @@ func (s *Server) handleUDP(addr net.Addr, buf []byte) {
 			// another udp assoc
 			return
 		}
-		raddr, err := net.ResolveUDPAddr("udp", h.Endpoint.String())
-		if err != nil {
-			return
-		}
 		assoc.conn.WriteTo(h.Data, raddr)
 		return
 	} else {
-		assoc.received <- 1
+		assoc.dgramNet = "udp"
+		assoc.dgramLocal = s.udpListener.LocalAddr()
+		assoc.dgramRemote = addr
+		_, err = assoc.conn.WriteTo(h.Data, raddr)
+		if err != nil {
+			log.Print(err)
+		}
+		assoc.received.Unlock()
+		assoc.downlink = func(b []byte) (int, error) {
+			return s.udpListener.WriteTo(b, addr)
+		}
 	}
 
 }

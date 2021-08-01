@@ -10,12 +10,12 @@ currently based on draft 11
 
 - TCP relay
 - Bind
+- UDP
+- Noop
 - Some stack option (remote leg only)
-- Noop ?
 - Bind with backlog ? (backlog is simulated)
 - Session ?
 - TLS ?
-- UDP ?
 - Client API ? (no bind)
 - DTLS ?
 

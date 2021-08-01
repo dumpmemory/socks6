@@ -173,6 +173,10 @@ func (c *Client) bind(conn net.Conn, is_backlogged_subconn bool) error {
 	return nil
 }
 
+func (c *Client) auth(req *socks6.Request) error {
+	return nil
+}
+
 type UDPClient struct {
 	base    net.Conn
 	uot     bool
