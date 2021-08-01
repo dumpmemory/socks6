@@ -11,6 +11,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"strconv"
 	"sync"
 	"syscall"
 	"time"
@@ -21,6 +22,10 @@ import (
 )
 
 type Server struct {
+	Address       string
+	CleartextPort uint16
+	EncryptedPort uint16
+
 	tcpListener  *net.TCPListener
 	tlsListener  net.Listener
 	udpListener  *net.UDPConn
@@ -64,8 +69,15 @@ type udpReservedPort struct {
 
 func (s *Server) Start() {
 	// s.authenticator.MethodSelector.AddMethod(NoneAuthentication{})
-	s.startTCP(net.JoinHostPort("", "10888"))
-	s.startTLS(net.JoinHostPort("", "10889"))
+	cptxt := strconv.FormatUint(uint64(s.CleartextPort), 10)
+	cptxt = net.JoinHostPort(s.Address, cptxt)
+	eptxt := strconv.FormatUint(uint64(s.EncryptedPort), 10)
+	eptxt = net.JoinHostPort(s.Address, eptxt)
+
+	s.startTCP(cptxt)
+	s.startTLS(eptxt)
+	s.startUDP(cptxt)
+	s.startDTLS(eptxt)
 }
 
 // todo: stop
@@ -171,6 +183,9 @@ func (s *Server) startUDP(addr string) {
 	}
 	buf := make([]byte, 4096)
 	s.udpListener, err = net.ListenUDP("udp", addr2)
+	if err != nil {
+		log.Fatal(err)
+	}
 	for {
 		l, raddr, err := s.udpListener.ReadFrom(buf)
 		if err != nil {
@@ -189,8 +204,26 @@ func (s *Server) startDTLS(addr string) {
 	s.dtlsListener, err = dtls.Listen("udp", addr2, &dtls.Config{
 		Certificates: []tls.Certificate{cert},
 	})
-
-	//todo figure out how dtls api works
+	if err != nil {
+		log.Fatal(err)
+	}
+	for {
+		c, err := s.dtlsListener.Accept()
+		if err != nil {
+			log.Print(err)
+			return
+		}
+		go func() {
+			defer c.Close()
+			buf := make([]byte, 4096)
+			l, err := c.Read(buf)
+			if err != nil {
+				log.Print(err)
+				return
+			}
+			s.handleUDP(c.RemoteAddr(), buf[:l])
+		}()
+	}
 }
 
 func (s *Server) handleConn(conn net.Conn) {

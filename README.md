@@ -16,14 +16,14 @@ currently based on draft 11
 - Session ?
 - TLS ?
 - UDP ?
+- Client API ? (no bind)
+- DTLS ?
 
 ### TODO list
 
 - Other platform
 - Token
 - Authentication
-- DTLS
-- Client API
 - Test coverage
 - Follow golang conventions
 - ...

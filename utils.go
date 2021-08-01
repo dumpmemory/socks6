@@ -41,7 +41,7 @@ func ReadMessageFrom(msg Message, r io.Reader) (int, error) {
 	return p, nil
 }
 
-func writeMessage(msg Message) ([]byte, error) {
+func WriteMessage(msg Message) ([]byte, error) {
 	buf := []byte{}
 	for i := 0; i < 64; i++ {
 		l, err := msg.Serialize(buf)
@@ -58,7 +58,7 @@ func writeMessage(msg Message) ([]byte, error) {
 }
 
 func WriteMessageTo(msg Message, w io.Writer) error {
-	b, err := writeMessage(msg)
+	b, err := WriteMessage(msg)
 	if err != nil {
 		return err
 	}
