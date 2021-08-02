@@ -128,7 +128,7 @@ type AuthenticationResult struct {
 
 const sessionLength = 8
 
-func (d DefaultAuthenticator) Authenticate(req socks6.Request) (AuthenticationResult, socks6.AuthenticationReply) {
+func (d *DefaultAuthenticator) Authenticate(req socks6.Request) (AuthenticationResult, socks6.AuthenticationReply) {
 	if !d.DisableSession && req.SessionID != nil {
 		h := sha3.NewShake128()
 		h.Write(req.SessionID)
@@ -138,7 +138,9 @@ func (d DefaultAuthenticator) Authenticate(req socks6.Request) (AuthenticationRe
 		if req.RequestTeardown {
 			delete(d.sessions, sid64)
 		}
-		if d.sessions[sid64] == "" || req.RequestTeardown {
+		cid, ok := d.sessions[sid64]
+		_ = cid
+		if !ok || req.RequestTeardown {
 			// fail fast
 			sar := socks6.AuthenticationReply{
 				Type:         socks6.AuthenticationReplyFail,
@@ -174,6 +176,12 @@ func (d DefaultAuthenticator) Authenticate(req socks6.Request) (AuthenticationRe
 	if !d.DisableSession && req.RequestSession {
 		msar.SessionID = make([]byte, sessionLength)
 		rand.Read(msar.SessionID)
+		h := sha3.NewShake128()
+		h.Write(msar.SessionID)
+		b := make([]byte, 8)
+		h.Read(b)
+		sid64 := binary.BigEndian.Uint64(b)
+		d.sessions[sid64] = msar.ClientID
 	} else {
 		msar.SessionID = req.SessionID
 	}

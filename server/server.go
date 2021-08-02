@@ -71,6 +71,7 @@ func (s *Server) Start() {
 	// s.authenticator.MethodSelector.AddMethod(NoneAuthentication{})
 	s.udpAssociations = map[uint64]*udpAssociationInfo{}
 	s.backloggedConnections = map[string]backloggedConnectionInfo{}
+	s.authenticator.sessions = map[uint64]ClientID{}
 
 	cptxt := strconv.FormatUint(uint64(s.CleartextPort), 10)
 	cptxt = net.JoinHostPort(s.Address, cptxt)

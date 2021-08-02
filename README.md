@@ -14,7 +14,7 @@ currently based on draft 11
 - Noop
 - Some stack option (remote leg only)
 - Bind with backlog ? (backlog is simulated)
-- Session ?
+- Session
 - TLS ?
 - Client API ? (no bind)
 - DTLS ?
