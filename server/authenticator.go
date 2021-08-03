@@ -5,6 +5,11 @@ import (
 	"crypto/rand"
 	"encoding/binary"
 	"io"
+	"log"
+	"math"
+	"sort"
+	"sync"
+	"time"
 
 	"github.com/studentmain/socks6"
 	"golang.org/x/crypto/sha3"
@@ -115,10 +120,135 @@ type DefaultAuthenticator struct {
 	DisableSession bool
 	DisableToken   bool
 	MethodSelector AuthenticationMethodSelector
-	sessions       map[uint64]ClientID // key is hashed sessionid
+	SessionTimeout time.Duration
+
+	sessions sync.Map
 }
 
-// todo: authenticate return this one instead
+type SessionInfo struct {
+	SessionID  []byte
+	ClientID   ClientID
+	lastActive time.Time
+
+	allocateLimit uint32
+	useToken      bool
+	smallestToken uint32
+	biggestToken  uint32
+	// [](start,end) ?
+	unorderedToken []uint32
+}
+
+func NewDefaultAuthenticator() DefaultAuthenticator {
+	da := DefaultAuthenticator{
+		sessions: sync.Map{},
+	}
+	da.clearTimeoutSession()
+	return da
+}
+
+func (s *SessionInfo) AllocateTokens(count uint32) (uint32, uint32) {
+	if count == 0 {
+		count = s.allocateLimit
+		if count == 0 {
+			count = 1024
+		}
+	}
+	// limit window size to reduce res usage
+	if count > 4096 {
+		count = 4096
+	}
+	if count < 32 {
+		count = 32
+	}
+	s.allocateLimit = count / 8
+	b := []byte{0, 0, 0, 0}
+	if !s.useToken {
+		_, err := rand.Read(b)
+		if err != nil {
+			log.Fatal(err)
+		}
+		s.smallestToken = binary.BigEndian.Uint32(b)
+		s.useToken = true
+	}
+	s.biggestToken = s.smallestToken + count
+	return s.smallestToken, count
+}
+
+func (s *SessionInfo) SpendToken(token uint32) (ok bool, alloc bool) {
+	if !s.useToken {
+		return false, false
+	}
+	for _, t := range s.unorderedToken {
+		if token == t {
+			return false, false
+		}
+	}
+	spent := false
+	// not overflow
+	if s.smallestToken < s.biggestToken {
+		if token >= s.smallestToken && token < s.biggestToken {
+			spent = true
+		}
+	} else {
+		if (token < s.smallestToken) == (token < s.biggestToken) {
+			spent = true
+		}
+	}
+	if !spent {
+		return false, false
+	}
+	// update remain token
+	if token == s.smallestToken+1 {
+		s.smallestToken++
+		// assume sorted
+		s.unorderedToken = s.unorderedToken[1:]
+	} else {
+		s.unorderedToken = append(s.unorderedToken, token)
+		sort.Slice(s.unorderedToken, func(i, j int) bool {
+			ti := s.unorderedToken[i]
+			tj := s.unorderedToken[j]
+			iroll := ti < s.smallestToken
+			jroll := tj < s.smallestToken
+
+			if iroll == jroll {
+				return ti < tj
+			}
+			//i rolled, so ti>tj
+			if iroll {
+				return false
+			}
+			return true
+		})
+		expectSt := s.smallestToken
+		n := 0
+		for k, v := range s.unorderedToken {
+			if expectSt == math.MaxUint32 {
+				if v != 0 {
+					n = k
+					break
+				}
+				expectSt = 0
+				continue
+			}
+			if v != expectSt+1 {
+				n = k
+				break
+			}
+			expectSt++
+		}
+		s.smallestToken = expectSt
+		s.unorderedToken = s.unorderedToken[n:]
+	}
+
+	reallocate := s.biggestToken-s.smallestToken < s.allocateLimit/4
+
+	return true, reallocate
+}
+
+type Authenticaticator interface {
+	Authenticaticate(req socks6.Request) (AuthenticationResult, socks6.AuthenticationReply)
+}
+
 type AuthenticationResult struct {
 	Success        bool
 	SelectedMethod byte
@@ -128,62 +258,108 @@ type AuthenticationResult struct {
 
 const sessionLength = 8
 
+func (d *DefaultAuthenticator) getSessionHash(id []byte) uint64 {
+	h := sha3.NewShake128()
+	h.Write(id)
+	b := make([]byte, 8)
+	h.Read(b)
+	return binary.BigEndian.Uint64(b)
+}
+
 func (d *DefaultAuthenticator) Authenticate(req socks6.Request) (AuthenticationResult, socks6.AuthenticationReply) {
+	reply := socks6.AuthenticationReply{
+		Type: socks6.AuthenticationReplyFail,
+	}
 	if !d.DisableSession && req.SessionID != nil {
-		h := sha3.NewShake128()
-		h.Write(req.SessionID)
-		b := make([]byte, 8)
-		h.Read(b)
-		sid64 := binary.BigEndian.Uint64(b)
-		if req.RequestTeardown {
-			delete(d.sessions, sid64)
-		}
-		cid, ok := d.sessions[sid64]
-		_ = cid
-		if !ok || req.RequestTeardown {
-			// fail fast
-			sar := socks6.AuthenticationReply{
-				Type:         socks6.AuthenticationReplyFail,
-				InSession:    true,
-				SessionValid: false,
-			}
-			return AuthenticationResult{
-				Success: false,
-			}, sar
-		}
-		// TODO:token
+		return d.authenticateSession(req)
+	}
+	result := d.MethodSelector.Authenticate(req)
+	if result.SelectedMethod != 0 {
+		reply.SelectedMethod = result.SelectedMethod
+	}
+	if !result.Success {
+		return result, reply
 	}
 
-	msar := d.MethodSelector.Authenticate(req)
-	if !msar.Success {
-		if msar.SelectedMethod == 0 {
-			return msar, socks6.AuthenticationReply{
-				Type: socks6.AuthenticationReplyFail,
-			}
-		} else {
-			return msar, socks6.AuthenticationReply{
-				Type:           socks6.AuthenticationReplyFail,
-				SelectedMethod: msar.SelectedMethod,
-			}
-		}
-	}
-
-	sar := socks6.AuthenticationReply{
-		Type:           socks6.AuthenticationReplySuccess,
-		SelectedMethod: msar.SelectedMethod,
-	}
+	// auth ok
+	reply.Type = socks6.AuthenticationReplySuccess
 
 	if !d.DisableSession && req.RequestSession {
-		msar.SessionID = make([]byte, sessionLength)
-		rand.Read(msar.SessionID)
-		h := sha3.NewShake128()
-		h.Write(msar.SessionID)
-		b := make([]byte, 8)
-		h.Read(b)
-		sid64 := binary.BigEndian.Uint64(b)
-		d.sessions[sid64] = msar.ClientID
-	} else {
-		msar.SessionID = req.SessionID
+		result.SessionID = make([]byte, sessionLength)
+		rand.Read(result.SessionID)
+		session := SessionInfo{
+			SessionID:  result.SessionID,
+			ClientID:   result.ClientID,
+			lastActive: time.Now(),
+		}
+		sHash := d.getSessionHash(session.SessionID)
+		if !d.DisableToken && req.RequestToken > 0 {
+			reply.NewWindowBase, reply.NewWindowSize = session.AllocateTokens(req.RequestToken)
+		}
+		d.sessions.Store(sHash, session)
 	}
-	return msar, sar
+	return result, reply
+}
+
+func (d *DefaultAuthenticator) authenticateSession(req socks6.Request) (AuthenticationResult, socks6.AuthenticationReply) {
+	sHash := d.getSessionHash(req.SessionID)
+	_s, ok := d.sessions.Load(sHash)
+	session := _s.(*SessionInfo)
+	reply := socks6.AuthenticationReply{
+		Type:      socks6.AuthenticationReplyFail,
+		InSession: true,
+	}
+	if req.RequestTeardown {
+		d.sessions.Delete(sHash)
+	}
+	// session check
+	if !ok || req.RequestTeardown {
+		reply.SessionValid = false
+		return AuthenticationResult{
+			Success: false,
+		}, reply
+	}
+
+	reply.SessionValid = true
+
+	if !d.DisableToken && req.UseToken {
+		reply.UsingToken = true
+
+		// token check
+		ok, reallocate := session.SpendToken(req.TokenToSpend)
+		if !ok {
+			reply.TokenValid = false
+			return AuthenticationResult{
+				Success: false,
+			}, reply
+		}
+		reply.TokenValid = true
+		if reallocate || req.RequestToken > 0 {
+			reply.NewWindowBase, reply.NewWindowSize = session.AllocateTokens(req.RequestToken)
+		}
+	}
+	reply.Type = socks6.AuthenticationReplySuccess
+	session.lastActive = time.Now()
+
+	return AuthenticationResult{
+		Success:   true,
+		SessionID: session.SessionID,
+		ClientID:  session.ClientID,
+	}, reply
+}
+
+func (d *DefaultAuthenticator) clearTimeoutSession() {
+	for {
+		time.Sleep(d.SessionTimeout / 5)
+
+		now := time.Now()
+		d.sessions.Range(func(key, value interface{}) bool {
+			t := value.(*SessionInfo).lastActive
+			dt := now.Sub(t)
+			if dt > d.SessionTimeout {
+				d.sessions.Delete(key)
+			}
+			return true
+		})
+	}
 }
