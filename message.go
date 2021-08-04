@@ -118,7 +118,7 @@ func (e *Endpoint) DeserializeAddress(b []byte) (int, error) {
 		e.Address = bytes.TrimRight(b[1:al+1], "\u0000")
 		return int(al) + 1, nil
 	default:
-		return 0, ErrEnumValue
+		return 0, ErrAddressTypeNotSupport
 	}
 }
 func (e Endpoint) SerializeAddress(b []byte) (int, error) {
@@ -155,7 +155,7 @@ func (e Endpoint) SerializeAddress(b []byte) (int, error) {
 		copy(b[1:], e.Address)
 		return l + p, nil
 	default:
-		return 0, ErrEnumValue
+		return 0, ErrAddressTypeNotSupport
 	}
 }
 
@@ -287,6 +287,7 @@ func (r *Request) Deserialize(buf []byte) (int, error) {
 		return 0, ErrTooShort{ExpectedLen: 1}
 	}
 	if buf[0] != 6 {
+		r.Version = buf[0]
 		return 0, ErrVersion
 	}
 	if len(buf) < 10 {

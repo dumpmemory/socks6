@@ -140,9 +140,10 @@ type SessionInfo struct {
 
 func NewDefaultAuthenticator() DefaultAuthenticator {
 	da := DefaultAuthenticator{
-		sessions: sync.Map{},
+		sessions:       sync.Map{},
+		SessionTimeout: 5 * time.Minute,
 	}
-	da.clearTimeoutSession()
+	go da.clearTimeoutSession()
 	return da
 }
 

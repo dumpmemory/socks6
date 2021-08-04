@@ -11,7 +11,7 @@ func TestEndpoint_DeserializeAddress(t *testing.T) {
 	ep := socks6.Endpoint{}
 
 	_, err := ep.DeserializeAddress([]byte{})
-	assert.Equal(t, socks6.ErrEnumValue, err)
+	assert.Equal(t, socks6.ErrAddressTypeNotSupport, err)
 
 	ep.AddressType = socks6.AddressTypeIPv4
 	l, err := ep.DeserializeAddress([]byte{1, 2, 3, 4})
@@ -68,7 +68,7 @@ func TestEndpoint_SerializeAddress(t *testing.T) {
 	ep := socks6.Endpoint{}
 	buf := make([]byte, 64)
 	_, err := ep.SerializeAddress(buf)
-	assert.Equal(t, socks6.ErrEnumValue, err)
+	assert.Equal(t, socks6.ErrAddressTypeNotSupport, err)
 
 	ep.AddressType = socks6.AddressTypeIPv4
 	ep.Address = []byte{1, 2, 3, 4}

@@ -30,6 +30,9 @@ currently based on draft 11
 - Authentication
 - Test coverage
 - Follow golang conventions
+- Server exe
+- SOCKS 5 to 6 converter ?
+- Client demo ?
 - ...
 
 ### Not TODO
@@ -42,7 +45,8 @@ If somebody implemented these feature, just send patch.
     Not supported in Go stdlib and some desktop OS (yet).
 - UDP Error Option.
     Non privileged ICMP PacketConn in Go is not supported on some desktop OS (yet).
-
+- Multicast UDP
+    I need to read the *TCP/IP Illustrated* first...
 
 ## Reference
 

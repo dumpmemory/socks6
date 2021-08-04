@@ -2,7 +2,7 @@ package main
 
 import (
 	"crypto/tls"
-	"time"
+	"log"
 
 	"github.com/studentmain/socks6/server"
 )
@@ -60,6 +60,7 @@ fQIXRNDBdXLIdOAl2+PZ
 )
 
 func main() {
+	log.SetFlags(log.LstdFlags | log.Lshortfile | log.Lmicroseconds)
 	kp, _ := tls.X509KeyPair([]byte(debugPem), []byte(debugKey))
 	s := server.Server{
 		CleartextPort: 10888,
@@ -68,5 +69,4 @@ func main() {
 		Cert:          kp,
 	}
 	s.Start()
-	time.Sleep(1 * time.Hour)
 }

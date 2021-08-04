@@ -32,6 +32,7 @@ const (
 	OperationReplyHostUnreachable
 	OperationReplyConnectionRefused
 	OperationReplyTTLExpired
+	OperationReplyCommandNotSupported
 	OperationReplyAddressNotSupported
 	OperationReplyTimeout
 )

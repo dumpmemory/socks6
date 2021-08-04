@@ -19,6 +19,7 @@ import (
 	"github.com/pion/dtls/v2"
 	"github.com/studentmain/socks6"
 	"golang.org/x/sync/semaphore"
+	"golang.org/x/sys/windows"
 )
 
 type Server struct {
@@ -28,10 +29,14 @@ type Server struct {
 
 	Cert tls.Certificate
 
+	VersionErrorHandler func(head []byte, conn net.Conn)
+
 	tcpListener  *net.TCPListener
 	tlsListener  net.Listener
 	udpListener  *net.UDPConn
 	dtlsListener net.Listener
+
+	cancellationToken context.Context
 
 	udpAssociations       map[uint64]*udpAssociationInfo
 	authenticator         DefaultAuthenticator
@@ -70,7 +75,6 @@ type udpReservedPort struct {
 }
 
 func (s *Server) Start() {
-	// s.authenticator.MethodSelector.AddMethod(NoneAuthentication{})
 	s.udpAssociations = map[uint64]*udpAssociationInfo{}
 	s.backloggedConnections = map[string]backloggedConnectionInfo{}
 	s.authenticator = NewDefaultAuthenticator()
@@ -79,11 +83,19 @@ func (s *Server) Start() {
 	cptxt = net.JoinHostPort(s.Address, cptxt)
 	eptxt := strconv.FormatUint(uint64(s.EncryptedPort), 10)
 	eptxt = net.JoinHostPort(s.Address, eptxt)
-
-	s.startTCP(cptxt)
-	s.startTLS(eptxt)
-	s.startUDP(cptxt)
-	s.startDTLS(eptxt)
+	wg := sync.WaitGroup{}
+	wg.Add(4)
+	wgrun := func(f func(s string)) func(string) {
+		return func(s string) {
+			defer wg.Done()
+			f(s)
+		}
+	}
+	go wgrun(s.startTCP)(cptxt)
+	go wgrun(s.startTLS)(eptxt)
+	go wgrun(s.startUDP)(cptxt)
+	go wgrun(s.startDTLS)(eptxt)
+	wg.Wait()
 }
 
 // todo: stop
@@ -96,16 +108,14 @@ func (s *Server) startTCP(addr string) {
 	if err != nil {
 		log.Fatal(err)
 	}
-
-	go func() {
-		for {
-			c, err := s.tcpListener.AcceptTCP()
-			if err != nil {
-				log.Fatal(err)
-			}
-			go s.handleConn(c)
+	log.Printf("start TCP server at %s", s.tcpListener.Addr())
+	for {
+		c, err := s.tcpListener.AcceptTCP()
+		if err != nil {
+			log.Fatal(err)
 		}
-	}()
+		go s.streamServer(c)
+	}
 }
 
 func (s *Server) startTLS(addr string) {
@@ -117,16 +127,15 @@ func (s *Server) startTLS(addr string) {
 		return
 	}
 	s.tlsListener = fd
+	log.Printf("start TLS server at %s", fd.Addr())
 
-	go func() {
-		for {
-			c, err := s.tlsListener.Accept()
-			if err != nil {
-				log.Fatal(err)
-			}
-			go s.handleConn(c)
+	for {
+		c, err := s.tlsListener.Accept()
+		if err != nil {
+			log.Fatal(err)
 		}
-	}()
+		go s.streamServer(c)
+	}
 }
 
 func (s *Server) startUDP(addr string) {
@@ -136,18 +145,19 @@ func (s *Server) startUDP(addr string) {
 	}
 	buf := make([]byte, 4096)
 	s.udpListener, err = net.ListenUDP("udp", addr2)
+	log.Printf("start UDP server at %s", s.udpListener.LocalAddr())
+
 	if err != nil {
 		log.Fatal(err)
 	}
-	go func() {
-		for {
-			l, raddr, err := s.udpListener.ReadFrom(buf)
-			if err != nil {
-				log.Print(err)
-			}
-			s.handleUDP(raddr, buf[:l])
+
+	for {
+		l, raddr, err := s.udpListener.ReadFrom(buf)
+		if err != nil {
+			log.Print(err)
 		}
-	}()
+		s.datagramServer(raddr, buf[:l])
+	}
 }
 
 func (s *Server) startDTLS(addr string) {
@@ -158,32 +168,31 @@ func (s *Server) startDTLS(addr string) {
 	s.dtlsListener, err = dtls.Listen("udp", addr2, &dtls.Config{
 		Certificates: []tls.Certificate{s.Cert},
 	})
+	log.Printf("start DTLS server at %s", s.dtlsListener.Addr())
+
 	if err != nil {
 		log.Fatal(err)
 	}
-	go func() {
-
-		for {
-			c, err := s.dtlsListener.Accept()
+	for {
+		c, err := s.dtlsListener.Accept()
+		if err != nil {
+			log.Print(err)
+			return
+		}
+		go func() {
+			defer c.Close()
+			buf := make([]byte, 4096)
+			l, err := c.Read(buf)
 			if err != nil {
 				log.Print(err)
 				return
 			}
-			go func() {
-				defer c.Close()
-				buf := make([]byte, 4096)
-				l, err := c.Read(buf)
-				if err != nil {
-					log.Print(err)
-					return
-				}
-				s.handleUDP(c.RemoteAddr(), buf[:l])
-			}()
-		}
-	}()
+			s.datagramServer(c.RemoteAddr(), buf[:l])
+		}()
+	}
 }
 
-func (s *Server) handleConn(conn net.Conn) {
+func (s *Server) streamServer(conn net.Conn) {
 	dontClose := false
 	defer func() {
 		if !dontClose {
@@ -191,39 +200,62 @@ func (s *Server) handleConn(conn net.Conn) {
 		}
 	}()
 	req := socks6.Request{}
-	l, err := socks6.ReadMessageFrom(&req, conn)
-	log.Print(l)
-	log.Print(err)
-	log.Print(req)
+	_, err := socks6.ReadMessageFrom(&req, conn)
+	errAtyp := false
+
 	if err != nil {
-		// todo fallback
-		return
+		if errors.Is(err, socks6.ErrVersion) {
+			if s.VersionErrorHandler == nil {
+				conn.Write([]byte{6})
+				log.Printf("%s version mismatch, recieved %d", conn.RemoteAddr(), req.Version)
+			} else {
+				dontClose = true
+				s.VersionErrorHandler([]byte{req.Version}, conn)
+			}
+			return
+		}
+		if errors.Is(err, socks6.ErrAddressTypeNotSupport) {
+			log.Print("unsupported address type")
+			errAtyp = true
+		} else {
+			log.Print(err)
+			return
+		}
 	}
 
 	auth, rep := s.authenticator.Authenticate(req)
 
-	log.Println(auth.ClientID)
 	err = socks6.WriteMessageTo(&rep, conn)
 	if err != nil {
-		log.Fatal(err)
+		log.Print(err)
+		return
 	}
 
 	if !auth.Success {
+
 		// TODO: slow path
 		// TODO: wait client?
 		return
 	}
 
 	log.Print("auth finish")
-
+	if errAtyp {
+		socks6.WriteMessageTo(
+			&socks6.OperationReply{
+				ReplyCode: socks6.OperationReplyAddressNotSupported,
+			}, conn)
+	}
 	if s.Rule != nil {
 		if !s.Rule(req.CommandCode, req.Endpoint, conn.RemoteAddr(), auth.ClientID) {
-			socks6.WriteMessageTo(
+			err = socks6.WriteMessageTo(
 				&socks6.OperationReply{
 					ReplyCode: socks6.OperationReplyNotAllowedByRule,
 				},
 				conn,
 			)
+			if err != nil {
+				log.Print(err)
+			}
 			return
 		}
 	}
@@ -237,20 +269,65 @@ func (s *Server) handleConn(conn net.Conn) {
 	case socks6.CommandUdpAssociate:
 		s.handleUDPAssociation(conn, req, auth)
 	default:
-		socks6.WriteMessageTo(
+		err = socks6.WriteMessageTo(
 			&socks6.OperationReply{
-				ReplyCode: socks6.OperationReplyServerFailure,
+				ReplyCode: socks6.OperationReplyCommandNotSupported,
 			},
 			conn,
 		)
+		if err != nil {
+			log.Print(err)
+		}
 	}
 }
 
 func (s *Server) handleConnect(conn net.Conn, req socks6.Request, auth AuthenticationResult) {
 	c, r, err := makeDestConn(req)
 	if err != nil {
-		log.Print(err)
-		// report error
+		oprep := socks6.OperationReply{
+			ReplyCode:            socks6.OperationReplyServerFailure,
+			RemoteLegStackOption: r,
+			SessionID:            auth.SessionID,
+			Endpoint:             socks6.NewEndpoint(":0"),
+		}
+		netErr, ok := err.(net.Error)
+		if !ok {
+			log.Print(err)
+			socks6.WriteMessageTo(&oprep, conn)
+			return
+		}
+		if netErr.Timeout() {
+			oprep.ReplyCode = socks6.OperationReplyTimeout
+			socks6.WriteMessageTo(&oprep, conn)
+			return
+		}
+		opErr, ok := netErr.(*net.OpError)
+		if !ok {
+			socks6.WriteMessageTo(&oprep, conn)
+			return
+		}
+
+		switch t := opErr.Err.(type) {
+		case *os.SyscallError:
+			errno, ok := t.Err.(syscall.Errno)
+			if !ok {
+				socks6.WriteMessageTo(&oprep, conn)
+				return
+			}
+			switch errno {
+			case syscall.ENETUNREACH, windows.WSAENETUNREACH:
+				oprep.ReplyCode = socks6.OperationReplyNetworkUnreachable
+			case syscall.EHOSTUNREACH, windows.WSAEHOSTUNREACH:
+				oprep.ReplyCode = socks6.OperationReplyHostUnreachable
+			case syscall.ECONNREFUSED, windows.WSAEREFUSED:
+				oprep.ReplyCode = socks6.OperationReplyConnectionRefused
+			case syscall.ETIMEDOUT, windows.WSAETIMEDOUT:
+				oprep.ReplyCode = socks6.OperationReplyTimeout
+			}
+			socks6.WriteMessageTo(&oprep, conn)
+			return
+		}
+		socks6.WriteMessageTo(&oprep, conn)
 		return
 	}
 	defer c.Close()
@@ -537,7 +614,7 @@ func (s *Server) handleUDPAssociation(conn net.Conn, req socks6.Request, auth Au
 	}
 }
 
-func (s *Server) handleUDP(addr net.Addr, buf []byte) {
+func (s *Server) datagramServer(addr net.Addr, buf []byte) {
 	h := socks6.UDPHeader{}
 	r := bytes.NewReader(buf)
 	_, err := socks6.ReadMessageFrom(&h, r)
@@ -623,6 +700,7 @@ func makeDestConn(req socks6.Request) (net.Conn, socks6.StackOptionData, error) 
 	supported := socks6.StackOptionData{}
 
 	d := net.Dialer{
+		Timeout: 10 * time.Second,
 		Control: func(network, address string, c syscall.RawConn) error {
 			c.Control(
 				func(fd uintptr) {
