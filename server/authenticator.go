@@ -100,12 +100,14 @@ func (n NoneAuthentication) AuthenticationProtocol(data []byte, conn io.ReadWrit
 }
 
 type UsernamePasswordAuthentication struct {
+	Users map[string]string
 }
 
 func (n UsernamePasswordAuthentication) ID() (byte, string) {
 	return 2, "username-password"
 }
 func (n UsernamePasswordAuthentication) Authenticate(data []byte) AuthenticationResult {
+	log.Print(data)
 	// TODO
 	return AuthenticationResult{Success: true}
 }

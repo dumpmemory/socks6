@@ -3,6 +3,7 @@ package client
 import (
 	"crypto/tls"
 	"errors"
+	"log"
 	"net"
 	"strconv"
 	"sync"
@@ -47,7 +48,9 @@ func (c *Client) Dial(network string, addr string) (net.Conn, error) {
 	if err != nil {
 		return nil, err
 	}
-
+	if opr.ReplyCode != 0 {
+		return nil, errors.New("operation reply fail")
+	}
 	return &tcc, nil
 }
 
@@ -118,6 +121,7 @@ func (c *Client) ListenUDP(network string, addr string) (net.PacketConn, error) 
 func (c *Client) makeStreamConn() (net.Conn, error) {
 	var nc net.Conn
 	if c.EncryptedPort != 0 {
+		log.Print("connect via tls")
 		addr := net.JoinHostPort(c.ProxyHost, strconv.FormatInt(int64(c.EncryptedPort), 10))
 		conn, err := c.Dialer.Dial("tcp", addr)
 		if err != nil {
@@ -131,6 +135,7 @@ func (c *Client) makeStreamConn() (net.Conn, error) {
 		}
 		nc = pc
 	} else {
+		log.Print("connect via tcp")
 		addr := net.JoinHostPort(c.ProxyHost, strconv.FormatInt(int64(c.CleartextPort), 10))
 		pc, err := c.Dialer.Dial("tcp", addr)
 		if err != nil {
@@ -145,6 +150,7 @@ func (c *Client) makeStreamConn() (net.Conn, error) {
 func (c *Client) makeDGramConn() (net.Conn, error) {
 	var nc net.Conn
 	if c.EncryptedPort != 0 {
+		log.Print("connect via dtls")
 		addr := net.JoinHostPort(c.ProxyHost, strconv.FormatInt(int64(c.EncryptedPort), 10))
 		conn, err := c.Dialer.Dial("udp", addr)
 		if err != nil {
@@ -158,6 +164,7 @@ func (c *Client) makeDGramConn() (net.Conn, error) {
 		}
 		nc = pc
 	} else {
+		log.Print("connect via udp")
 		addr := net.JoinHostPort(c.ProxyHost, strconv.FormatInt(int64(c.CleartextPort), 10))
 		pc, err := c.Dialer.Dial("udp", addr)
 		if err != nil {
@@ -356,36 +363,36 @@ type TCPConnectClient struct {
 }
 
 func (t *TCPConnectClient) Read(b []byte) (n int, err error) {
-	panic("not implemented") // TODO: Implement
+	return t.base.Read(b)
 }
 
 func (t *TCPConnectClient) Write(b []byte) (n int, err error) {
-	panic("not implemented") // TODO: Implement
+	return t.base.Write(b)
 }
 
 func (t *TCPConnectClient) Close() error {
-	panic("not implemented") // TODO: Implement
+	return t.base.Close()
 }
 
 func (t *TCPConnectClient) LocalAddr() net.Addr {
-	panic("not implemented") // TODO: Implement
+	return t.base.LocalAddr()
 }
 
 func (t *TCPConnectClient) RemoteAddr() net.Addr {
-	panic("not implemented") // TODO: Implement
+	return t.remote
 }
 
 func (tc *TCPConnectClient) SetDeadline(t time.Time) error {
-	panic("not implemented") // TODO: Implement
+	return tc.base.SetDeadline(t)
 }
 
 // SetReadDeadline sets the deadline for future Read calls
 // and any currently-blocked Read call.
 // A zero value for t means Read will not time out.
 func (tc *TCPConnectClient) SetReadDeadline(t time.Time) error {
-	panic("not implemented") // TODO: Implement
+	return tc.base.SetReadDeadline(t)
 }
 
 func (tc *TCPConnectClient) SetWriteDeadline(t time.Time) error {
-	panic("not implemented") // TODO: Implement
+	return tc.base.SetWriteDeadline(t)
 }

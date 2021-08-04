@@ -16,9 +16,9 @@ currently based on draft 11
 - Noop
 - Session
 - Happy Eyeball Option (RFC6555 only)
+- TLS
 - IP DF, TTL, TOS Option ? (remote leg only)
 - Bind with backlog ? (backlog is simulated) 
-- TLS ?
 - Client API ? (no bind)
 - DTLS ?
 - Token ?

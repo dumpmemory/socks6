@@ -731,7 +731,7 @@ func (o *OperationReply) Deserialize(buf []byte) (int, error) {
 	if len(buf) < 10 {
 		return 0, ErrTooShort{ExpectedLen: 10}
 	}
-	if buf[0] != 0 {
+	if buf[0] != 6 {
 		return 0, ErrFormat
 	}
 	o.ReplyCode = buf[1]
