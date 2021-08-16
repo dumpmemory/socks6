@@ -19,7 +19,6 @@ import (
 	"github.com/pion/dtls/v2"
 	"github.com/studentmain/socks6"
 	"golang.org/x/sync/semaphore"
-	"golang.org/x/sys/windows"
 )
 
 type Server struct {
@@ -283,65 +282,22 @@ func (s *Server) streamServer(conn net.Conn) {
 
 func (s *Server) handleConnect(conn net.Conn, req socks6.Request, auth AuthenticationResult) {
 	c, r, err := makeDestConn(req)
-	if err != nil {
-		oprep := socks6.OperationReply{
-			ReplyCode:            socks6.OperationReplyServerFailure,
-			RemoteLegStackOption: r,
-			SessionID:            auth.SessionID,
-			Endpoint:             socks6.NewEndpoint(":0"),
-		}
-		netErr, ok := err.(net.Error)
-		if !ok {
-			log.Print(err)
-			socks6.WriteMessageTo(&oprep, conn)
-			return
-		}
-		if netErr.Timeout() {
-			oprep.ReplyCode = socks6.OperationReplyTimeout
-			socks6.WriteMessageTo(&oprep, conn)
-			return
-		}
-		opErr, ok := netErr.(*net.OpError)
-		if !ok {
-			socks6.WriteMessageTo(&oprep, conn)
-			return
-		}
-
-		switch t := opErr.Err.(type) {
-		case *os.SyscallError:
-			errno, ok := t.Err.(syscall.Errno)
-			if !ok {
-				socks6.WriteMessageTo(&oprep, conn)
-				return
-			}
-			switch errno {
-			case syscall.ENETUNREACH, windows.WSAENETUNREACH:
-				oprep.ReplyCode = socks6.OperationReplyNetworkUnreachable
-			case syscall.EHOSTUNREACH, windows.WSAEHOSTUNREACH:
-				oprep.ReplyCode = socks6.OperationReplyHostUnreachable
-			case syscall.ECONNREFUSED, windows.WSAEREFUSED:
-				oprep.ReplyCode = socks6.OperationReplyConnectionRefused
-			case syscall.ETIMEDOUT, windows.WSAETIMEDOUT:
-				oprep.ReplyCode = socks6.OperationReplyTimeout
-			}
-			socks6.WriteMessageTo(&oprep, conn)
-			return
-		}
+	code := getReplyCode(err)
+	oprep := socks6.OperationReply{
+		ReplyCode:            code,
+		RemoteLegStackOption: r,
+		SessionID:            auth.SessionID,
+		Endpoint:             socks6.NewEndpoint(":0"),
+	}
+	if code != socks6.OperationReplySuccess {
 		socks6.WriteMessageTo(&oprep, conn)
 		return
 	}
+
 	defer c.Close()
 	c.Write(req.InitialData)
-
-	socks6.WriteMessageTo(
-		&socks6.OperationReply{
-			ReplyCode:            socks6.OperationReplySuccess,
-			RemoteLegStackOption: r,
-			SessionID:            auth.SessionID,
-			Endpoint:             socks6.NewEndpoint(c.LocalAddr().String()),
-		},
-		conn,
-	)
+	oprep.Endpoint = socks6.NewEndpoint(c.LocalAddr().String())
+	socks6.WriteMessageTo(&oprep, conn)
 	relay(c, conn)
 }
 
@@ -358,12 +314,19 @@ func (s *Server) handleNoop(conn net.Conn, req socks6.Request, auth Authenticati
 
 func (s *Server) handleBind(conn net.Conn, req socks6.Request, auth AuthenticationResult) {
 	l, r, err := makeDestListener(req)
-	log.Print(l.Addr().String())
-	if err != nil {
-		log.Print(err)
-		// todo reply err
+	code := getReplyCode(err)
+	oprep := socks6.OperationReply{
+		ReplyCode:            code,
+		RemoteLegStackOption: r,
+		SessionID:            auth.SessionID,
+		Endpoint:             socks6.NewEndpoint(":0"),
+	}
+	if code != socks6.OperationReplySuccess {
+		socks6.WriteMessageTo(&oprep, conn)
 		return
 	}
+	log.Print(l.Addr().String())
+	oprep.Endpoint = socks6.NewEndpoint(l.Addr().String())
 
 	// find corresponding backlog conn
 	reqAddr := req.Endpoint.String()
@@ -383,15 +346,7 @@ func (s *Server) handleBind(conn net.Conn, req socks6.Request, auth Authenticati
 	}
 
 	// write op reply 1
-	socks6.WriteMessageTo(
-		&socks6.OperationReply{
-			ReplyCode:            socks6.OperationReplySuccess,
-			SessionID:            auth.SessionID,
-			RemoteLegStackOption: r,
-			Endpoint:             socks6.NewEndpoint(l.Addr().String()),
-		},
-		conn,
-	)
+	socks6.WriteMessageTo(&oprep, conn)
 	if !backloggedBind {
 		s.handleBindNoBacklog(l, conn, req, auth)
 	} else {
@@ -491,33 +446,46 @@ func (s *Server) handleUDPAssociation(conn net.Conn, req socks6.Request, auth Au
 	desired := req.Endpoint.String()
 	var c *net.UDPConn
 	r := socks6.StackOptionData{}
-	desc, ok := s.reservedPorts[desired]
-	if ok {
+	desc, reserved := s.reservedPorts[desired]
+	var oprep socks6.OperationReply
+
+	if reserved {
 		if socks6.ByteArrayEqual(auth.SessionID, desc.sessionId) {
 			c = desc.conn
+			r = prepareDestUDP(c, req.RemoteLegStackOption)
+			oprep = socks6.OperationReply{
+				ReplyCode:            socks6.OperationReplySuccess,
+				RemoteLegStackOption: r,
+				SessionID:            auth.SessionID,
+				Endpoint:             socks6.NewEndpoint(c.LocalAddr().String()),
+			}
+		} else {
+			oprep = socks6.OperationReply{
+				ReplyCode: socks6.OperationReplyNotAllowedByRule,
+				SessionID: auth.SessionID,
+				Endpoint:  socks6.NewEndpoint(":0"),
+			}
+			// wrong assoc, fail
 		}
 	} else {
 		cc, rr, err := makeDestUDP(req)
 		c = cc
 		r = rr
-		if err != nil {
-			// report error
-			return
-		}
-	}
-	defer c.Close()
-	socks6.WriteMessageTo(
-		&socks6.OperationReply{
-			ReplyCode:            socks6.OperationReplySuccess,
+		oprep = socks6.OperationReply{
+			ReplyCode:            getReplyCode(err),
 			RemoteLegStackOption: r,
 			SessionID:            auth.SessionID,
 			Endpoint:             socks6.NewEndpoint(c.LocalAddr().String()),
-		},
-		conn,
-	)
+		}
+	}
+	socks6.WriteMessageTo(&oprep, conn)
+	if oprep.ReplyCode != socks6.OperationReplySuccess {
+		return
+	}
+	defer c.Close()
 	b := make([]byte, 8)
 	_, err := rand.Read(b)
-	// todo unique associd
+	// todo unique associd?
 	assocId := binary.BigEndian.Uint64(b)
 	if err != nil {
 		return
@@ -612,6 +580,45 @@ func (s *Server) handleUDPAssociation(conn net.Conn, req socks6.Request, auth Au
 	} else {
 		drain(conn)
 	}
+}
+
+func getReplyCode(err error) byte {
+	if err == nil {
+		return socks6.OperationReplySuccess
+	}
+	netErr, ok := err.(net.Error)
+	if !ok {
+		log.Print(err)
+		return socks6.OperationReplyServerFailure
+	}
+	if netErr.Timeout() {
+		return socks6.OperationReplyTimeout
+	}
+	opErr, ok := netErr.(*net.OpError)
+	if !ok {
+		return socks6.OperationReplyServerFailure
+	}
+
+	switch t := opErr.Err.(type) {
+	case *os.SyscallError:
+		errno, ok := t.Err.(syscall.Errno)
+		if !ok {
+			return socks6.OperationReplyServerFailure
+		}
+		switch convertErrno(errno) {
+		case syscall.ENETUNREACH:
+			return socks6.OperationReplyNetworkUnreachable
+		case syscall.EHOSTUNREACH:
+			return socks6.OperationReplyHostUnreachable
+		case syscall.ECONNREFUSED:
+			return socks6.OperationReplyConnectionRefused
+		case syscall.ETIMEDOUT:
+			return socks6.OperationReplyTimeout
+		default:
+			return socks6.OperationReplyServerFailure
+		}
+	}
+	return socks6.OperationReplyServerFailure
 }
 
 func (s *Server) datagramServer(addr net.Addr, buf []byte) {

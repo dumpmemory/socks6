@@ -5,12 +5,11 @@ import (
 	"syscall"
 
 	"github.com/studentmain/socks6"
-	"golang.org/x/sys/windows"
 )
 
 func printSetsockoptError(err error) {
 	eno := err.(syscall.Errno)
-	if eno != windows.WSAENOPROTOOPT {
+	if eno != syscall.ENOPROTOOPT {
 		log.Print(err)
 	}
 }
@@ -24,7 +23,7 @@ func setsockoptBtoi(b bool) int {
 func setsocks6optIp(fd uintptr, opt socks6.StackOptionData) socks6.StackOptionData {
 	const DF = 14
 	rep := socks6.StackOptionData{}
-	h := syscall.Handle(fd)
+	h := int(fd) // TODO???
 	if opt.DF != nil {
 		val := setsockoptBtoi(*opt.DF)
 		err := syscall.SetsockoptInt(h, syscall.IPPROTO_IP, DF, val)
@@ -81,17 +80,5 @@ func setsocks6optUdp(fd uintptr, opt socks6.StackOptionData) socks6.StackOptionD
 }
 
 func convertErrno(e syscall.Errno) syscall.Errno {
-	switch e {
-	case windows.WSAENOPROTOOPT:
-		return syscall.ENOPROTOOPT
-	case windows.WSAENETUNREACH:
-		return syscall.ENETUNREACH
-	case windows.WSAEHOSTUNREACH:
-		return syscall.EHOSTUNREACH
-	case windows.WSAEREFUSED:
-		return syscall.ECONNREFUSED
-	case windows.WSAETIMEDOUT:
-	default:
-		return e
-	}
+	return e
 }
