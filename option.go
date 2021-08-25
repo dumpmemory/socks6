@@ -34,17 +34,24 @@ var optionDataParseFn = map[OptionKind]func([]byte) (OptionData, error){
 	OptionKindAuthenticationMethodSelection:     parseAuthenticationMethodSelectionOptionData,
 	OptionKindAuthenticationData:                parseAuthenticationDataOptionData,
 
-	OptionKindSessionRequest:  func(b []byte) (OptionData, error) { return SessionRequestOptionData{}, nil },
+	OptionKindSessionRequest:  func(b []byte) (OptionData, error) { return SessionRequestOptionData{}, bufferLengthPolice(b) },
 	OptionKindSessionID:       parseSessionIDOptionData,
-	OptionKindSessionOK:       func(b []byte) (OptionData, error) { return SessionOKOptionData{}, nil },
-	OptionKindSessionInvalid:  func(b []byte) (OptionData, error) { return SessionInvalidOptionData{}, nil },
-	OptionKindSessionTeardown: func(b []byte) (OptionData, error) { return SessionTeardownOptionData{}, nil },
+	OptionKindSessionOK:       func(b []byte) (OptionData, error) { return SessionOKOptionData{}, bufferLengthPolice(b) },
+	OptionKindSessionInvalid:  func(b []byte) (OptionData, error) { return SessionInvalidOptionData{}, bufferLengthPolice(b) },
+	OptionKindSessionTeardown: func(b []byte) (OptionData, error) { return SessionTeardownOptionData{}, bufferLengthPolice(b) },
 
 	OptionKindTokenRequest:           parseTokenRequestOptionData,
 	OptionKindIdempotenceWindow:      parseIdempotenceWindowOptionData,
 	OptionKindIdempotenceExpenditure: parseIdempotenceExpenditureOptionData,
-	OptionKindIdempotenceAccepted:    func(b []byte) (OptionData, error) { return IdempotenceAcceptedOptionData{}, nil },
-	OptionKindIdempotenceRejected:    func(b []byte) (OptionData, error) { return IdempotenceRejectedOptionData{}, nil },
+	OptionKindIdempotenceAccepted:    func(b []byte) (OptionData, error) { return IdempotenceAcceptedOptionData{}, bufferLengthPolice(b) },
+	OptionKindIdempotenceRejected:    func(b []byte) (OptionData, error) { return IdempotenceRejectedOptionData{}, bufferLengthPolice(b) },
+}
+
+func bufferLengthPolice(b []byte) error {
+	if len(b) != 0 {
+		return ErrFormat
+	}
+	return nil
 }
 
 // kind(i16) length(i16) data(b(length))
@@ -90,7 +97,7 @@ func (o *Option) Marshal() []byte {
 	}
 	ret := make([]byte, o.Length)
 	data := o.Data.Marshal()
-	if len(data) != int(expLen) {
+	if len(data) != int(expLen)-4 {
 		log.Panic("implementation of OptionData have problem")
 	}
 	copy(ret[4:], data)
@@ -108,7 +115,7 @@ type OptionData interface {
 
 func overflowCheck(n int) uint16 {
 	if n > math.MaxUint16 {
-		log.Fatal("too much option data bytes")
+		log.Panic("too much option data bytes")
 	}
 	return uint16(n)
 }
@@ -149,13 +156,14 @@ func parseAuthenticationMethodAdvertisementOptionData(d []byte) (OptionData, err
 		m[i] = k
 		i++
 	}
+	SortByte(m)
 	return AuthenticationMethodAdvertisementOptionData{
 		InitialDataLength: idl,
 		Methods:           m,
 	}, nil
 }
 func (a AuthenticationMethodAdvertisementOptionData) Len() uint16 {
-	l := paddedLen(len(a.Methods)+2, 4)
+	l := PaddedLen(len(a.Methods)+2, 4)
 	return overflowCheck(l)
 }
 func (a AuthenticationMethodAdvertisementOptionData) Marshal() []byte {
@@ -170,6 +178,9 @@ type AuthenticationMethodSelectionOptionData struct {
 }
 
 func parseAuthenticationMethodSelectionOptionData(d []byte) (OptionData, error) {
+	if len(d) != 4 {
+		return nil, ErrFormat
+	}
 	return AuthenticationMethodSelectionOptionData{
 		Method: d[0],
 	}, nil
@@ -258,6 +269,9 @@ type TokenRequestOptionData struct {
 }
 
 func parseTokenRequestOptionData(d []byte) (OptionData, error) {
+	if len(d) != 4 {
+		return nil, ErrFormat
+	}
 	return TokenRequestOptionData{WindowSize: binary.BigEndian.Uint32(d)}, nil
 }
 func (s TokenRequestOptionData) Len() uint16 {
@@ -275,6 +289,9 @@ type IdempotenceWindowOptionData struct {
 }
 
 func parseIdempotenceWindowOptionData(d []byte) (OptionData, error) {
+	if len(d) != 8 {
+		return nil, ErrFormat
+	}
 	return IdempotenceWindowOptionData{
 		WindowBase: binary.BigEndian.Uint32(d),
 		WindowSize: binary.BigEndian.Uint32(d[4:]),
@@ -295,6 +312,9 @@ type IdempotenceExpenditureOptionData struct {
 }
 
 func parseIdempotenceExpenditureOptionData(d []byte) (OptionData, error) {
+	if len(d) != 4 {
+		return nil, ErrFormat
+	}
 	return IdempotenceExpenditureOptionData{Token: binary.BigEndian.Uint32(d)}, nil
 }
 func (s IdempotenceExpenditureOptionData) Len() uint16 {

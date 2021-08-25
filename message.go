@@ -108,7 +108,7 @@ func (e Endpoint) SerializeAddress(b []byte) (int, error) {
 		// 4n+1=>(4n+1+3)/4*4=>(4n+4)/4*4=>4(n+1)
 		// 4n+2=>(4n+2+3)/4*4=>(4n+4+1)/4*4=>4(n+1)
 		// 4n+3=>(4n+3+3)/4*4=>(4n+4+2)/4*4=>4(n+1)
-		expectedSize := paddedLen(l, 4)
+		expectedSize := PaddedLen(l, 4)
 		if len(b) < expectedSize {
 			return 0, ErrTooShort{ExpectedLen: expectedSize}
 		}

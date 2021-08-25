@@ -2,6 +2,7 @@ package socks6
 
 import (
 	"io"
+	"sort"
 )
 
 func ByteArrayEqual(a, b []byte) bool {
@@ -27,6 +28,7 @@ func ReadMessageFrom(msg Message, r io.Reader) (int, error) {
 		}
 		if ets, ok := err.(ErrTooShort); ok {
 			nRead := ets.ExpectedLen - p
+			// todo memory pool
 			buf = append(buf, make([]byte, nRead)...)
 			nActual, err := io.ReadFull(r, buf[p:ets.ExpectedLen])
 			if nRead != nActual {
@@ -74,6 +76,10 @@ func dup(i []byte) []byte {
 	return o
 }
 
-func paddedLen(l int, align int) int {
-	return l + align - 1/align*align
+func PaddedLen(l int, align int) int {
+	return (l + align - 1) / align * align
+}
+
+func SortByte(b []byte) {
+	sort.Slice(b, func(i, j int) bool { return b[i] < b[j] })
 }
