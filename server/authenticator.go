@@ -40,20 +40,31 @@ func (a *AuthenticationMethodSelector) Authenticate(req socks6.Request) Authenti
 			SelectedMethod: socks6.AuthenticationMethodNone,
 		}
 	}
-	m := append(req.Methods, 0)
-	// todo: uniq
+	m := []byte{0} //append(req.Methods, 0)
+	amao, ok := req.Options.GetData(socks6.OptionKindAuthenticationMethodAdvertisement)
+	if ok {
+		amaod := amao.(socks6.AuthenticationMethodAdvertisementOptionData)
+		m = append(amaod.Methods, m...)
+	}
 	ia := byte(0)
+	data := req.Options.GetKind(socks6.OptionKindAuthenticationData)
 	for _, id := range a.idOrder {
 		if bytes.Contains(m, []byte{id}) {
 			method := a.idMap[id]
-			v := req.MethodData[id]
-			result := method.Authenticate(v)
+			var methodData []byte
+			for _, v := range data {
+				adod := v.Data.(socks6.AuthenticationDataOptionData)
+				if adod.Method == id {
+					methodData = adod.Data
+				}
+			}
+			result := method.Authenticate(methodData)
 
 			if result.Success {
 				result.SelectedMethod = id
 				return result
 			}
-			ok := method.InteractiveAuthenticate(v)
+			ok := method.InteractiveAuthenticate(methodData)
 			if ok && ia != 0 {
 				ia = id
 			}
@@ -69,9 +80,27 @@ func (a *AuthenticationMethodSelector) AuthenticationProtocol(
 	methodId byte,
 	conn io.ReadWriteCloser,
 ) AuthenticationResult {
-	data := req.MethodData[methodId]
+	data := getMethodData(req.Options, methodId)
 	method := a.idMap[methodId]
 	return method.AuthenticationProtocol(data, conn)
+}
+
+func getMethodData(options socks6.OptionSet, id byte) []byte {
+	ops := options.GetKind(socks6.OptionKindAuthenticationData)
+	d := socks6.AuthenticationDataOptionData{}
+	ok := false
+	for _, op := range ops {
+		opd := op.Data.(socks6.AuthenticationDataOptionData)
+		if opd.Method == id {
+			ok = true
+			d = opd
+			break
+		}
+	}
+	if ok {
+		return d.Data
+	}
+	return nil
 }
 
 // client's name, for logging etc
@@ -273,12 +302,24 @@ func (d *DefaultAuthenticator) Authenticate(req socks6.Request) (AuthenticationR
 	reply := socks6.AuthenticationReply{
 		Type: socks6.AuthenticationReplyFail,
 	}
-	if !d.DisableSession && req.SessionID != nil {
+
+	var sessionId []byte
+	idData, ok := req.Options.GetData(socks6.OptionKindSessionID)
+	if ok {
+		sessionId = idData.(socks6.SessionIDOptionData).ID
+	}
+
+	if !d.DisableSession && sessionId != nil {
 		return d.authenticateSession(req)
 	}
 	result := d.MethodSelector.Authenticate(req)
 	if result.SelectedMethod != 0 {
-		reply.SelectedMethod = result.SelectedMethod
+		reply.Options = append(reply.Options, socks6.Option{
+			Kind: socks6.OptionKindAuthenticationMethodSelection,
+			Data: socks6.AuthenticationMethodSelectionOptionData{
+				Method: result.SelectedMethod,
+			},
+		})
 	}
 	if !result.Success {
 		return result, reply
@@ -287,7 +328,9 @@ func (d *DefaultAuthenticator) Authenticate(req socks6.Request) (AuthenticationR
 	// auth ok
 	reply.Type = socks6.AuthenticationReplySuccess
 
-	if !d.DisableSession && req.RequestSession {
+	_, requestSession := req.Options.GetData(socks6.OptionKindSessionRequest)
+
+	if !d.DisableSession && requestSession {
 		result.SessionID = make([]byte, sessionLength)
 		rand.Read(result.SessionID)
 		session := SessionInfo{
@@ -296,8 +339,18 @@ func (d *DefaultAuthenticator) Authenticate(req socks6.Request) (AuthenticationR
 			lastActive: time.Now(),
 		}
 		sHash := d.getSessionHash(session.SessionID)
-		if !d.DisableToken && req.RequestToken > 0 {
-			reply.NewWindowBase, reply.NewWindowSize = session.AllocateTokens(req.RequestToken)
+
+		trData, requestToken := req.Options.GetData(socks6.OptionKindTokenRequest)
+		if !d.DisableToken && requestToken {
+			size := trData.(socks6.TokenRequestOptionData).WindowSize
+			allocBase, allocSize := session.AllocateTokens(size)
+			reply.Options = append(reply.Options, socks6.Option{
+				Kind: socks6.OptionKindIdempotenceWindow,
+				Data: socks6.IdempotenceWindowOptionData{
+					WindowBase: allocBase,
+					WindowSize: allocSize,
+				},
+			})
 		}
 		d.sessions.Store(sHash, session)
 	}
@@ -305,40 +358,67 @@ func (d *DefaultAuthenticator) Authenticate(req socks6.Request) (AuthenticationR
 }
 
 func (d *DefaultAuthenticator) authenticateSession(req socks6.Request) (AuthenticationResult, socks6.AuthenticationReply) {
-	sHash := d.getSessionHash(req.SessionID)
+	sessionIdData, _ := req.Options.GetData(socks6.OptionKindSessionID)
+	sessionId := sessionIdData.(socks6.SessionIDOptionData).ID
+
+	sHash := d.getSessionHash(sessionId)
 	_s, ok := d.sessions.Load(sHash)
 	session := _s.(*SessionInfo)
 	reply := socks6.AuthenticationReply{
-		Type:      socks6.AuthenticationReplyFail,
-		InSession: true,
+		Type: socks6.AuthenticationReplyFail,
 	}
-	if req.RequestTeardown {
+
+	_, requestTeardown := req.Options.GetData(socks6.OptionKindSessionTeardown)
+
+	if requestTeardown {
 		d.sessions.Delete(sHash)
 	}
 	// session check
-	if !ok || req.RequestTeardown {
-		reply.SessionValid = false
+	if !ok || requestTeardown {
+		reply.Options = append(reply.Options, socks6.Option{
+			Kind: socks6.OptionKindSessionInvalid,
+			Data: socks6.SessionInvalidOptionData{},
+		})
 		return AuthenticationResult{
 			Success: false,
 		}, reply
 	}
+	reply.Options = append(reply.Options, socks6.Option{
+		Kind: socks6.OptionKindSessionOK,
+		Data: socks6.SessionOKOptionData{},
+	})
 
-	reply.SessionValid = true
-
-	if !d.DisableToken && req.UseToken {
-		reply.UsingToken = true
-
+	idexpData, ok := req.Options.GetData(socks6.OptionKindIdempotenceExpenditure)
+	if !d.DisableToken && ok {
+		token := idexpData.(socks6.IdempotenceExpenditureOptionData).Token
 		// token check
-		ok, reallocate := session.SpendToken(req.TokenToSpend)
+		ok, reallocate := session.SpendToken(token)
+
 		if !ok {
-			reply.TokenValid = false
+			reply.Options = append(reply.Options, socks6.Option{
+				Kind: socks6.OptionKindIdempotenceRejected,
+				Data: socks6.IdempotenceRejectedOptionData{},
+			})
 			return AuthenticationResult{
 				Success: false,
 			}, reply
 		}
-		reply.TokenValid = true
-		if reallocate || req.RequestToken > 0 {
-			reply.NewWindowBase, reply.NewWindowSize = session.AllocateTokens(req.RequestToken)
+		reply.Options = append(reply.Options, socks6.Option{
+			Kind: socks6.OptionKindIdempotenceAccepted,
+			Data: socks6.IdempotenceAcceptedOptionData{},
+		})
+
+		tokenData, requestToken := req.Options.GetData(socks6.OptionKindTokenRequest)
+		if reallocate || requestToken {
+			size := tokenData.(socks6.TokenRequestOptionData).WindowSize
+			allocBase, allocSize := session.AllocateTokens(size)
+			reply.Options = append(reply.Options, socks6.Option{
+				Kind: socks6.OptionKindIdempotenceWindow,
+				Data: socks6.IdempotenceWindowOptionData{
+					WindowBase: allocBase,
+					WindowSize: allocSize,
+				},
+			})
 		}
 	}
 	reply.Type = socks6.AuthenticationReplySuccess

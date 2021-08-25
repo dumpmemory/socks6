@@ -62,6 +62,7 @@ type udpAssociationInfo struct {
 	received sync.Mutex
 	downlink func(b []byte) (int, error)
 	conn     net.UDPConn
+	cancel   sync.Mutex
 
 	icmpError bool
 	// todo: how? allocate port when req?
@@ -201,7 +202,6 @@ func (s *Server) streamServer(conn net.Conn) {
 	req := socks6.Request{}
 	_, err := socks6.ReadMessageFrom(&req, conn)
 	errAtyp := false
-
 	if err != nil {
 		if errors.Is(err, socks6.ErrVersion) {
 			if s.VersionErrorHandler == nil {
@@ -217,6 +217,20 @@ func (s *Server) streamServer(conn net.Conn) {
 			log.Print("unsupported address type")
 			errAtyp = true
 		} else {
+			log.Print(err)
+			return
+		}
+	}
+	initDataLen := uint16(0)
+	amao, ok := req.Options.GetData(socks6.OptionKindAuthenticationMethodAdvertisement)
+	if ok {
+		amaod := amao.(socks6.AuthenticationMethodAdvertisementOptionData)
+		initDataLen = amaod.InitialDataLength
+	}
+	initialData := make([]byte, initDataLen)
+	if ok {
+		_, err = io.ReadFull(conn, initialData)
+		if err != nil {
 			log.Print(err)
 			return
 		}
@@ -260,7 +274,7 @@ func (s *Server) streamServer(conn net.Conn) {
 	}
 	switch req.CommandCode {
 	case socks6.CommandConnect:
-		s.handleConnect(conn, req, auth)
+		s.handleConnect(conn, req, auth, initialData)
 	case socks6.CommandNoop:
 		s.handleNoop(conn, req, auth)
 	case socks6.CommandBind:
@@ -280,47 +294,61 @@ func (s *Server) streamServer(conn net.Conn) {
 	}
 }
 
-func (s *Server) handleConnect(conn net.Conn, req socks6.Request, auth AuthenticationResult) {
+func setSessionId(oprep *socks6.OperationReply, id []byte) {
+	if id == nil {
+		return
+	}
+	oprep.Options.Add(socks6.Option{
+		Kind: socks6.OptionKindSessionID,
+		Data: socks6.SessionIDOptionData{
+			ID: id,
+		},
+	})
+}
+
+func (s *Server) handleConnect(conn net.Conn, req socks6.Request, auth AuthenticationResult, initialData []byte) {
 	c, r, err := makeDestConn(req)
 	code := getReplyCode(err)
 	oprep := socks6.OperationReply{
-		ReplyCode:            code,
-		RemoteLegStackOption: r,
-		SessionID:            auth.SessionID,
-		Endpoint:             socks6.NewEndpoint(":0"),
+		ReplyCode: code,
+		Endpoint:  socks6.NewEndpoint(":0"),
 	}
+	// todo client leg options
+	oprep.Options.AddMany(r.GetOptions(false, true))
+	setSessionId(&oprep, auth.SessionID)
+
 	if code != socks6.OperationReplySuccess {
 		socks6.WriteMessageTo(&oprep, conn)
 		return
 	}
 
 	defer c.Close()
-	c.Write(req.InitialData)
+	c.Write(initialData)
 	oprep.Endpoint = socks6.NewEndpoint(c.LocalAddr().String())
 	socks6.WriteMessageTo(&oprep, conn)
 	relay(c, conn)
 }
 
 func (s *Server) handleNoop(conn net.Conn, req socks6.Request, auth AuthenticationResult) {
-	socks6.WriteMessageTo(
-		&socks6.OperationReply{
-			ReplyCode: socks6.OperationReplySuccess,
-			SessionID: auth.SessionID,
-			Endpoint:  socks6.NewEndpoint("0.0.0.0:0"),
-		},
-		conn,
-	)
+	oprep := socks6.OperationReply{
+		ReplyCode: socks6.OperationReplySuccess,
+		Endpoint:  socks6.NewEndpoint("0.0.0.0:0"),
+	}
+	setSessionId(&oprep, auth.SessionID)
+
+	socks6.WriteMessageTo(&oprep, conn)
 }
 
 func (s *Server) handleBind(conn net.Conn, req socks6.Request, auth AuthenticationResult) {
 	l, r, err := makeDestListener(req)
 	code := getReplyCode(err)
 	oprep := socks6.OperationReply{
-		ReplyCode:            code,
-		RemoteLegStackOption: r,
-		SessionID:            auth.SessionID,
-		Endpoint:             socks6.NewEndpoint(":0"),
-	}
+		ReplyCode: code,
+		Endpoint:  socks6.NewEndpoint(":0"),
+	} // todo client leg options
+	oprep.Options.AddMany(r.GetOptions(false, true))
+	setSessionId(&oprep, auth.SessionID)
+
 	if code != socks6.OperationReplySuccess {
 		socks6.WriteMessageTo(&oprep, conn)
 		return
@@ -338,11 +366,12 @@ func (s *Server) handleBind(conn net.Conn, req socks6.Request, auth Authenticati
 		<-backlogged.done
 	}
 
-	backloggedBind := req.RemoteLegStackOption.Backlog != nil
+	rso := GetStackOptionInfo(req.Options, false)
 	nBacklog := uint16(0)
+	nBacklogI, backloggedBind := rso[socks6.StackOptionTCPBacklog]
 	if backloggedBind {
-		nBacklog = *req.RemoteLegStackOption.Backlog
-		r.Backlog = &nBacklog
+		nBacklog = nBacklogI.(uint16)
+		r[socks6.StackOptionTCPBacklog] = nBacklog
 	}
 
 	// write op reply 1
@@ -362,16 +391,16 @@ func (s *Server) handleBindNoBacklog(l net.Listener, conn net.Conn, req socks6.R
 	defer rconn.Close()
 
 	// op reply 2
-	socks6.WriteMessageTo(
-		&socks6.OperationReply{
-			ReplyCode: socks6.OperationReplySuccess,
-			SessionID: auth.SessionID,
-			Endpoint:  socks6.NewEndpoint(rconn.RemoteAddr().String()),
-		},
-		conn,
-	)
+	oprep := socks6.OperationReply{
+		ReplyCode: socks6.OperationReplySuccess,
+		Endpoint:  socks6.NewEndpoint(rconn.RemoteAddr().String()),
+	}
+	setSessionId(&oprep, auth.SessionID)
+
+	socks6.WriteMessageTo(&oprep, conn)
 	relay(conn, rconn)
 }
+
 func (s *Server) handleBindBacklog(
 	l net.Listener,
 	nBacklog uint16,
@@ -418,14 +447,13 @@ func (s *Server) handleBindBacklog(
 		}
 		s.backloggedConnections[raddr] = bci
 		// send op reply 2
-		go socks6.WriteMessageTo(
-			&socks6.OperationReply{
-				ReplyCode: socks6.OperationReplySuccess,
-				SessionID: auth.SessionID,
-				Endpoint:  socks6.NewEndpoint(raddr),
-			},
-			conn,
-		)
+		oprep := socks6.OperationReply{
+			ReplyCode: socks6.OperationReplySuccess,
+			Endpoint:  socks6.NewEndpoint(raddr),
+		}
+		setSessionId(&oprep, auth.SessionID)
+
+		socks6.WriteMessageTo(&oprep, conn)
 		var conn2 net.Conn
 		select {
 		case <-ctx.Done():
@@ -444,45 +472,56 @@ func (s *Server) handleBindBacklog(
 
 func (s *Server) handleUDPAssociation(conn net.Conn, req socks6.Request, auth AuthenticationResult) {
 	desired := req.Endpoint.String()
-	var c *net.UDPConn
-	r := socks6.StackOptionData{}
-	desc, reserved := s.reservedPorts[desired]
+	var remoteConn *net.UDPConn
+	appliedRemoteOption := StackOptionInfo{}
+	reserveInfo, reserved := s.reservedPorts[desired]
 	var oprep socks6.OperationReply
 
 	if reserved {
-		if socks6.ByteArrayEqual(auth.SessionID, desc.sessionId) {
-			c = desc.conn
-			r = prepareDestUDP(c, req.RemoteLegStackOption)
+		// 8.1.9 assoc to prev reserved port
+		if socks6.ByteArrayEqual(auth.SessionID, reserveInfo.sessionId) {
+			rso := StackOptionInfo{}
+			ops := getStackOptions(req.Options, false)
+			rso.AddMany(ops)
+
+			remoteConn = reserveInfo.conn
+			appliedRemoteOption = prepareDestUDP(remoteConn, rso)
 			oprep = socks6.OperationReply{
-				ReplyCode:            socks6.OperationReplySuccess,
-				RemoteLegStackOption: r,
-				SessionID:            auth.SessionID,
-				Endpoint:             socks6.NewEndpoint(c.LocalAddr().String()),
+				ReplyCode: socks6.OperationReplySuccess,
+				Endpoint:  socks6.NewEndpoint(remoteConn.LocalAddr().String()),
 			}
+			// todo client leg options
+			oprep.Options.AddMany(appliedRemoteOption.GetOptions(false, true))
+
 		} else {
+			// wrong assoc, fail
 			oprep = socks6.OperationReply{
 				ReplyCode: socks6.OperationReplyNotAllowedByRule,
-				SessionID: auth.SessionID,
 				Endpoint:  socks6.NewEndpoint(":0"),
 			}
-			// wrong assoc, fail
 		}
 	} else {
+		// normal conn
 		cc, rr, err := makeDestUDP(req)
-		c = cc
-		r = rr
+		remoteConn = cc
+		appliedRemoteOption = rr
 		oprep = socks6.OperationReply{
-			ReplyCode:            getReplyCode(err),
-			RemoteLegStackOption: r,
-			SessionID:            auth.SessionID,
-			Endpoint:             socks6.NewEndpoint(c.LocalAddr().String()),
+			ReplyCode: getReplyCode(err),
+			Endpoint:  socks6.NewEndpoint(remoteConn.LocalAddr().String()),
 		}
+		// todo client leg options
+		oprep.Options.AddMany(appliedRemoteOption.GetOptions(false, true))
 	}
+	setSessionId(&oprep, auth.SessionID)
+
+	// write operational reply
 	socks6.WriteMessageTo(&oprep, conn)
 	if oprep.ReplyCode != socks6.OperationReplySuccess {
 		return
 	}
-	defer c.Close()
+
+	// make association
+	defer remoteConn.Close()
 	b := make([]byte, 8)
 	_, err := rand.Read(b)
 	// todo unique associd?
@@ -490,6 +529,8 @@ func (s *Server) handleUDPAssociation(conn net.Conn, req socks6.Request, auth Au
 	if err != nil {
 		return
 	}
+
+	// write associd
 	socks6.WriteMessageTo(
 		&socks6.UDPHeader{
 			Type:          socks6.UDPMessageAssociationInit,
@@ -498,10 +539,12 @@ func (s *Server) handleUDPAssociation(conn net.Conn, req socks6.Request, auth Au
 		conn,
 	)
 	assoc := udpAssociationInfo{
-		conn: *c,
+		conn: *remoteConn,
 	}
 	s.udpAssociations[assocId] = &assoc
+	// first datagram havent recv yet
 	assoc.received.Lock()
+
 	// read tcp uplink
 	go func() {
 		for {
@@ -535,7 +578,7 @@ func (s *Server) handleUDPAssociation(conn net.Conn, req socks6.Request, auth Au
 				if err != nil {
 					continue
 				}
-				c.WriteTo(h.Data, raddr)
+				remoteConn.WriteTo(h.Data, raddr)
 			default:
 			}
 		}
@@ -553,7 +596,7 @@ func (s *Server) handleUDPAssociation(conn net.Conn, req socks6.Request, auth Au
 	go func() {
 		buf := make([]byte, 4096)
 		for {
-			l, raddr, err := c.ReadFrom(buf)
+			l, raddr, err := remoteConn.ReadFrom(buf)
 			if err != nil {
 				log.Print(err)
 			}
@@ -579,6 +622,23 @@ func (s *Server) handleUDPAssociation(conn net.Conn, req socks6.Request, auth Au
 		time.Sleep(1 * time.Hour)
 	} else {
 		drain(conn)
+	}
+}
+
+func handleUDPOverTCP(conn net.Conn, assoc *udpAssociationInfo) {
+	// todo a total rewrite of udp?
+	defer func() {
+		log.Print("udp assoc uplink off")
+		assoc.cancel.Unlock()
+	}()
+	for {
+		h := socks6.UDPHeader{}
+		_, err := socks6.ReadMessageFrom(&h, conn)
+		// todo: when udp, ignore parse error
+		if err != nil {
+			log.Print(err)
+			return
+		}
 	}
 }
 
@@ -700,77 +760,4 @@ func relay(left, right net.Conn) error {
 		return err
 	}
 	return nil
-}
-
-func makeDestConn(req socks6.Request) (net.Conn, socks6.StackOptionData, error) {
-	rso := req.RemoteLegStackOption
-	supported := socks6.StackOptionData{}
-
-	d := net.Dialer{
-		Timeout: 10 * time.Second,
-		Control: func(network, address string, c syscall.RawConn) error {
-			c.Control(
-				func(fd uintptr) {
-					supported = setsocks6optTcpClient(fd, rso)
-				})
-			return nil
-		},
-	}
-	if rso.HappyEyeball != nil && req.Endpoint.AddressType == socks6.AddressTypeDomainName {
-		if !*(rso.HappyEyeball) {
-			f := false
-			// rfc8305 is based on rfc6555
-			d.FallbackDelay = -1
-			supported.HappyEyeball = &f
-		} else {
-			t := true
-			supported.HappyEyeball = &t
-		}
-	}
-	c, e := d.Dial("tcp", req.Endpoint.String())
-	return c, supported, e
-}
-
-func makeDestListener(req socks6.Request) (net.Listener, socks6.StackOptionData, error) {
-	supported := socks6.StackOptionData{}
-	cfg := net.ListenConfig{
-		Control: func(network, address string, c syscall.RawConn) error {
-			c.Control(
-				func(fd uintptr) {
-					supported = setsocks6optTcpServer(fd, req.RemoteLegStackOption)
-				})
-			return nil
-		},
-	}
-	l, err := cfg.Listen(context.Background(), "tcp", req.Endpoint.String())
-	return l, supported, err
-}
-
-func makeDestUDP(req socks6.Request) (*net.UDPConn, socks6.StackOptionData, error) {
-	ep := req.Endpoint.String()
-	addr, err := net.ResolveUDPAddr("udp", ep)
-	op := socks6.StackOptionData{}
-	if err != nil {
-		log.Print(err)
-		return nil, op, err
-	}
-	// todo mcast?
-	uc, err := net.ListenUDP("udp", addr)
-	if err != nil {
-		log.Print(err)
-		return nil, op, err
-	}
-	op = prepareDestUDP(uc, req.RemoteLegStackOption)
-	return uc, op, nil
-}
-
-func prepareDestUDP(conn *net.UDPConn, opt socks6.StackOptionData) socks6.StackOptionData {
-	raw, _ := conn.SyscallConn()
-	op := socks6.StackOptionData{}
-
-	raw.Control(
-		func(fd uintptr) {
-			op = setsocks6optUdp(fd, opt)
-		})
-	return op
 }

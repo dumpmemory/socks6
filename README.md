@@ -22,15 +22,14 @@ currently based on draft 11
 - Client API ? (no bind)
 - DTLS ?
 - Token ?
+- Linux ?
+- Port parity Option ?
 
 ### TODO list
 
-- Other platform
-- Port parity Option
+- Follow golang conventions
 - Authentication
 - Test coverage
-- Follow golang conventions
-- Server exe
 - SOCKS 5 to 6 converter ?
 - Client demo ?
 - ...

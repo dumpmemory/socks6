@@ -1,6 +1,8 @@
 package socks6
 
-import "io"
+import (
+	"io"
+)
 
 func ByteArrayEqual(a, b []byte) bool {
 	if len(a) != len(b) {
@@ -64,4 +66,14 @@ func WriteMessageTo(msg Message, w io.Writer) error {
 	}
 	_, err = w.Write(b)
 	return err
+}
+
+func dup(i []byte) []byte {
+	o := make([]byte, len(i))
+	copy(o, i)
+	return o
+}
+
+func paddedLen(l int, align int) int {
+	return l + align - 1/align*align
 }

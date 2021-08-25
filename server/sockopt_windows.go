@@ -21,62 +21,53 @@ func setsockoptBtoi(b bool) int {
 	}
 	return val
 }
-func setsocks6optIp(fd uintptr, opt socks6.StackOptionData) socks6.StackOptionData {
+
+func setAndValidateSockoptInt(fd syscall.Handle, level int, opt int, value int) int {
+	err := syscall.SetsockoptInt(fd, level, opt, value)
+	if err != nil {
+		printSetsockoptError(err)
+	}
+	v, err := syscall.GetsockoptInt(fd, level, opt)
+	if err != nil {
+		printSetsockoptError(err)
+	}
+	return v
+}
+
+func setsocks6optIp(fd uintptr, opt StackOptionInfo) StackOptionInfo {
 	const DF = 14
-	rep := socks6.StackOptionData{}
+	rep := map[int]interface{}{}
 	h := syscall.Handle(fd)
-	if opt.DF != nil {
-		val := setsockoptBtoi(*opt.DF)
-		err := syscall.SetsockoptInt(h, syscall.IPPROTO_IP, DF, val)
-		if err != nil {
-			printSetsockoptError(err)
-		}
-		v, err := syscall.GetsockoptInt(h, syscall.IPPROTO_IP, DF)
-		if err != nil {
-			printSetsockoptError(err)
-		}
+	if df, ok := opt[socks6.StackOptionIPNoFragment]; ok {
+		val := setsockoptBtoi(df.(bool))
+		v := setAndValidateSockoptInt(h, syscall.IPPROTO_IP, DF, val)
 		real := v != 0
-		rep.DF = &real
+		rep[socks6.StackOptionIPNoFragment] = real
 	}
-	if opt.TTL != nil {
-		err := syscall.SetsockoptInt(h, syscall.IPPROTO_IP, syscall.IP_TTL, int(*opt.TTL))
-		if err != nil {
-			printSetsockoptError(err)
-		}
-		v, err := syscall.GetsockoptInt(h, syscall.IPPROTO_IP, syscall.IP_TTL)
-		if err != nil {
-			printSetsockoptError(err)
-		}
-		real := byte(v)
-		rep.TTL = &real
+
+	if ttl, ok := opt[socks6.StackOptionIPTTL]; ok {
+		v := setAndValidateSockoptInt(h, syscall.IPPROTO_IP, syscall.IP_TTL, int(ttl.(byte)))
+		rep[socks6.StackOptionIPTTL] = byte(v)
 	}
-	if opt.TOS != nil {
-		err := syscall.SetsockoptInt(h, syscall.IPPROTO_IP, syscall.IP_TOS, int(*opt.TOS))
-		if err != nil {
-			printSetsockoptError(err)
-		}
-		v, err := syscall.GetsockoptInt(h, syscall.IPPROTO_IP, syscall.IP_TOS)
-		if err != nil {
-			printSetsockoptError(err)
-		}
-		real := byte(v)
-		rep.TTL = &real
+	if tos, ok := opt[socks6.StackOptionIPTOS]; ok {
+		v := setAndValidateSockoptInt(h, syscall.IPPROTO_IP, syscall.IP_TOS, int(tos.(byte)))
+		rep[socks6.StackOptionIPTOS] = byte(v)
 	}
 	return rep
 }
 
-func setsocks6optTcpClient(fd uintptr, opt socks6.StackOptionData) socks6.StackOptionData {
+func setsocks6optTcpClient(fd uintptr, opt StackOptionInfo) StackOptionInfo {
 
 	// no tfo and mptcp for all platform
 
 	return setsocks6optIp(fd, opt)
 }
 
-func setsocks6optTcpServer(fd uintptr, opt socks6.StackOptionData) socks6.StackOptionData {
+func setsocks6optTcpServer(fd uintptr, opt StackOptionInfo) StackOptionInfo {
 	return setsocks6optIp(fd, opt)
 }
 
-func setsocks6optUdp(fd uintptr, opt socks6.StackOptionData) socks6.StackOptionData {
+func setsocks6optUdp(fd uintptr, opt StackOptionInfo) StackOptionInfo {
 	return setsocks6optIp(fd, opt)
 }
 
@@ -94,4 +85,5 @@ func convertErrno(e syscall.Errno) syscall.Errno {
 	default:
 		return e
 	}
+	return e
 }
