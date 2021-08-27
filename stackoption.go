@@ -2,7 +2,6 @@ package socks6
 
 import (
 	"encoding/binary"
-	"log"
 )
 
 type StackOptionLevel byte
@@ -47,29 +46,39 @@ const (
 	StackOptionUDPPortParity = int(StackOptionLevelUDP)*256 + int(StackOptionCodePortParity)
 )
 
-var stackOptionParseFn = map[int]func([]byte) (OptionData, error){
-	StackOptionIPTOS: func(b []byte) (OptionData, error) {
+var stackOptionParseFn = map[int]func([]byte) (StackOptionData, error){
+	StackOptionIPTOS: func(b []byte) (StackOptionData, error) {
 		return parseUint8StackOption(b, &TOSOptionData{})
 	},
-	StackOptionIPHappyEyeball: func(b []byte) (OptionData, error) {
+	StackOptionIPHappyEyeball: func(b []byte) (StackOptionData, error) {
 		return parseBoolStackOption(b, &HappyEyeballOptionData{})
 	},
-	StackOptionIPTTL: func(b []byte) (OptionData, error) {
+	StackOptionIPTTL: func(b []byte) (StackOptionData, error) {
 		return parseUint8StackOption(b, &TTLOptionData{})
 	},
-	StackOptionIPNoFragment: func(b []byte) (OptionData, error) {
-		return parseUint16StackOption(b, &TFOOptionData{})
+	StackOptionIPNoFragment: func(b []byte) (StackOptionData, error) {
+		return parseBoolStackOption(b, &NoFragmentationOptionData{})
 	},
-	StackOptionTCPMultipath: func(b []byte) (OptionData, error) {
+	StackOptionTCPMultipath: func(b []byte) (StackOptionData, error) {
 		return parseBoolStackOption(b, &MultipathOptionData{})
 	},
-	StackOptionTCPTFO: func(b []byte) (OptionData, error) {
+	StackOptionTCPTFO: func(b []byte) (StackOptionData, error) {
 		return parseUint16StackOption(b, &TFOOptionData{})
 	},
-	StackOptionUDPUDPError: func(b []byte) (OptionData, error) {
+	StackOptionTCPBacklog: func(b []byte) (StackOptionData, error) {
+		return parseUint16StackOption(b, &BacklogOptionData{})
+	},
+	StackOptionUDPUDPError: func(b []byte) (StackOptionData, error) {
 		return parseBoolStackOption(b, &UDPErrorOptionData{})
 	},
 	StackOptionUDPPortParity: parsePortParityOptionData,
+}
+
+// SetStackOptionDataParser set the stack option data parse function for given level and code to fn
+// set fn to nil to clear parser
+func SetStackOptionDataParser(lv StackOptionLevel, code StackOptionCode, fn func([]byte) (StackOptionData, error)) {
+	id := StackOptionID(lv, code)
+	stackOptionParseFn[id] = fn
 }
 
 func StackOptionID(level StackOptionLevel, code StackOptionCode) int {
@@ -85,32 +94,44 @@ func SplitStackOptionID(id int) (StackOptionLevel, StackOptionCode) {
 
 type StackOptionData interface {
 	OptionData
+	Len() uint16
 	GetData() interface{}
 	SetData(interface{})
 }
 
-type RawStackOptionData struct {
+type BaseStackOptionData struct {
 	ClientLeg bool
 	RemoteLeg bool
 	Level     StackOptionLevel
 	Code      StackOptionCode
-	Data      OptionData
+	Data      StackOptionData
+}
+
+func parseRawOptionDataAsStackOptionData(d []byte) (StackOptionData, error) {
+	return &RawOptionData{Data: dup(d)}, nil
+}
+func (r RawOptionData) GetData() interface{} {
+	return r.Data
+}
+func (r *RawOptionData) SetData(d interface{}) {
+	b := d.([]byte)
+	r.Data = dup(b)
 }
 
 func parseStackOptionData(d []byte) (OptionData, error) {
-	sod := RawStackOptionData{}
+	sod := BaseStackOptionData{}
 	legLevel := d[0]
 	sod.RemoteLeg = legLevel&0b1000_0000 > 0
 	sod.ClientLeg = legLevel&0b0100_0000 > 0
 	if !(sod.RemoteLeg || sod.ClientLeg) {
-		return nil, ErrFormat
+		return nil, newProtocolPoliceError("stack option should have at least one leg")
 	}
 	sod.Level = StackOptionLevel(legLevel & 0b00_111111)
 	sod.Code = StackOptionCode(d[1])
 	id := StackOptionID(sod.Level, sod.Code)
 	parseFn, ok := stackOptionParseFn[id]
-	if !ok {
-		parseFn = parseRawOptionData
+	if !ok || parseFn == nil {
+		parseFn = parseRawOptionDataAsStackOptionData
 	}
 	data, err := parseFn(d[2:])
 	if err != nil {
@@ -119,10 +140,10 @@ func parseStackOptionData(d []byte) (OptionData, error) {
 	sod.Data = data
 	return sod, nil
 }
-func (s RawStackOptionData) Len() uint16 {
+func (s BaseStackOptionData) Len() uint16 {
 	return s.Data.Len() + 2
 }
-func (s RawStackOptionData) Marshal() []byte {
+func (s BaseStackOptionData) Marshal() []byte {
 	b := make([]byte, s.Len())
 	if s.RemoteLeg {
 		b[0] |= 0b1000_0000
@@ -141,37 +162,37 @@ const (
 	stackOptionTrue  byte = 2
 )
 
-func parseBoolStackOption(d []byte, o boolStackOption) (OptionData, error) {
+func parseBoolStackOption(d []byte, o boolStackOption) (StackOptionData, error) {
 	val := d[0] == stackOptionTrue
 	if !val && d[0] != stackOptionFalse {
-		log.Print("unexpected boolean stack option value")
+		return nil, newProtocolPoliceError("unexpected boolean stack option value")
 	}
 	o.SetBool(val)
 	return o, nil
 }
 
 type boolStackOption interface {
-	OptionData
+	StackOptionData
 	SetBool(bool)
 }
 
-func parseUint8StackOption(d []byte, o uint8StackOption) (OptionData, error) {
+func parseUint8StackOption(d []byte, o uint8StackOption) (StackOptionData, error) {
 	o.SetUint8(d[0])
 	return o, nil
 }
 
 type uint8StackOption interface {
-	OptionData
+	StackOptionData
 	SetUint8(byte)
 }
 
-func parseUint16StackOption(d []byte, o uint16StackOption) (OptionData, error) {
+func parseUint16StackOption(d []byte, o uint16StackOption) (StackOptionData, error) {
 	o.SetUint16(binary.BigEndian.Uint16(d))
 	return o, nil
 }
 
 type uint16StackOption interface {
-	OptionData
+	StackOptionData
 	SetUint16(uint16)
 }
 
@@ -376,18 +397,18 @@ type PortParityOptionData struct {
 	Reserve bool
 }
 
-func parsePortParityOptionData(d []byte) (OptionData, error) {
+func parsePortParityOptionData(d []byte) (StackOptionData, error) {
 	o := PortParityOptionData{}
 	val := d[1] == stackOptionTrue
 	if !val && d[1] != stackOptionFalse {
-		log.Print("unexpected boolean stack option value")
+		return nil, newProtocolPoliceError("unexpected boolean stack option value")
 	}
 	o.Reserve = val
 	o.Parity = d[0]
 	if o.Parity > 2 {
-		log.Print("unexpected port parity stack option value")
+		return nil, newProtocolPoliceError("unexpected port parity stack option value")
 	}
-	return o, nil
+	return &o, nil
 }
 func (t PortParityOptionData) Len() uint16 {
 	return 2

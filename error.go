@@ -52,3 +52,25 @@ var ErrEnumValue = newMessageError("unexpected enum value")
 var ErrVersion = newMessageError("version is not 6")
 var ErrFormat = newMessageError("wrong message format")
 var ErrAddressTypeNotSupport = newMessageError("unknown address type")
+
+type baseProtocolPoliceError struct {
+	msg string
+}
+
+// ErrProtocolPolice is the error used to report non-standard behaviour
+var ErrProtocolPolice = newMessageError("consistency check fail")
+
+func (e baseProtocolPoliceError) Error() string {
+	return e.msg
+}
+func (e baseProtocolPoliceError) Unwrap() error {
+	return ErrProtocolPolice
+}
+
+func newProtocolPoliceError(msg string) error {
+	return baseProtocolPoliceError{
+		msg: msg,
+	}
+}
+
+var errProtocolPoliceBufferSize = newProtocolPoliceError("buffer size not allowed")

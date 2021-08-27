@@ -47,21 +47,29 @@ var optionDataParseFn = map[OptionKind]func([]byte) (OptionData, error){
 	OptionKindIdempotenceRejected:    func(b []byte) (OptionData, error) { return IdempotenceRejectedOptionData{}, bufferLengthPolice(b) },
 }
 
+// SetOptionDataParser set the option data parse function for given kind to fn
+// set fn to nil to clear parser
+func SetOptionDataParser(kind OptionKind, fn func([]byte) (OptionData, error)) {
+	optionDataParseFn[kind] = fn
+}
+
 func bufferLengthPolice(b []byte) error {
 	if len(b) != 0 {
-		return ErrFormat
+		return errProtocolPoliceBufferSize
 	}
 	return nil
 }
 
 // kind(i16) length(i16) data(b(length))
 
+// An Option represent a SOCKS6 option
 type Option struct {
 	Kind   OptionKind
 	Length uint16
 	Data   OptionData
 }
 
+// ParseOption parses b as a SOCKS6 option.
 func ParseOption(b []byte) (Option, error) {
 	if len(b) < 4 {
 		return Option{}, ErrTooShort{ExpectedLen: 4}
@@ -74,7 +82,7 @@ func ParseOption(b []byte) (Option, error) {
 
 	t := OptionKind(binary.BigEndian.Uint16(b))
 	parseFn, ok := optionDataParseFn[t]
-	if !ok {
+	if !ok || parseFn == nil {
 		parseFn = parseRawOptionData
 	}
 	data := b[4:l]
@@ -90,16 +98,17 @@ func ParseOption(b []byte) (Option, error) {
 	return op, nil
 }
 
+// Marshal return option's binary encoding
+// When encoding, it will always use OptionData provided length,
+// option's Length field is ignored and updated by actual length.
 func (o *Option) Marshal() []byte {
-	expLen := o.Data.Len() + 4
-	if expLen != o.Length {
-		o.Length = expLen
-	}
-	ret := make([]byte, o.Length)
 	data := o.Data.Marshal()
-	if len(data) != int(expLen)-4 {
-		log.Panic("implementation of OptionData have problem")
+	l := len(data) + 4
+	if l > math.MaxUint16 {
+		log.Panic("too much option data")
 	}
+	o.Length = uint16(l)
+	ret := make([]byte, l)
 	copy(ret[4:], data)
 	binary.BigEndian.PutUint16(ret, uint16(o.Kind))
 	binary.BigEndian.PutUint16(ret[2:], o.Length)
@@ -109,7 +118,6 @@ func (o *Option) Marshal() []byte {
 // maybe MarshalTo([]byte)
 
 type OptionData interface {
-	Len() uint16
 	Marshal() []byte
 }
 
@@ -179,14 +187,11 @@ type AuthenticationMethodSelectionOptionData struct {
 
 func parseAuthenticationMethodSelectionOptionData(d []byte) (OptionData, error) {
 	if len(d) != 4 {
-		return nil, ErrFormat
+		return nil, errProtocolPoliceBufferSize
 	}
 	return AuthenticationMethodSelectionOptionData{
 		Method: d[0],
 	}, nil
-}
-func (s AuthenticationMethodSelectionOptionData) Len() uint16 {
-	return 4
 }
 func (s AuthenticationMethodSelectionOptionData) Marshal() []byte {
 	return []byte{s.Method, 0, 0, 0}
@@ -216,9 +221,6 @@ func (s AuthenticationDataOptionData) Marshal() []byte {
 
 type SessionRequestOptionData struct{}
 
-func (s SessionRequestOptionData) Len() uint16 {
-	return 0
-}
 func (s SessionRequestOptionData) Marshal() []byte {
 	return []byte{}
 }
@@ -230,36 +232,24 @@ type SessionIDOptionData struct {
 func parseSessionIDOptionData(d []byte) (OptionData, error) {
 	return SessionIDOptionData{ID: dup(d)}, nil
 }
-func (s SessionIDOptionData) Len() uint16 {
-	return overflowCheck(len(s.ID))
-}
 func (s SessionIDOptionData) Marshal() []byte {
 	return s.ID
 }
 
 type SessionOKOptionData struct{}
 
-func (s SessionOKOptionData) Len() uint16 {
-	return 0
-}
 func (s SessionOKOptionData) Marshal() []byte {
 	return []byte{}
 }
 
 type SessionInvalidOptionData struct{}
 
-func (s SessionInvalidOptionData) Len() uint16 {
-	return 0
-}
 func (s SessionInvalidOptionData) Marshal() []byte {
 	return []byte{}
 }
 
 type SessionTeardownOptionData struct{}
 
-func (s SessionTeardownOptionData) Len() uint16 {
-	return 0
-}
 func (s SessionTeardownOptionData) Marshal() []byte {
 	return []byte{}
 }
@@ -270,12 +260,9 @@ type TokenRequestOptionData struct {
 
 func parseTokenRequestOptionData(d []byte) (OptionData, error) {
 	if len(d) != 4 {
-		return nil, ErrFormat
+		return nil, errProtocolPoliceBufferSize
 	}
 	return TokenRequestOptionData{WindowSize: binary.BigEndian.Uint32(d)}, nil
-}
-func (s TokenRequestOptionData) Len() uint16 {
-	return 4
 }
 func (s TokenRequestOptionData) Marshal() []byte {
 	b := []byte{0, 0, 0, 0}
@@ -290,15 +277,12 @@ type IdempotenceWindowOptionData struct {
 
 func parseIdempotenceWindowOptionData(d []byte) (OptionData, error) {
 	if len(d) != 8 {
-		return nil, ErrFormat
+		return nil, errProtocolPoliceBufferSize
 	}
 	return IdempotenceWindowOptionData{
 		WindowBase: binary.BigEndian.Uint32(d),
 		WindowSize: binary.BigEndian.Uint32(d[4:]),
 	}, nil
-}
-func (s IdempotenceWindowOptionData) Len() uint16 {
-	return 8
 }
 func (s IdempotenceWindowOptionData) Marshal() []byte {
 	b := []byte{0, 0, 0, 0, 0, 0, 0, 0}
@@ -313,12 +297,9 @@ type IdempotenceExpenditureOptionData struct {
 
 func parseIdempotenceExpenditureOptionData(d []byte) (OptionData, error) {
 	if len(d) != 4 {
-		return nil, ErrFormat
+		return nil, errProtocolPoliceBufferSize
 	}
 	return IdempotenceExpenditureOptionData{Token: binary.BigEndian.Uint32(d)}, nil
-}
-func (s IdempotenceExpenditureOptionData) Len() uint16 {
-	return 4
 }
 func (s IdempotenceExpenditureOptionData) Marshal() []byte {
 	b := []byte{0, 0, 0, 0}
@@ -328,18 +309,12 @@ func (s IdempotenceExpenditureOptionData) Marshal() []byte {
 
 type IdempotenceAcceptedOptionData struct{}
 
-func (s IdempotenceAcceptedOptionData) Len() uint16 {
-	return 0
-}
 func (s IdempotenceAcceptedOptionData) Marshal() []byte {
 	return []byte{}
 }
 
 type IdempotenceRejectedOptionData struct{}
 
-func (s IdempotenceRejectedOptionData) Len() uint16 {
-	return 0
-}
 func (s IdempotenceRejectedOptionData) Marshal() []byte {
 	return []byte{}
 }

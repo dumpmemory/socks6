@@ -35,12 +35,13 @@ func optionDataTestProtocolPolice(t *testing.T, bin []byte, obj socks6.Option) {
 		buf[i] = byte(rand.Uint32())
 	}
 	// maybe we just want warning
-	assert.ErrorIs(t, err, socks6.ErrMessageProcess)
+	assert.ErrorIs(t, err, socks6.ErrProtocolPolice)
 	if obj.Data != nil {
 		obj.Length = uint16(len(bin))
 		assert.Equal(t, obj, op)
 	}
 }
+
 func TestOption(t *testing.T) {
 	_, err := socks6.ParseOption(nil)
 	assert.Error(t, err, socks6.ErrTooShort{ExpectedLen: 4})
@@ -84,6 +85,42 @@ func TestRawOptionData(t *testing.T) {
 	d := socks6.RawOptionData{Data: buf[:4]}
 	assert.EqualValues(t, 4, d.Len())
 	assert.Equal(t, []byte{0, 0, 0, 9}, d.Marshal())
+}
+
+type MyOptionData struct{}
+
+func (m MyOptionData) Len() uint16 {
+	return 0
+}
+func (m MyOptionData) Marshal() []byte {
+	return []byte{}
+}
+
+type MyBrokenOptionData struct{}
+
+func (m MyBrokenOptionData) Len() uint16 {
+	return 0
+}
+func (m MyBrokenOptionData) Marshal() []byte {
+	return make([]byte, 114514)
+}
+
+func TestSetOptionDataParser(t *testing.T) {
+	socks6.SetOptionDataParser(socks6.OptionKind(512), func(b []byte) (socks6.OptionData, error) { return MyOptionData{}, nil })
+	optionDataTest(t, []byte{2, 0, 0, 4}, socks6.Option{
+		Kind: 512,
+		Data: MyOptionData{},
+	})
+	socks6.SetOptionDataParser(socks6.OptionKind(512), nil)
+	optionDataTest(t, []byte{2, 0, 0, 4}, socks6.Option{
+		Kind: 512,
+		Data: &socks6.RawOptionData{
+			Data: []byte{},
+		},
+	})
+	socks6.SetOptionDataParser(socks6.OptionKind(512), func(b []byte) (socks6.OptionData, error) { return MyBrokenOptionData{}, nil })
+	op, _ := socks6.ParseOption([]byte{2, 0, 0, 4})
+	assert.Panics(t, func() { op.Marshal() })
 }
 
 func TestAuthenticationMethodAdvertisementOptionData(t *testing.T) {

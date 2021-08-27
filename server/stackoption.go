@@ -8,7 +8,7 @@ type StackOptionInfo map[int]interface{}
 
 func getStackOptions(options socks6.OptionSet, clientLeg bool) []socks6.Option {
 	return options.GetKindF(socks6.OptionKindStack, func(o socks6.Option) bool {
-		return o.Data.(socks6.RawStackOptionData).RemoteLeg
+		return o.Data.(socks6.BaseStackOptionData).RemoteLeg
 	})
 }
 func GetStackOptionInfo(ops socks6.OptionSet, clientLeg bool) StackOptionInfo {
@@ -17,14 +17,14 @@ func GetStackOptionInfo(ops socks6.OptionSet, clientLeg bool) StackOptionInfo {
 	rso.AddMany(o)
 	return rso
 }
-func (s *StackOptionInfo) Add(d socks6.RawStackOptionData) {
+func (s *StackOptionInfo) Add(d socks6.BaseStackOptionData) {
 	id := socks6.StackOptionID(d.Level, d.Code)
 	dt := d.Data.(socks6.StackOptionData).GetData()
 	(map[int]interface{})(*s)[id] = dt
 }
 func (s *StackOptionInfo) AddMany(d []socks6.Option) {
 	for _, v := range d {
-		rsod := v.Data.(socks6.RawStackOptionData)
+		rsod := v.Data.(socks6.BaseStackOptionData)
 		s.Add(rsod)
 	}
 }
@@ -55,7 +55,7 @@ func (s StackOptionInfo) GetOptions(clientLeg bool, remoteLeg bool) []socks6.Opt
 		lv, code := socks6.SplitStackOptionID(id)
 		op := socks6.Option{
 			Kind: socks6.OptionKindStack,
-			Data: socks6.RawStackOptionData{
+			Data: socks6.BaseStackOptionData{
 				Level:     lv,
 				Code:      code,
 				ClientLeg: clientLeg,
