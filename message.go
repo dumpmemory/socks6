@@ -18,30 +18,26 @@ type Request struct {
 }
 
 func (r *Request) Serialize(buf []byte) (int, error) {
-	if len(buf) < 10 {
-		return 0, ErrTooShort{ExpectedLen: 10}
-	}
-	buf[0] = 6
-	buf[1] = r.CommandCode
-	// optionlength, tbd
-	binary.BigEndian.PutUint16(buf[4:], r.Endpoint.Port)
-	buf[6] = 0
-	buf[7] = byte(r.Endpoint.AddressType)
-	addr := r.Endpoint.MarshalAddress()
-	hdrLen := len(addr) + 8
-	if len(buf) < hdrLen {
-		return 0, ErrTooShort{ExpectedLen: hdrLen}
-	}
-	copy(buf[8:], addr)
-
 	ops := r.Options.Marshal()
-	totalLen := len(ops) + hdrLen
-	if totalLen > len(buf) {
+	addr := r.Endpoint.MarshalAddress()
+	totalLen := 8 + len(ops) + len(addr)
+
+	if len(buf) < totalLen {
 		return 0, ErrTooShort{ExpectedLen: totalLen}
 	}
-	copy(buf[hdrLen:], ops)
-	binary.BigEndian.PutUint16(buf[2:], uint16(len(ops)))
+	b := bytes.NewBuffer(buf)
 
+	b.WriteByte(6)
+	b.WriteByte(r.CommandCode)
+	binary.Write(b, binary.BigEndian, uint16(len(ops)))
+
+	binary.Write(b, binary.BigEndian, r.Endpoint.Port)
+	b.WriteByte(0)
+	b.WriteByte(byte(r.Endpoint.AddressType))
+
+	b.Write(addr)
+
+	b.Write(ops)
 	return totalLen, nil
 }
 func (r *Request) Deserialize(buf []byte) (int, error) {
@@ -86,20 +82,23 @@ type AuthenticationReply struct {
 }
 
 func (a *AuthenticationReply) Serialize(buf []byte) (int, error) {
-	if len(buf) < 4 {
-		return 0, ErrTooShort{ExpectedLen: 4}
-	}
-	buf[0] = 6
-	buf[1] = a.Type
-	hdrLen := 4
-
 	ops := a.Options.Marshal()
-	totalLen := len(ops) + hdrLen
-	if totalLen > len(buf) {
+	totalLen := len(ops) + 4
+
+	if len(buf) < totalLen {
 		return 0, ErrTooShort{ExpectedLen: totalLen}
 	}
-	copy(buf[4:], ops)
-	binary.BigEndian.PutUint16(buf[2:], uint16(len(ops)))
+
+	if len(buf) < totalLen {
+		return 0, ErrTooShort{ExpectedLen: totalLen}
+	}
+	b := bytes.NewBuffer(buf)
+
+	b.WriteByte(6)
+	b.WriteByte(a.Type)
+	binary.Write(b, binary.BigEndian, uint16(len(ops)))
+
+	b.Write(ops)
 	return totalLen, nil
 }
 func (a *AuthenticationReply) Deserialize(buf []byte) (int, error) {
@@ -134,27 +133,27 @@ type OperationReply struct {
 }
 
 func (o *OperationReply) Serialize(buf []byte) (int, error) {
-	if len(buf) < 10 {
-		return 0, ErrTooShort{ExpectedLen: 10}
-	}
-	buf[0] = 6
-	buf[1] = o.ReplyCode
-	binary.BigEndian.PutUint16(buf[4:], o.Endpoint.Port)
-	buf[7] = byte(o.Endpoint.AddressType)
-	addr := o.Endpoint.MarshalAddress()
-	hdrLen := len(addr) + 8
-	if len(buf) < hdrLen {
-		return 0, ErrTooShort{ExpectedLen: hdrLen}
-	}
-	copy(buf[8:], addr)
-
 	ops := o.Options.Marshal()
-	totalLen := hdrLen + len(ops)
+	addr := o.Endpoint.MarshalAddress()
+	totalLen := 8 + len(ops) + len(addr)
+
 	if len(buf) < totalLen {
 		return 0, ErrTooShort{ExpectedLen: totalLen}
 	}
-	binary.BigEndian.PutUint16(buf[2:], uint16(len(ops)))
-	return hdrLen, nil
+	b := bytes.NewBuffer(buf)
+
+	b.WriteByte(6)
+	b.WriteByte(o.ReplyCode)
+	binary.Write(b, binary.BigEndian, uint16(len(ops)))
+
+	binary.Write(b, binary.BigEndian, o.Endpoint.Port)
+	b.WriteByte(0)
+	b.WriteByte(byte(o.Endpoint.AddressType))
+
+	b.Write(addr)
+
+	b.Write(ops)
+	return totalLen, nil
 }
 func (o *OperationReply) Deserialize(buf []byte) (int, error) {
 	if len(buf) < 10 {
@@ -221,12 +220,12 @@ func (u *UDPHeader) Serialize(buf []byte) (int, error) {
 		b := bytes.NewBuffer(buf)
 		b.WriteByte(6)
 		b.WriteByte(u.Type)
-		binary.Write(b, binary.BigEndian, totalLen)
+		binary.Write(b, binary.BigEndian, uint16(totalLen))
 		binary.Write(b, binary.BigEndian, u.AssociationID)
 
 		b.WriteByte(byte(u.Endpoint.AddressType))
 		b.WriteByte(0)
-		binary.Write(b, binary.BigEndian, len(addr))
+		binary.Write(b, binary.BigEndian, uint16(len(addr)))
 		b.Write(addr)
 
 		b.Write(u.Data)
@@ -244,7 +243,7 @@ func (u *UDPHeader) Serialize(buf []byte) (int, error) {
 
 		b.WriteByte(6)
 		b.WriteByte(u.Type)
-		binary.Write(b, binary.BigEndian, totalLen)
+		binary.Write(b, binary.BigEndian, uint16(totalLen))
 
 		binary.Write(b, binary.BigEndian, u.AssociationID)
 
