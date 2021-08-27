@@ -1,6 +1,8 @@
 package socks6_test
 
 import (
+	"bytes"
+	"io"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -212,5 +214,77 @@ func TestAddrMarshalAddress(t *testing.T) {
 	}
 	for _, tt := range tests {
 		assert.Equal(t, tt.bin, tt.addr.MarshalAddress())
+	}
+}
+
+func TestAddrParseAddressFrom(t *testing.T) {
+	tests := []struct {
+		atyp socks6.AddressType
+		bin  []byte
+		addr socks6.Addr
+		out  string
+	}{
+		{
+			atyp: socks6.AddressTypeIPv6,
+			bin: []byte{
+				0xfe, 0x80, 0x12, 0x34,
+				0, 0, 0, 0,
+				0, 0, 0, 0,
+				0, 0, 0, 1,
+			},
+			addr: socks6.Addr{
+				AddressType: socks6.AddressTypeIPv6,
+				Address: []byte{
+					0xfe, 0x80, 0x12, 0x34,
+					0, 0, 0, 0,
+					0, 0, 0, 0,
+					0, 0, 0, 1,
+				},
+			},
+		},
+		{
+			atyp: socks6.AddressTypeIPv4,
+			bin: []byte{
+				127, 0, 0, 1,
+			},
+			addr: socks6.Addr{
+				AddressType: socks6.AddressTypeIPv4,
+				Address: []byte{
+					127, 0, 0, 1,
+				},
+			},
+		},
+		{
+			atyp: socks6.AddressTypeDomainName,
+			bin:  append([]byte{16}, []byte("example.com\x00\x00\x00\x00\x00")...),
+			addr: socks6.Addr{
+				AddressType: socks6.AddressTypeDomainName,
+				Address:     []byte("example.com"),
+			},
+		},
+	}
+	for _, tt := range tests {
+		buf := bytes.NewBuffer(tt.bin)
+		a, e := socks6.ParseAddressFrom(buf, tt.atyp)
+		assert.Nil(t, e)
+		a.ParseAddress(tt.atyp, tt.bin)
+		assert.Equal(t, &tt.addr, a)
+	}
+
+	ftests := []struct {
+		atyp socks6.AddressType
+		addr []byte
+		e    error
+	}{
+		{atyp: socks6.AddressTypeDomainName, addr: nil, e: io.EOF},
+		{atyp: socks6.AddressTypeDomainName, addr: []byte{100, 1}, e: io.ErrUnexpectedEOF},
+		{atyp: socks6.AddressType(9), addr: nil, e: socks6.ErrAddressTypeNotSupport},
+		{atyp: socks6.AddressTypeIPv4, addr: nil, e: io.EOF},
+		{atyp: socks6.AddressTypeIPv6, addr: nil, e: io.EOF},
+	}
+	for _, tt := range ftests {
+		buf := bytes.NewBuffer(tt.addr)
+		_, e := socks6.ParseAddressFrom(buf, tt.atyp)
+		assert.ErrorIs(t, e, tt.e)
 	}
 }

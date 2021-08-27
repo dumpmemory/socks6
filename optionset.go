@@ -1,5 +1,7 @@
 package socks6
 
+import "io"
+
 type OptionSet struct {
 	perKind map[OptionKind][]Option
 	list    []Option
@@ -30,6 +32,19 @@ func parseOptions(b []byte) (OptionSet, int, error) {
 		ops.Add(op)
 	}
 	return ops, totalLen, nil
+}
+func parseOptionsFrom(b io.Reader, limit int) (OptionSet, error) {
+	ops := NewOptions()
+	totalLen := 0
+	for totalLen < limit {
+		op, err := ParseOptionFrom(b)
+		if err != nil {
+			return ops, addExpectedLen(err, totalLen)
+		}
+		totalLen += int(op.Length)
+		ops.Add(op)
+	}
+	return ops, nil
 }
 func (s *OptionSet) Add(o Option) {
 	arr, ok := s.perKind[o.Kind]

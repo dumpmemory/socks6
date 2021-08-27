@@ -2,6 +2,7 @@ package socks6
 
 import (
 	"encoding/binary"
+	"io"
 	"log"
 	"math"
 )
@@ -93,6 +94,35 @@ func ParseOption(b []byte) (Option, error) {
 	op := Option{
 		Kind:   t,
 		Length: l,
+		Data:   opData,
+	}
+	return op, nil
+}
+func ParseOptionFrom(b io.Reader) (Option, error) {
+	// kind2 length2
+	buf := make([]byte, math.MaxUint16)
+	if _, err := io.ReadFull(b, buf[:4]); err != nil {
+		return Option{}, err
+	}
+
+	l := binary.BigEndian.Uint16(buf[2:]) - 4
+
+	t := OptionKind(binary.BigEndian.Uint16(buf))
+	parseFn, ok := optionDataParseFn[t]
+	if !ok || parseFn == nil {
+		parseFn = parseRawOptionData
+	}
+	if _, err := io.ReadFull(b, buf[:l]); err != nil {
+		return Option{}, err
+	}
+	data := buf[:l]
+	opData, err := parseFn(data)
+	if err != nil {
+		return Option{}, err
+	}
+	op := Option{
+		Kind:   t,
+		Length: l + 4,
 		Data:   opData,
 	}
 	return op, nil

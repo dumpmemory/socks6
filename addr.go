@@ -2,6 +2,7 @@ package socks6
 
 import (
 	"bytes"
+	"io"
 	"log"
 	"net"
 	"strconv"
@@ -126,4 +127,34 @@ func (a *Addr) MarshalAddress() []byte {
 		l = 4
 	}
 	return dup(a.Address[:l])
+}
+func ParseAddressFrom(b io.Reader, atyp AddressType) (*Addr, error) {
+	a := &Addr{}
+	a.AddressType = atyp
+	buf := make([]byte, 256)
+	if a.AddressType == AddressTypeDomainName {
+		if _, err := io.ReadFull(b, buf[:1]); err != nil {
+			return nil, err
+		}
+		l := buf[0]
+		if _, err := io.ReadFull(b, buf[:l]); err != nil {
+			return nil, err
+		}
+		a.Address = bytes.Trim(buf[:l], "\x00")
+		return a, nil
+	} else {
+		l := 4
+		if a.AddressType == AddressTypeIPv6 {
+			l = 16
+		} else if a.AddressType == AddressTypeIPv4 {
+			l = 4
+		} else {
+			return nil, ErrAddressTypeNotSupport
+		}
+		if _, err := io.ReadFull(b, buf[:l]); err != nil {
+			return nil, err
+		}
+		a.Address = dup(buf[:l])
+		return a, nil
+	}
 }

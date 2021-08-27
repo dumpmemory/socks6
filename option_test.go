@@ -1,6 +1,7 @@
 package socks6_test
 
 import (
+	"bytes"
 	"math/rand"
 	"testing"
 
@@ -16,6 +17,16 @@ func optionDataTestParse(t *testing.T, bin []byte, obj socks6.Option) {
 	buf := make([]byte, len(bin))
 	copy(buf, bin)
 	op, err := socks6.ParseOption(buf)
+	for i := 0; i < len(buf); i++ {
+		buf[i] = byte(rand.Uint32())
+	}
+	assert.Nil(t, err)
+	obj.Length = uint16(len(bin))
+	assert.Equal(t, obj, op)
+
+	copy(buf, bin)
+	b := bytes.NewBuffer(buf)
+	op, err = socks6.ParseOptionFrom(b)
 	for i := 0; i < len(buf); i++ {
 		buf[i] = byte(rand.Uint32())
 	}

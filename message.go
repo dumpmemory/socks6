@@ -3,6 +3,8 @@ package socks6
 import (
 	"bytes"
 	"encoding/binary"
+	"io"
+	"math"
 )
 
 type Message interface {
@@ -74,6 +76,36 @@ func (r *Request) Deserialize(buf []byte) (int, error) {
 	}
 	r.Options = ops
 	return hdrLen + opsLen, nil
+}
+func ParseRequestFrom(b io.Reader) (*Request, error) {
+	r := &Request{}
+	buf := make([]byte, math.MaxUint16)
+
+	// ver cc opLen2 port2 0 aTyp addr[0]
+	if _, err := io.ReadFull(b, buf[:9]); err != nil {
+		return nil, err
+	}
+	r.Version = buf[0]
+	if r.Version != 6 {
+		return nil, ErrVersion
+	}
+	r.CommandCode = buf[1]
+	optLen := binary.BigEndian.Uint16(buf[2:])
+
+	aTyp := AddressType(buf[7])
+	addr, err := ParseAddressFrom(b, aTyp)
+	if err != nil {
+		return nil, err
+	}
+	addr.Port = binary.BigEndian.Uint16(buf[4:])
+	r.Endpoint = *addr
+
+	ops, err := parseOptionsFrom(b, int(optLen))
+	if err != nil {
+		return nil, err
+	}
+	r.Options = ops
+	return r, nil
 }
 
 type AuthenticationReply struct {
