@@ -314,7 +314,7 @@ func (d *DefaultAuthenticator) Authenticate(req socks6.Request) (AuthenticationR
 	}
 	result := d.MethodSelector.Authenticate(req)
 	if result.SelectedMethod != 0 {
-		reply.Options = append(reply.Options, socks6.Option{
+		reply.Options.Add(socks6.Option{
 			Kind: socks6.OptionKindAuthenticationMethodSelection,
 			Data: socks6.AuthenticationMethodSelectionOptionData{
 				Method: result.SelectedMethod,
@@ -344,7 +344,7 @@ func (d *DefaultAuthenticator) Authenticate(req socks6.Request) (AuthenticationR
 		if !d.DisableToken && requestToken {
 			size := trData.(socks6.TokenRequestOptionData).WindowSize
 			allocBase, allocSize := session.AllocateTokens(size)
-			reply.Options = append(reply.Options, socks6.Option{
+			reply.Options.Add(socks6.Option{
 				Kind: socks6.OptionKindIdempotenceWindow,
 				Data: socks6.IdempotenceWindowOptionData{
 					WindowBase: allocBase,
@@ -375,7 +375,7 @@ func (d *DefaultAuthenticator) authenticateSession(req socks6.Request) (Authenti
 	}
 	// session check
 	if !ok || requestTeardown {
-		reply.Options = append(reply.Options, socks6.Option{
+		reply.Options.Add(socks6.Option{
 			Kind: socks6.OptionKindSessionInvalid,
 			Data: socks6.SessionInvalidOptionData{},
 		})
@@ -383,7 +383,7 @@ func (d *DefaultAuthenticator) authenticateSession(req socks6.Request) (Authenti
 			Success: false,
 		}, reply
 	}
-	reply.Options = append(reply.Options, socks6.Option{
+	reply.Options.Add(socks6.Option{
 		Kind: socks6.OptionKindSessionOK,
 		Data: socks6.SessionOKOptionData{},
 	})
@@ -395,7 +395,7 @@ func (d *DefaultAuthenticator) authenticateSession(req socks6.Request) (Authenti
 		ok, reallocate := session.SpendToken(token)
 
 		if !ok {
-			reply.Options = append(reply.Options, socks6.Option{
+			reply.Options.Add(socks6.Option{
 				Kind: socks6.OptionKindIdempotenceRejected,
 				Data: socks6.IdempotenceRejectedOptionData{},
 			})
@@ -403,7 +403,7 @@ func (d *DefaultAuthenticator) authenticateSession(req socks6.Request) (Authenti
 				Success: false,
 			}, reply
 		}
-		reply.Options = append(reply.Options, socks6.Option{
+		reply.Options.Add(socks6.Option{
 			Kind: socks6.OptionKindIdempotenceAccepted,
 			Data: socks6.IdempotenceAcceptedOptionData{},
 		})
@@ -412,7 +412,7 @@ func (d *DefaultAuthenticator) authenticateSession(req socks6.Request) (Authenti
 		if reallocate || requestToken {
 			size := tokenData.(socks6.TokenRequestOptionData).WindowSize
 			allocBase, allocSize := session.AllocateTokens(size)
-			reply.Options = append(reply.Options, socks6.Option{
+			reply.Options.Add(socks6.Option{
 				Kind: socks6.OptionKindIdempotenceWindow,
 				Data: socks6.IdempotenceWindowOptionData{
 					WindowBase: allocBase,

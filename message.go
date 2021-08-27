@@ -206,12 +206,12 @@ func (r *Request) Deserialize(buf []byte) (int, error) {
 		return 0, ErrFormat
 	}
 	r.Options = ops
-	return hdrLen, nil
+	return hdrLen + opsLen, nil
 }
 
 type AuthenticationReply struct {
 	Type    byte
-	Options []Option
+	Options OptionSet
 }
 
 func (a *AuthenticationReply) Serialize(buf []byte) (int, error) {
@@ -220,20 +220,16 @@ func (a *AuthenticationReply) Serialize(buf []byte) (int, error) {
 	}
 	buf[0] = 6
 	buf[1] = a.Type
-	pOption := 4
-	a.Options = []Option{}
+	hdrLen := 4
 
-	// todo serialize option
-	for _, op := range a.Options {
-		b := op.Marshal()
-		if len(b)+pOption < len(buf) {
-			return 0, ErrTooShort{ExpectedLen: len(b) + pOption}
-		}
-		copy(buf[pOption:], b)
-		pOption += len(b)
+	ops := a.Options.Marshal()
+	totalLen := len(ops) + hdrLen
+	if totalLen > len(buf) {
+		return 0, ErrTooShort{ExpectedLen: totalLen}
 	}
-	binary.BigEndian.PutUint16(buf[2:], uint16(pOption-4))
-	return pOption, nil
+	copy(buf[4:], ops)
+	binary.BigEndian.PutUint16(buf[2:], uint16(len(ops)))
+	return totalLen, nil
 }
 func (a *AuthenticationReply) Deserialize(buf []byte) (int, error) {
 	if len(buf) < 4 {
@@ -243,28 +239,21 @@ func (a *AuthenticationReply) Deserialize(buf []byte) (int, error) {
 		return 0, ErrFormat
 	}
 	a.Type = buf[1]
-	lOption := int(binary.BigEndian.Uint16(buf[2:]))
-	if len(buf) < int(lOption)+4 {
-		return 0, ErrTooShort{int(lOption) + 4}
+	opsLen := int(binary.BigEndian.Uint16(buf[2:]))
+	if len(buf) < int(opsLen)+4 {
+		return 0, ErrTooShort{opsLen + 4}
 	}
-	pOption := 4
-	a.Options = make([]Option, 0)
-	for lOption >= 4 {
-		b := buf[pOption:]
-		op, err := ParseOption(b)
-		if err != nil {
-			// todo: malformed option length
-			return 0, err
-		}
-		l := int(op.Length)
-		pOption += l
-		lOption -= l
-		if lOption < 0 {
-			return 0, ErrFormat
-		}
-		a.Options = append(a.Options, op)
+	hdrLen := 4
+	ops, l, err := parseOptions(buf[hdrLen:])
+	if err != nil {
+		return 0, addExpectedLen(err, hdrLen)
 	}
-	return int(lOption) + 4, nil
+	if l != opsLen {
+		return 0, ErrFormat
+	}
+	a.Options = ops
+
+	return hdrLen + opsLen, nil
 }
 
 type OperationReply struct {
