@@ -38,12 +38,6 @@ const (
 )
 
 const (
-	AddressTypeIPv4       byte = 1
-	AddressTypeDomainName byte = 3
-	AddressTypeIPv6       byte = 4
-)
-
-const (
 	_ byte = iota
 	UDPMessageAssociationInit
 	UDPMessageAssociationAck

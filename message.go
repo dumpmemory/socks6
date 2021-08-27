@@ -3,135 +3,7 @@ package socks6
 import (
 	"bytes"
 	"encoding/binary"
-	"regexp"
-	"strings"
-
-	"net"
-	"strconv"
 )
-
-type Endpoint struct {
-	Port        uint16
-	AddressType byte
-	Address     []byte
-
-	Net string
-}
-
-func NewEndpoint(addr string) Endpoint {
-	r := Endpoint{}
-	err := r.parseEndpoint(addr)
-	if err != nil {
-		return Endpoint{}
-	}
-	return r
-}
-func (e Endpoint) Network() string {
-	return e.Net
-}
-func (e Endpoint) String() string {
-	var s string
-	switch e.AddressType {
-	case AddressTypeDomainName:
-		s = string(e.Address)
-	case AddressTypeIPv4:
-		ip := net.IP(e.Address[:4])
-		s = ip.String()
-	case AddressTypeIPv6:
-		ip := net.IP(e.Address[:16])
-		s = ip.String()
-	}
-	return net.JoinHostPort(s, strconv.FormatInt(int64(e.Port), 10))
-}
-func (e *Endpoint) parseEndpoint(s string) error {
-	rhost, rports, err := net.SplitHostPort(s)
-	if err != nil {
-		return err
-	}
-	re := regexp.MustCompile(`[a-zA-Z]`)
-	if strings.Contains(rhost, ":") {
-		e.AddressType = AddressTypeIPv6
-		e.Address = net.ParseIP(rhost).To16()
-	} else if re.MatchString(rhost) {
-		e.AddressType = AddressTypeDomainName
-		e.Address = []byte(rhost)
-	} else {
-		e.AddressType = AddressTypeIPv4
-		e.Address = net.ParseIP(rhost).To4()
-	}
-	rport, err := strconv.ParseUint(rports, 10, 16)
-	e.Port = uint16(rport)
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
-func (e *Endpoint) DeserializeAddress(b []byte) (int, error) {
-	switch e.AddressType {
-	case AddressTypeIPv4:
-		if len(b) < 4 {
-			return 0, ErrTooShort{ExpectedLen: 4}
-		}
-		e.Address = b[:4]
-		return 4, nil
-	case AddressTypeIPv6:
-		if len(b) < 16 {
-			return 0, ErrTooShort{ExpectedLen: 16}
-		}
-		e.Address = b[:16]
-		return 16, nil
-	case AddressTypeDomainName:
-		if len(b) < 2 {
-			return 0, ErrTooShort{ExpectedLen: 2}
-		}
-		al := b[0]
-		if len(b) < int(al)+1 {
-			return 0, ErrTooShort{ExpectedLen: int(al) + 1}
-		}
-		e.Address = bytes.TrimRight(b[1:al+1], "\u0000")
-		return int(al) + 1, nil
-	default:
-		return 0, ErrAddressTypeNotSupport
-	}
-}
-func (e Endpoint) SerializeAddress(b []byte) (int, error) {
-	l := 0
-	switch e.AddressType {
-	case AddressTypeIPv4:
-		l = 4
-	case AddressTypeIPv6:
-		l = 16
-	case AddressTypeDomainName:
-		l = len(e.Address) + 1
-		// 4n+0=>(4n+0+3)/4*4=>(4n+3)/4*4=>4n
-		// 4n+1=>(4n+1+3)/4*4=>(4n+4)/4*4=>4(n+1)
-		// 4n+2=>(4n+2+3)/4*4=>(4n+4+1)/4*4=>4(n+1)
-		// 4n+3=>(4n+3+3)/4*4=>(4n+4+2)/4*4=>4(n+1)
-		expectedSize := PaddedLen(l, 4)
-		if len(b) < expectedSize {
-			return 0, ErrTooShort{ExpectedLen: expectedSize}
-		}
-	}
-	if len(b) < l {
-		return 0, ErrTooShort{ExpectedLen: l}
-	}
-	switch e.AddressType {
-	case AddressTypeIPv4, AddressTypeIPv6:
-		copy(b, e.Address)
-		return l, nil
-	case AddressTypeDomainName:
-		p := (4 - l%4) % 4
-		for i := 0; i < p; i++ {
-			b[l+i] = 0
-		}
-		b[0] = byte(l + p - 1)
-		copy(b[1:], e.Address)
-		return l + p, nil
-	default:
-		return 0, ErrAddressTypeNotSupport
-	}
-}
 
 type Message interface {
 	Serialize(buf []byte) (int, error)
@@ -141,7 +13,7 @@ type Message interface {
 type Request struct {
 	Version     byte
 	CommandCode byte
-	Endpoint    Endpoint
+	Endpoint    Addr
 	Options     OptionSet
 }
 
@@ -154,13 +26,13 @@ func (r *Request) Serialize(buf []byte) (int, error) {
 	// optionlength, tbd
 	binary.BigEndian.PutUint16(buf[4:], r.Endpoint.Port)
 	buf[6] = 0
-	buf[7] = r.Endpoint.AddressType
-
-	hdrLen, err := r.Endpoint.SerializeAddress(buf[8:])
-	if err != nil {
-		return 0, addExpectedLen(err, 8)
+	buf[7] = byte(r.Endpoint.AddressType)
+	addr := r.Endpoint.MarshalAddress()
+	hdrLen := len(addr) + 8
+	if len(buf) < hdrLen {
+		return 0, ErrTooShort{ExpectedLen: hdrLen}
 	}
-	hdrLen += 8
+	copy(buf[8:], addr)
 
 	ops := r.Options.Marshal()
 	totalLen := len(ops) + hdrLen
@@ -186,10 +58,9 @@ func (r *Request) Deserialize(buf []byte) (int, error) {
 	}
 	r.CommandCode = buf[1]
 	opsLen := int(binary.BigEndian.Uint16(buf[2:]))
-	r.Endpoint = Endpoint{}
+	r.Endpoint = Addr{}
 	r.Endpoint.Port = binary.BigEndian.Uint16(buf[4:])
-	r.Endpoint.AddressType = buf[7]
-	addrLen, err := r.Endpoint.DeserializeAddress(buf[8:])
+	addrLen, err := r.Endpoint.ParseAddress(AddressType(buf[7]), buf[8:])
 	if err != nil {
 		return 0, addExpectedLen(err, 8+opsLen)
 	}
@@ -258,7 +129,7 @@ func (a *AuthenticationReply) Deserialize(buf []byte) (int, error) {
 
 type OperationReply struct {
 	ReplyCode byte
-	Endpoint  Endpoint
+	Endpoint  Addr
 	Options   OptionSet
 }
 
@@ -269,16 +140,13 @@ func (o *OperationReply) Serialize(buf []byte) (int, error) {
 	buf[0] = 6
 	buf[1] = o.ReplyCode
 	binary.BigEndian.PutUint16(buf[4:], o.Endpoint.Port)
-	buf[7] = o.Endpoint.AddressType
-
-	addrLen, err := o.Endpoint.SerializeAddress(buf[8:])
-	if err != nil {
-		if ets, ok := err.(ErrTooShort); ok {
-			return 0, ErrTooShort{ExpectedLen: ets.ExpectedLen + 8}
-		}
-		return 0, err
+	buf[7] = byte(o.Endpoint.AddressType)
+	addr := o.Endpoint.MarshalAddress()
+	hdrLen := len(addr) + 8
+	if len(buf) < hdrLen {
+		return 0, ErrTooShort{ExpectedLen: hdrLen}
 	}
-	hdrLen := addrLen + 8
+	copy(buf[8:], addr)
 
 	ops := o.Options.Marshal()
 	totalLen := hdrLen + len(ops)
@@ -297,10 +165,9 @@ func (o *OperationReply) Deserialize(buf []byte) (int, error) {
 	}
 	o.ReplyCode = buf[1]
 	opsLen := int(binary.BigEndian.Uint16(buf[2:]))
-	o.Endpoint = Endpoint{}
+	o.Endpoint = Addr{}
 	o.Endpoint.Port = binary.BigEndian.Uint16(buf[4:])
-	o.Endpoint.AddressType = buf[7]
-	addrLen, err := o.Endpoint.DeserializeAddress(buf[8:])
+	addrLen, err := o.Endpoint.ParseAddress(AddressType(buf[7]), buf[8:])
 	if err != nil {
 		return 0, addExpectedLen(err, 8+opsLen)
 	}
@@ -326,9 +193,9 @@ type UDPHeader struct {
 	Type          byte
 	AssociationID uint64
 	// dgram & icmp
-	Endpoint Endpoint
+	Endpoint Addr
 	// icmp
-	ErrorEndpoint Endpoint
+	ErrorEndpoint Addr
 	ErrorCode     byte
 	// dgram
 	Data []byte
@@ -346,46 +213,55 @@ func (u *UDPHeader) Serialize(buf []byte) (int, error) {
 		binary.BigEndian.PutUint64(buf[4:], u.AssociationID)
 		return 12, nil
 	case UDPMessageDatagram:
-		if len(buf) < 18 {
-			return 0, ErrTooShort{ExpectedLen: 18}
+		addr := u.Endpoint.MarshalAddress()
+		totalLen := 16 + len(addr) + len(u.Data)
+		if len(buf) < totalLen {
+			return 0, ErrTooShort{ExpectedLen: totalLen}
 		}
-		buf[0] = 6
-		buf[1] = u.Type
-		binary.BigEndian.PutUint64(buf[4:], u.AssociationID)
-		buf[12] = u.Endpoint.AddressType
-		binary.BigEndian.PutUint16(buf[14:], u.Endpoint.Port)
-		l, err := u.Endpoint.SerializeAddress(buf[16:])
-		if err != nil {
-			return 0, addExpectedLen(err, 16+len(u.Data))
-		}
-		binary.BigEndian.PutUint16(buf[2:], uint16(16+l+len(u.Data)))
-		copy(buf[16+l:], u.Data)
-		return 16 + l + len(u.Data), nil
+		b := bytes.NewBuffer(buf)
+		b.WriteByte(6)
+		b.WriteByte(u.Type)
+		binary.Write(b, binary.BigEndian, totalLen)
+		binary.Write(b, binary.BigEndian, u.AssociationID)
+
+		b.WriteByte(byte(u.Endpoint.AddressType))
+		b.WriteByte(0)
+		binary.Write(b, binary.BigEndian, len(addr))
+		b.Write(addr)
+
+		b.Write(u.Data)
+
+		return totalLen, nil
 	case UDPMessageError:
-		if len(buf) < 18 {
-			return 0, ErrTooShort{ExpectedLen: 18}
+		addr := u.Endpoint.MarshalAddress()
+		eaddr := u.ErrorEndpoint.MarshalAddress()
+		totalLen := 20 + len(addr) + len(eaddr)
+
+		if len(buf) < totalLen {
+			return 0, ErrTooShort{ExpectedLen: totalLen}
 		}
-		buf[0] = 6
-		buf[1] = u.Type
-		binary.BigEndian.PutUint64(buf[4:], u.AssociationID)
-		buf[12] = u.Endpoint.AddressType
-		binary.BigEndian.PutUint16(buf[14:], u.Endpoint.Port)
-		l, err := u.Endpoint.SerializeAddress(buf[16:])
-		if err != nil {
-			return 0, addExpectedLen(err, 16)
-		}
-		p := l + 16
-		if len(buf) < p+6 {
-			return 0, ErrTooShort{ExpectedLen: p + 6}
-		}
-		buf[p] = u.ErrorEndpoint.AddressType
-		buf[p+1] = u.ErrorCode
-		l, err = u.Endpoint.SerializeAddress(buf[p+4:])
-		if err != nil {
-			return 0, addExpectedLen(err, p+4)
-		}
-		binary.BigEndian.PutUint16(buf[2:], uint16(p+4+l))
-		return p + 4 + l, nil
+		b := bytes.NewBuffer(buf)
+
+		b.WriteByte(6)
+		b.WriteByte(u.Type)
+		binary.Write(b, binary.BigEndian, totalLen)
+
+		binary.Write(b, binary.BigEndian, u.AssociationID)
+
+		b.WriteByte(byte(u.Endpoint.AddressType))
+		b.WriteByte(0)
+		binary.Write(b, binary.BigEndian, u.Endpoint.Port)
+
+		b.Write(addr)
+
+		b.WriteByte(byte(u.ErrorEndpoint.AddressType))
+		b.WriteByte(u.ErrorCode)
+		b.WriteByte(0)
+		b.WriteByte(0)
+
+		b.Write(eaddr)
+
+		return totalLen, nil
 	}
 	return 0, ErrEnumValue
 }
@@ -407,11 +283,10 @@ func (u *UDPHeader) Deserialize(buf []byte) (int, error) {
 	if len(buf) < 18 {
 		return 0, ErrTooShort{ExpectedLen: 18}
 	}
-	u.Endpoint = Endpoint{
-		AddressType: buf[12],
-		Port:        binary.BigEndian.Uint16(buf[14:]),
+	u.Endpoint = Addr{
+		Port: binary.BigEndian.Uint16(buf[14:]),
 	}
-	lAddr, err := u.Endpoint.DeserializeAddress(buf[16:])
+	lAddr, err := u.Endpoint.ParseAddress(AddressType(buf[12]), buf[16:])
 	if err != nil {
 		return 0, addExpectedLen(err, 16)
 	}
@@ -433,10 +308,8 @@ func (u *UDPHeader) Deserialize(buf []byte) (int, error) {
 		return 0, ErrTooShort{ExpectedLen: pIcmp + 6}
 	}
 	u.ErrorCode = buf[pIcmp+1]
-	u.ErrorEndpoint = Endpoint{
-		AddressType: buf[pIcmp],
-	}
-	lAddr2, err := u.ErrorEndpoint.DeserializeAddress(buf[pIcmp+4:])
+	u.ErrorEndpoint = Addr{}
+	lAddr2, err := u.ErrorEndpoint.ParseAddress(AddressType(buf[pIcmp]), buf[pIcmp+4:])
 	if err != nil {
 		return 0, addExpectedLen(err, pIcmp+lAddr2+4)
 	}

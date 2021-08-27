@@ -311,7 +311,7 @@ func (s *Server) handleConnect(conn net.Conn, req socks6.Request, auth Authentic
 	code := getReplyCode(err)
 	oprep := socks6.OperationReply{
 		ReplyCode: code,
-		Endpoint:  socks6.NewEndpoint(":0"),
+		Endpoint:  *socks6.NewAddrP(":0"),
 	}
 	// todo client leg options
 	oprep.Options.AddMany(r.GetOptions(false, true))
@@ -324,7 +324,7 @@ func (s *Server) handleConnect(conn net.Conn, req socks6.Request, auth Authentic
 
 	defer c.Close()
 	c.Write(initialData)
-	oprep.Endpoint = socks6.NewEndpoint(c.LocalAddr().String())
+	oprep.Endpoint = *socks6.NewAddrP(c.LocalAddr().String())
 	socks6.WriteMessageTo(&oprep, conn)
 	relay(c, conn)
 }
@@ -332,7 +332,7 @@ func (s *Server) handleConnect(conn net.Conn, req socks6.Request, auth Authentic
 func (s *Server) handleNoop(conn net.Conn, req socks6.Request, auth AuthenticationResult) {
 	oprep := socks6.OperationReply{
 		ReplyCode: socks6.OperationReplySuccess,
-		Endpoint:  socks6.NewEndpoint("0.0.0.0:0"),
+		Endpoint:  *socks6.NewAddrP("0.0.0.0:0"),
 	}
 	setSessionId(&oprep, auth.SessionID)
 
@@ -344,7 +344,7 @@ func (s *Server) handleBind(conn net.Conn, req socks6.Request, auth Authenticati
 	code := getReplyCode(err)
 	oprep := socks6.OperationReply{
 		ReplyCode: code,
-		Endpoint:  socks6.NewEndpoint(":0"),
+		Endpoint:  *socks6.NewAddrP(":0"),
 	} // todo client leg options
 	oprep.Options.AddMany(r.GetOptions(false, true))
 	setSessionId(&oprep, auth.SessionID)
@@ -354,7 +354,7 @@ func (s *Server) handleBind(conn net.Conn, req socks6.Request, auth Authenticati
 		return
 	}
 	log.Print(l.Addr().String())
-	oprep.Endpoint = socks6.NewEndpoint(l.Addr().String())
+	oprep.Endpoint = *socks6.NewAddrP(l.Addr().String())
 
 	// find corresponding backlog conn
 	reqAddr := req.Endpoint.String()
@@ -393,7 +393,7 @@ func (s *Server) handleBindNoBacklog(l net.Listener, conn net.Conn, req socks6.R
 	// op reply 2
 	oprep := socks6.OperationReply{
 		ReplyCode: socks6.OperationReplySuccess,
-		Endpoint:  socks6.NewEndpoint(rconn.RemoteAddr().String()),
+		Endpoint:  *socks6.NewAddrP(rconn.RemoteAddr().String()),
 	}
 	setSessionId(&oprep, auth.SessionID)
 
@@ -449,7 +449,7 @@ func (s *Server) handleBindBacklog(
 		// send op reply 2
 		oprep := socks6.OperationReply{
 			ReplyCode: socks6.OperationReplySuccess,
-			Endpoint:  socks6.NewEndpoint(raddr),
+			Endpoint:  *socks6.NewAddrP(raddr),
 		}
 		setSessionId(&oprep, auth.SessionID)
 
@@ -488,7 +488,7 @@ func (s *Server) handleUDPAssociation(conn net.Conn, req socks6.Request, auth Au
 			appliedRemoteOption = prepareDestUDP(remoteConn, rso)
 			oprep = socks6.OperationReply{
 				ReplyCode: socks6.OperationReplySuccess,
-				Endpoint:  socks6.NewEndpoint(remoteConn.LocalAddr().String()),
+				Endpoint:  *socks6.NewAddrP(remoteConn.LocalAddr().String()),
 			}
 			// todo client leg options
 			oprep.Options.AddMany(appliedRemoteOption.GetOptions(false, true))
@@ -497,7 +497,7 @@ func (s *Server) handleUDPAssociation(conn net.Conn, req socks6.Request, auth Au
 			// wrong assoc, fail
 			oprep = socks6.OperationReply{
 				ReplyCode: socks6.OperationReplyNotAllowedByRule,
-				Endpoint:  socks6.NewEndpoint(":0"),
+				Endpoint:  *socks6.NewAddrP(":0"),
 			}
 		}
 	} else {
@@ -507,7 +507,7 @@ func (s *Server) handleUDPAssociation(conn net.Conn, req socks6.Request, auth Au
 		appliedRemoteOption = rr
 		oprep = socks6.OperationReply{
 			ReplyCode: getReplyCode(err),
-			Endpoint:  socks6.NewEndpoint(remoteConn.LocalAddr().String()),
+			Endpoint:  *socks6.NewAddrP(remoteConn.LocalAddr().String()),
 		}
 		// todo client leg options
 		oprep.Options.AddMany(appliedRemoteOption.GetOptions(false, true))
@@ -603,7 +603,7 @@ func (s *Server) handleUDPAssociation(conn net.Conn, req socks6.Request, auth Au
 			h := socks6.UDPHeader{
 				Type:          socks6.UDPMessageDatagram,
 				AssociationID: assocId,
-				Endpoint:      socks6.NewEndpoint(raddr.String()),
+				Endpoint:      *socks6.NewAddrP(raddr.String()),
 				Data:          buf[:l],
 			}
 			b, err := socks6.WriteMessage(&h)

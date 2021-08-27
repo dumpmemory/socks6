@@ -30,13 +30,13 @@ func (c *Client) Dial(network string, addr string) (net.Conn, error) {
 	}
 	err = socks6.WriteMessageTo(&socks6.Request{
 		CommandCode: socks6.CommandConnect,
-		Endpoint:    socks6.NewEndpoint(addr),
+		Endpoint:    *socks6.NewAddrP(addr),
 	}, sconn)
 	if err != nil {
 		return nil, err
 	}
 	tcc.base = sconn
-	tcc.remote = socks6.NewEndpoint(addr)
+	tcc.remote = socks6.NewAddrP(addr)
 	// todo auth
 	ar := socks6.AuthenticationReply{}
 	_, err = socks6.ReadMessageFrom(&ar, sconn)
@@ -68,7 +68,7 @@ func (c *Client) ListenUDP(network string, addr string) (net.PacketConn, error) 
 	}
 	err = socks6.WriteMessageTo(&socks6.Request{
 		CommandCode: socks6.CommandUdpAssociate,
-		Endpoint:    socks6.NewEndpoint(addr),
+		Endpoint:    *socks6.NewAddrP(addr),
 	}, sconn)
 	if err != nil {
 		return nil, err
@@ -245,7 +245,7 @@ func (u *UDPClient) WriteTo(p []byte, addr net.Addr) (n int, err error) {
 	h := socks6.UDPHeader{
 		Type:          socks6.UDPMessageDatagram,
 		AssociationID: u.assocId,
-		Endpoint:      socks6.NewEndpoint(addr.String()),
+		Endpoint:      *socks6.NewAddrP(addr.String()),
 		Data:          p,
 	}
 	b, err := socks6.WriteMessage(&h)

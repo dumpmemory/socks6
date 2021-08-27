@@ -25,7 +25,7 @@ func makeDestConn(req socks6.Request) (net.Conn, StackOptionInfo, error) {
 		},
 	}
 	happyEyeballI, happyEyeballOk := rso[socks6.StackOptionIPHappyEyeball]
-	if happyEyeballOk && req.Endpoint.AddressType == socks6.AddressTypeDomainName {
+	if happyEyeballOk && socks6.AddressType(req.Endpoint.AddressType) == socks6.AddressTypeDomainName {
 		happyEyeball := happyEyeballI.(bool)
 		if !happyEyeball {
 			// rfc8305 is based on rfc6555
