@@ -10,7 +10,7 @@ func main() {
 	c := client.Client{
 		ProxyHost:     "127.0.0.1",
 		CleartextPort: 10888,
-		EncryptedPort: 10889,
+		//EncryptedPort: 10889,
 	}
 	conn, err := c.Dial("tcp", "127.0.0.1:32768")
 	if err != nil {

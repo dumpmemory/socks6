@@ -18,7 +18,7 @@ const (
 	AddressTypeIPv6       AddressType = 4
 )
 
-type Addr struct {
+type Socks6Addr struct {
 	AddressType AddressType
 	Address     []byte
 	Port        uint16
@@ -26,14 +26,14 @@ type Addr struct {
 	Net string
 }
 
-func NewAddrP(addr string) *Addr {
+func NewAddrP(addr string) *Socks6Addr {
 	r, err := NewAddr(addr)
 	if err != nil {
 		log.Panic(err)
 	}
 	return r
 }
-func NewAddr(address string) (*Addr, error) {
+func NewAddr(address string) (*Socks6Addr, error) {
 	h, p, err := net.SplitHostPort(address)
 	if err != nil {
 		return nil, err
@@ -63,16 +63,16 @@ func NewAddr(address string) (*Addr, error) {
 		atyp = AddressTypeDomainName
 		addr = dup([]byte(asc))
 	}
-	return &Addr{
+	return &Socks6Addr{
 		AddressType: atyp,
 		Address:     addr,
 		Port:        uint16(port),
 	}, nil
 }
-func (a Addr) Network() string {
+func (a *Socks6Addr) Network() string {
 	return a.Net
 }
-func (a Addr) String() string {
+func (a *Socks6Addr) String() string {
 	var h string
 	switch a.AddressType {
 	case AddressTypeIPv4, AddressTypeIPv6:
@@ -82,7 +82,7 @@ func (a Addr) String() string {
 	}
 	return net.JoinHostPort(h, strconv.FormatInt(int64(a.Port), 10))
 }
-func (a *Addr) ParseAddress(atyp AddressType, addr []byte) (int, error) {
+func (a *Socks6Addr) ParseAddress(atyp AddressType, addr []byte) (int, error) {
 	a.AddressType = atyp
 	expLen := 0
 	switch a.AddressType {
@@ -113,7 +113,7 @@ func (a *Addr) ParseAddress(atyp AddressType, addr []byte) (int, error) {
 	}
 	return expLen, nil
 }
-func (a *Addr) MarshalAddress() []byte {
+func (a *Socks6Addr) MarshalAddress() []byte {
 	if a.AddressType == AddressTypeDomainName {
 		r := append([]byte{byte(len(a.Address))}, a.Address...)
 		total := PaddedLen(len(r), 4)
@@ -128,8 +128,8 @@ func (a *Addr) MarshalAddress() []byte {
 	}
 	return dup(a.Address[:l])
 }
-func ParseAddressFrom(b io.Reader, atyp AddressType) (*Addr, error) {
-	a := &Addr{}
+func ParseAddressFrom(b io.Reader, atyp AddressType) (*Socks6Addr, error) {
+	a := &Socks6Addr{}
 	a.AddressType = atyp
 	buf := make([]byte, 256)
 	if a.AddressType == AddressTypeDomainName {
@@ -156,5 +156,18 @@ func ParseAddressFrom(b io.Reader, atyp AddressType) (*Addr, error) {
 		}
 		a.Address = dup(buf[:l])
 		return a, nil
+	}
+}
+func (s *Socks6Addr) AddrLen() int {
+	switch s.AddressType {
+	case AddressTypeIPv4:
+		return 4
+	case AddressTypeIPv6:
+		return 16
+	case AddressTypeDomainName:
+		return len(s.Address) + 1
+	default:
+		log.Panic("address type not set")
+		return 0
 	}
 }

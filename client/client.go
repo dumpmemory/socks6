@@ -28,23 +28,21 @@ func (c *Client) Dial(network string, addr string) (net.Conn, error) {
 	if err != nil {
 		return nil, err
 	}
-	err = socks6.WriteMessageTo(&socks6.Request{
+	_, err = sconn.Write((&socks6.Request{
 		CommandCode: socks6.CommandConnect,
-		Endpoint:    *socks6.NewAddrP(addr),
-	}, sconn)
+		Endpoint:    socks6.NewAddrP(addr),
+	}).Marshal())
 	if err != nil {
 		return nil, err
 	}
 	tcc.base = sconn
 	tcc.remote = socks6.NewAddrP(addr)
 	// todo auth
-	ar := socks6.AuthenticationReply{}
-	_, err = socks6.ReadMessageFrom(&ar, sconn)
+	_, err = socks6.ParseAuthenticationReplyFrom(sconn)
 	if err != nil {
 		return nil, err
 	}
-	opr := socks6.OperationReply{}
-	_, err = socks6.ReadMessageFrom(&opr, sconn)
+	opr, err := socks6.ParseOperationReplyFrom(sconn)
 	if err != nil {
 		return nil, err
 	}
@@ -66,31 +64,28 @@ func (c *Client) ListenUDP(network string, addr string) (net.PacketConn, error) 
 	if err != nil {
 		return nil, err
 	}
-	err = socks6.WriteMessageTo(&socks6.Request{
+	_, err = sconn.Write((&socks6.Request{
 		CommandCode: socks6.CommandUdpAssociate,
-		Endpoint:    *socks6.NewAddrP(addr),
-	}, sconn)
+		Endpoint:    socks6.NewAddrP(addr),
+	}).Marshal())
 	if err != nil {
 		return nil, err
 	}
-	ar := socks6.AuthenticationReply{}
-	_, err = socks6.ReadMessageFrom(&ar, sconn)
+	ar, err := socks6.ParseAuthenticationReplyFrom(sconn)
 	if err != nil {
 		return nil, err
 	}
 	if ar.Type != socks6.AuthenticationReplySuccess {
 		return nil, errors.New("auth fail")
 	}
-	opr := socks6.OperationReply{}
-	_, err = socks6.ReadMessageFrom(&opr, sconn)
+	opr, err := socks6.ParseOperationReplyFrom(sconn)
 	if err != nil {
 		return nil, err
 	}
 	if opr.ReplyCode != socks6.OperationReplySuccess {
 		return nil, errors.New("op fail")
 	}
-	u1 := socks6.UDPHeader{}
-	_, err = socks6.ReadMessageFrom(&u1, sconn)
+	u1, err := socks6.ParseUDPHeaderFrom(sconn)
 	if err != nil {
 		return nil, err
 	}
@@ -199,15 +194,14 @@ func (u *UDPClient) ReadFrom(p []byte) (n int, addr net.Addr, err error) {
 		defer u.rlock.Unlock()
 	}
 	if !u.uotAck && u.uot {
-		ack := socks6.UDPHeader{}
-		_, err = socks6.ReadMessageFrom(&ack, u.base)
+		_, err := socks6.ParseUDPHeaderFrom(u.base)
 		if err != nil {
 			return 0, nil, err
 		}
 	}
 	h := socks6.UDPHeader{}
 	if u.uot {
-		_, err = socks6.ReadMessageFrom(&h, u.base)
+		_, err := socks6.ParseUDPHeaderFrom(u.base)
 		if err != nil {
 			return 0, nil, err
 		}
@@ -245,14 +239,11 @@ func (u *UDPClient) WriteTo(p []byte, addr net.Addr) (n int, err error) {
 	h := socks6.UDPHeader{
 		Type:          socks6.UDPMessageDatagram,
 		AssociationID: u.assocId,
-		Endpoint:      *socks6.NewAddrP(addr.String()),
+		Endpoint:      socks6.NewAddrP(addr.String()),
 		Data:          p,
 	}
-	b, err := socks6.WriteMessage(&h)
-	if err != nil {
-		return 0, err
-	}
-	n, err = u.base.Write(b)
+
+	n, err = u.base.Write(h.Marshal())
 	return
 }
 
@@ -285,7 +276,7 @@ func (t *TCPBindClient) Accept() (net.Conn, error) {
 	t.lock.Lock()
 	oprep := socks6.OperationReply{}
 	// read oprep2
-	_, err := socks6.ReadMessageFrom(&oprep, t.base)
+	_, err := socks6.ParseOperationReplyFrom(t.base)
 	if err != nil {
 		t.lock.Unlock()
 		return nil, err
