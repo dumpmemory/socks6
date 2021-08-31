@@ -1,4 +1,4 @@
-package socks6
+package message
 
 import "io"
 

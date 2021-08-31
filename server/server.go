@@ -17,7 +17,9 @@ import (
 	"time"
 
 	"github.com/pion/dtls/v2"
-	"github.com/studentmain/socks6"
+	"github.com/studentmain/socks6/internal"
+	"github.com/studentmain/socks6/message"
+
 	"golang.org/x/sync/semaphore"
 )
 
@@ -42,7 +44,7 @@ type Server struct {
 	backloggedConnections map[string]backloggedConnectionInfo
 	reservedPorts         map[string]udpReservedPort
 
-	Rule func(op byte, dst, src net.Addr, cid ClientID) bool
+	Rule func(op message.CommandCode, dst, src net.Addr, cid ClientID) bool
 }
 
 type backloggedConnectionInfo struct {
@@ -199,10 +201,10 @@ func (s *Server) streamServer(conn net.Conn) {
 			conn.Close()
 		}
 	}()
-	req, err := socks6.ParseRequestFrom(conn)
+	req, err := message.ParseRequestFrom(conn)
 	errAtyp := false
 	if err != nil {
-		if errors.Is(err, socks6.ErrVersion) {
+		if errors.Is(err, message.ErrVersion) {
 			if s.VersionErrorHandler == nil {
 				conn.Write([]byte{6})
 				log.Printf("%s version mismatch, recieved %d", conn.RemoteAddr(), req.Version)
@@ -212,7 +214,7 @@ func (s *Server) streamServer(conn net.Conn) {
 			}
 			return
 		}
-		if errors.Is(err, socks6.ErrAddressTypeNotSupport) {
+		if errors.Is(err, message.ErrAddressTypeNotSupport) {
 			log.Print("unsupported address type")
 			errAtyp = true
 		} else {
@@ -221,9 +223,9 @@ func (s *Server) streamServer(conn net.Conn) {
 		}
 	}
 	initDataLen := uint16(0)
-	amao, ok := req.Options.GetData(socks6.OptionKindAuthenticationMethodAdvertisement)
+	amao, ok := req.Options.GetData(message.OptionKindAuthenticationMethodAdvertisement)
 	if ok {
-		amaod := amao.(socks6.AuthenticationMethodAdvertisementOptionData)
+		amaod := amao.(message.AuthenticationMethodAdvertisementOptionData)
 		initDataLen = amaod.InitialDataLength
 	}
 	initialData := make([]byte, initDataLen)
@@ -252,14 +254,14 @@ func (s *Server) streamServer(conn net.Conn) {
 
 	log.Print("auth finish")
 	if errAtyp {
-		conn.Write((&socks6.OperationReply{
-			ReplyCode: socks6.OperationReplyAddressNotSupported,
+		conn.Write((&message.OperationReply{
+			ReplyCode: message.OperationReplyAddressNotSupported,
 		}).Marshal())
 	}
 	if s.Rule != nil {
 		if !s.Rule(req.CommandCode, req.Endpoint, conn.RemoteAddr(), auth.ClientID) {
-			_, err = conn.Write((&socks6.OperationReply{
-				ReplyCode: socks6.OperationReplyAddressNotSupported,
+			_, err = conn.Write((&message.OperationReply{
+				ReplyCode: message.OperationReplyAddressNotSupported,
 			}).Marshal())
 			if err != nil {
 				log.Print(err)
@@ -268,17 +270,17 @@ func (s *Server) streamServer(conn net.Conn) {
 		}
 	}
 	switch req.CommandCode {
-	case socks6.CommandConnect:
+	case message.CommandConnect:
 		s.handleConnect(conn, *req, auth, initialData)
-	case socks6.CommandNoop:
+	case message.CommandNoop:
 		s.handleNoop(conn, *req, auth)
-	case socks6.CommandBind:
+	case message.CommandBind:
 		s.handleBind(conn, *req, auth)
-	case socks6.CommandUdpAssociate:
+	case message.CommandUdpAssociate:
 		s.handleUDPAssociation(conn, *req, auth)
 	default:
-		_, err = conn.Write((&socks6.OperationReply{
-			ReplyCode: socks6.OperationReplyCommandNotSupported,
+		_, err = conn.Write((&message.OperationReply{
+			ReplyCode: message.OperationReplyCommandNotSupported,
 		}).Marshal())
 		if err != nil {
 			log.Print(err)
@@ -286,71 +288,71 @@ func (s *Server) streamServer(conn net.Conn) {
 	}
 }
 
-func setSessionId(oprep *socks6.OperationReply, id []byte) {
+func setSessionId(oprep *message.OperationReply, id []byte) {
 	if id == nil {
 		return
 	}
-	oprep.Options.Add(socks6.Option{
-		Kind: socks6.OptionKindSessionID,
-		Data: socks6.SessionIDOptionData{
+	oprep.Options.Add(message.Option{
+		Kind: message.OptionKindSessionID,
+		Data: message.SessionIDOptionData{
 			ID: id,
 		},
 	})
 }
 
-func (s *Server) handleConnect(conn net.Conn, req socks6.Request, auth AuthenticationResult, initialData []byte) {
+func (s *Server) handleConnect(conn net.Conn, req message.Request, auth AuthenticationResult, initialData []byte) {
 	c, r, err := makeDestConn(req)
 	code := getReplyCode(err)
-	oprep := socks6.OperationReply{
+	oprep := message.OperationReply{
 		ReplyCode: code,
-		Endpoint:  socks6.NewAddrP(":0"),
+		Endpoint:  message.NewAddrP(":0"),
 	}
 	// todo client leg options
 	oprep.Options.AddMany(r.GetOptions(false, true))
 	setSessionId(&oprep, auth.SessionID)
 
-	if code != socks6.OperationReplySuccess {
+	if code != message.OperationReplySuccess {
 		conn.Write(oprep.Marshal())
 		return
 	}
 
 	defer c.Close()
 	c.Write(initialData)
-	oprep.Endpoint = socks6.NewAddrP(c.LocalAddr().String())
+	oprep.Endpoint = message.NewAddrP(c.LocalAddr().String())
 	conn.Write(oprep.Marshal())
 	relay(c, conn)
 }
 
-func (s *Server) handleNoop(conn net.Conn, req socks6.Request, auth AuthenticationResult) {
-	oprep := socks6.OperationReply{
-		ReplyCode: socks6.OperationReplySuccess,
-		Endpoint:  socks6.NewAddrP("0.0.0.0:0"),
+func (s *Server) handleNoop(conn net.Conn, req message.Request, auth AuthenticationResult) {
+	oprep := message.OperationReply{
+		ReplyCode: message.OperationReplySuccess,
+		Endpoint:  message.NewAddrP("0.0.0.0:0"),
 	}
 	setSessionId(&oprep, auth.SessionID)
 	conn.Write(oprep.Marshal())
 }
 
-func (s *Server) handleBind(conn net.Conn, req socks6.Request, auth AuthenticationResult) {
+func (s *Server) handleBind(conn net.Conn, req message.Request, auth AuthenticationResult) {
 	l, r, err := makeDestListener(req)
 	code := getReplyCode(err)
-	oprep := socks6.OperationReply{
+	oprep := message.OperationReply{
 		ReplyCode: code,
-		Endpoint:  socks6.NewAddrP(":0"),
+		Endpoint:  message.NewAddrP(":0"),
 	} // todo client leg options
 	oprep.Options.AddMany(r.GetOptions(false, true))
 	setSessionId(&oprep, auth.SessionID)
 
-	if code != socks6.OperationReplySuccess {
+	if code != message.OperationReplySuccess {
 		conn.Write(oprep.Marshal())
 		return
 	}
 	log.Print(l.Addr().String())
-	oprep.Endpoint = socks6.NewAddrP(l.Addr().String())
+	oprep.Endpoint = message.NewAddrP(l.Addr().String())
 
 	// find corresponding backlog conn
 	reqAddr := req.Endpoint.String()
 	if backlogged, ok := s.backloggedConnections[reqAddr]; ok {
-		if !socks6.ByteArrayEqual(auth.SessionID, backlogged.sessionId) {
+		if !internal.ByteArrayEqual(auth.SessionID, backlogged.sessionId) {
 			return
 		}
 		backlogged.clientConn <- conn
@@ -359,10 +361,10 @@ func (s *Server) handleBind(conn net.Conn, req socks6.Request, auth Authenticati
 
 	rso := GetStackOptionInfo(req.Options, false)
 	nBacklog := uint16(0)
-	nBacklogI, backloggedBind := rso[socks6.StackOptionTCPBacklog]
+	nBacklogI, backloggedBind := rso[message.StackOptionTCPBacklog]
 	if backloggedBind {
 		nBacklog = nBacklogI.(uint16)
-		r[socks6.StackOptionTCPBacklog] = nBacklog
+		r[message.StackOptionTCPBacklog] = nBacklog
 	}
 
 	// write op reply 1
@@ -373,7 +375,7 @@ func (s *Server) handleBind(conn net.Conn, req socks6.Request, auth Authenticati
 		s.handleBindBacklog(l, nBacklog, conn, req, auth)
 	}
 }
-func (s *Server) handleBindNoBacklog(l net.Listener, conn net.Conn, req socks6.Request, auth AuthenticationResult) {
+func (s *Server) handleBindNoBacklog(l net.Listener, conn net.Conn, req message.Request, auth AuthenticationResult) {
 	defer l.Close()
 	rconn, err := l.Accept()
 	if err != nil {
@@ -382,9 +384,9 @@ func (s *Server) handleBindNoBacklog(l net.Listener, conn net.Conn, req socks6.R
 	defer rconn.Close()
 
 	// op reply 2
-	oprep := socks6.OperationReply{
-		ReplyCode: socks6.OperationReplySuccess,
-		Endpoint:  socks6.NewAddrP(rconn.RemoteAddr().String()),
+	oprep := message.OperationReply{
+		ReplyCode: message.OperationReplySuccess,
+		Endpoint:  message.NewAddrP(rconn.RemoteAddr().String()),
 	}
 	setSessionId(&oprep, auth.SessionID)
 
@@ -396,7 +398,7 @@ func (s *Server) handleBindBacklog(
 	l net.Listener,
 	nBacklog uint16,
 	conn net.Conn,
-	req socks6.Request,
+	req message.Request,
 	auth AuthenticationResult) {
 	// not tested
 
@@ -406,7 +408,7 @@ func (s *Server) handleBindBacklog(
 		drain(conn)
 		// clear backlogged conn
 		for k, v := range s.backloggedConnections {
-			if socks6.ByteArrayEqual(v.sessionId, auth.SessionID) && len(v.sessionId) > 0 {
+			if internal.ByteArrayEqual(v.sessionId, auth.SessionID) && len(v.sessionId) > 0 {
 				delete(s.backloggedConnections, k)
 			}
 		}
@@ -438,9 +440,9 @@ func (s *Server) handleBindBacklog(
 		}
 		s.backloggedConnections[raddr] = bci
 		// send op reply 2
-		oprep := socks6.OperationReply{
-			ReplyCode: socks6.OperationReplySuccess,
-			Endpoint:  socks6.NewAddrP(raddr),
+		oprep := message.OperationReply{
+			ReplyCode: message.OperationReplySuccess,
+			Endpoint:  message.NewAddrP(raddr),
 		}
 		setSessionId(&oprep, auth.SessionID)
 		conn.Write(oprep.Marshal())
@@ -460,34 +462,34 @@ func (s *Server) handleBindBacklog(
 	}
 }
 
-func (s *Server) handleUDPAssociation(conn net.Conn, req socks6.Request, auth AuthenticationResult) {
+func (s *Server) handleUDPAssociation(conn net.Conn, req message.Request, auth AuthenticationResult) {
 	desired := req.Endpoint.String()
 	var remoteConn *net.UDPConn
 	appliedRemoteOption := StackOptionInfo{}
 	reserveInfo, reserved := s.reservedPorts[desired]
-	var oprep socks6.OperationReply
+	var oprep message.OperationReply
 
 	if reserved {
 		// 8.1.9 assoc to prev reserved port
-		if socks6.ByteArrayEqual(auth.SessionID, reserveInfo.sessionId) {
+		if internal.ByteArrayEqual(auth.SessionID, reserveInfo.sessionId) {
 			rso := StackOptionInfo{}
 			ops := getStackOptions(req.Options, false)
 			rso.AddMany(ops)
 
 			remoteConn = reserveInfo.conn
 			appliedRemoteOption = prepareDestUDP(remoteConn, rso)
-			oprep = socks6.OperationReply{
-				ReplyCode: socks6.OperationReplySuccess,
-				Endpoint:  socks6.NewAddrP(remoteConn.LocalAddr().String()),
+			oprep = message.OperationReply{
+				ReplyCode: message.OperationReplySuccess,
+				Endpoint:  message.NewAddrP(remoteConn.LocalAddr().String()),
 			}
 			// todo client leg options
 			oprep.Options.AddMany(appliedRemoteOption.GetOptions(false, true))
 
 		} else {
 			// wrong assoc, fail
-			oprep = socks6.OperationReply{
-				ReplyCode: socks6.OperationReplyNotAllowedByRule,
-				Endpoint:  socks6.NewAddrP(":0"),
+			oprep = message.OperationReply{
+				ReplyCode: message.OperationReplyNotAllowedByRule,
+				Endpoint:  message.NewAddrP(":0"),
 			}
 		}
 	} else {
@@ -495,9 +497,9 @@ func (s *Server) handleUDPAssociation(conn net.Conn, req socks6.Request, auth Au
 		cc, rr, err := makeDestUDP(req)
 		remoteConn = cc
 		appliedRemoteOption = rr
-		oprep = socks6.OperationReply{
+		oprep = message.OperationReply{
 			ReplyCode: getReplyCode(err),
-			Endpoint:  socks6.NewAddrP(remoteConn.LocalAddr().String()),
+			Endpoint:  message.NewAddrP(remoteConn.LocalAddr().String()),
 		}
 		// todo client leg options
 		oprep.Options.AddMany(appliedRemoteOption.GetOptions(false, true))
@@ -506,7 +508,7 @@ func (s *Server) handleUDPAssociation(conn net.Conn, req socks6.Request, auth Au
 
 	// write operational reply
 	conn.Write(oprep.Marshal())
-	if oprep.ReplyCode != socks6.OperationReplySuccess {
+	if oprep.ReplyCode != message.OperationReplySuccess {
 		return
 	}
 
@@ -521,8 +523,8 @@ func (s *Server) handleUDPAssociation(conn net.Conn, req socks6.Request, auth Au
 	}
 
 	// write associd
-	conn.Write((&socks6.UDPHeader{
-		Type:          socks6.UDPMessageAssociationInit,
+	conn.Write((&message.UDPHeader{
+		Type:          message.UDPMessageAssociationInit,
 		AssociationID: assocId,
 	}).Marshal())
 
@@ -536,13 +538,13 @@ func (s *Server) handleUDPAssociation(conn net.Conn, req socks6.Request, auth Au
 	// read tcp uplink
 	go func() {
 		for {
-			h, err := socks6.ParseUDPHeaderFrom(conn)
+			h, err := message.ParseUDPHeaderFrom(conn)
 			if err != nil {
 				log.Print(err)
 				return
 			}
 			switch h.Type {
-			case socks6.UDPMessageDatagram:
+			case message.UDPMessageDatagram:
 				if assoc.tcp {
 					// assoc to conn
 
@@ -573,8 +575,8 @@ func (s *Server) handleUDPAssociation(conn net.Conn, req socks6.Request, auth Au
 
 	// send assoc confirm
 	assoc.received.Lock()
-	conn.Write((&socks6.UDPHeader{
-		Type:          socks6.UDPMessageAssociationAck,
+	conn.Write((&message.UDPHeader{
+		Type:          message.UDPMessageAssociationAck,
 		AssociationID: assocId,
 	}).Marshal())
 	go func() {
@@ -584,10 +586,10 @@ func (s *Server) handleUDPAssociation(conn net.Conn, req socks6.Request, auth Au
 			if err != nil {
 				log.Print(err)
 			}
-			h := socks6.UDPHeader{
-				Type:          socks6.UDPMessageDatagram,
+			h := message.UDPHeader{
+				Type:          message.UDPMessageDatagram,
 				AssociationID: assocId,
-				Endpoint:      socks6.NewAddrP(raddr.String()),
+				Endpoint:      message.NewAddrP(raddr.String()),
 				Data:          buf[:l],
 			}
 
@@ -615,7 +617,7 @@ func handleUDPOverTCP(conn net.Conn, assoc *udpAssociationInfo) {
 		assoc.cancel.Unlock()
 	}()
 	for {
-		_, err := socks6.ParseUDPHeaderFrom(conn)
+		_, err := message.ParseUDPHeaderFrom(conn)
 		// todo: when udp, ignore parse error
 		if err != nil {
 			log.Print(err)
@@ -624,48 +626,48 @@ func handleUDPOverTCP(conn net.Conn, assoc *udpAssociationInfo) {
 	}
 }
 
-func getReplyCode(err error) byte {
+func getReplyCode(err error) message.ReplyCode {
 	if err == nil {
-		return socks6.OperationReplySuccess
+		return message.OperationReplySuccess
 	}
 	netErr, ok := err.(net.Error)
 	if !ok {
 		log.Print(err)
-		return socks6.OperationReplyServerFailure
+		return message.OperationReplyServerFailure
 	}
 	if netErr.Timeout() {
-		return socks6.OperationReplyTimeout
+		return message.OperationReplyTimeout
 	}
 	opErr, ok := netErr.(*net.OpError)
 	if !ok {
-		return socks6.OperationReplyServerFailure
+		return message.OperationReplyServerFailure
 	}
 
 	switch t := opErr.Err.(type) {
 	case *os.SyscallError:
 		errno, ok := t.Err.(syscall.Errno)
 		if !ok {
-			return socks6.OperationReplyServerFailure
+			return message.OperationReplyServerFailure
 		}
 		switch convertErrno(errno) {
 		case syscall.ENETUNREACH:
-			return socks6.OperationReplyNetworkUnreachable
+			return message.OperationReplyNetworkUnreachable
 		case syscall.EHOSTUNREACH:
-			return socks6.OperationReplyHostUnreachable
+			return message.OperationReplyHostUnreachable
 		case syscall.ECONNREFUSED:
-			return socks6.OperationReplyConnectionRefused
+			return message.OperationReplyConnectionRefused
 		case syscall.ETIMEDOUT:
-			return socks6.OperationReplyTimeout
+			return message.OperationReplyTimeout
 		default:
-			return socks6.OperationReplyServerFailure
+			return message.OperationReplyServerFailure
 		}
 	}
-	return socks6.OperationReplyServerFailure
+	return message.OperationReplyServerFailure
 }
 
 func (s *Server) datagramServer(addr net.Addr, buf []byte) {
 	r := bytes.NewReader(buf)
-	h, err := socks6.ParseUDPHeaderFrom(r)
+	h, err := message.ParseUDPHeaderFrom(r)
 	if err != nil {
 		return
 	}

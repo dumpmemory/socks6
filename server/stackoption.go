@@ -1,61 +1,61 @@
 package server
 
 import (
-	"github.com/studentmain/socks6"
+	"github.com/studentmain/socks6/message"
 )
 
 type StackOptionInfo map[int]interface{}
 
-func getStackOptions(options socks6.OptionSet, clientLeg bool) []socks6.Option {
-	return options.GetKindF(socks6.OptionKindStack, func(o socks6.Option) bool {
-		return o.Data.(socks6.BaseStackOptionData).RemoteLeg
+func getStackOptions(options message.OptionSet, clientLeg bool) []message.Option {
+	return options.GetKindF(message.OptionKindStack, func(o message.Option) bool {
+		return o.Data.(message.BaseStackOptionData).RemoteLeg
 	})
 }
-func GetStackOptionInfo(ops socks6.OptionSet, clientLeg bool) StackOptionInfo {
+func GetStackOptionInfo(ops message.OptionSet, clientLeg bool) StackOptionInfo {
 	rso := StackOptionInfo{}
 	o := getStackOptions(ops, false)
 	rso.AddMany(o)
 	return rso
 }
-func (s *StackOptionInfo) Add(d socks6.BaseStackOptionData) {
-	id := socks6.StackOptionID(d.Level, d.Code)
-	dt := d.Data.(socks6.StackOptionData).GetData()
+func (s *StackOptionInfo) Add(d message.BaseStackOptionData) {
+	id := message.StackOptionID(d.Level, d.Code)
+	dt := d.Data.(message.StackOptionData).GetData()
 	(map[int]interface{})(*s)[id] = dt
 }
-func (s *StackOptionInfo) AddMany(d []socks6.Option) {
+func (s *StackOptionInfo) AddMany(d []message.Option) {
 	for _, v := range d {
-		rsod := v.Data.(socks6.BaseStackOptionData)
+		rsod := v.Data.(message.BaseStackOptionData)
 		s.Add(rsod)
 	}
 }
 
-func (s StackOptionInfo) GetOptions(clientLeg bool, remoteLeg bool) []socks6.Option {
-	r := []socks6.Option{}
+func (s StackOptionInfo) GetOptions(clientLeg bool, remoteLeg bool) []message.Option {
+	r := []message.Option{}
 	for id, dt := range s {
-		var sod socks6.StackOptionData
+		var sod message.StackOptionData
 		switch id {
-		case socks6.StackOptionIPTOS:
-			sod = &socks6.TOSOptionData{}
-		case socks6.StackOptionIPHappyEyeball:
-			sod = &socks6.HappyEyeballOptionData{}
-		case socks6.StackOptionIPTTL:
-			sod = &socks6.TTLOptionData{}
-		case socks6.StackOptionIPNoFragment:
-			sod = &socks6.NoFragmentationOptionData{}
-		case socks6.StackOptionTCPMultipath:
-			sod = &socks6.MultipathOptionData{}
-		case socks6.StackOptionTCPTFO:
-			sod = &socks6.TFOOptionData{}
-		case socks6.StackOptionUDPUDPError:
-			sod = &socks6.UDPErrorOptionData{}
-		case socks6.StackOptionUDPPortParity:
-			sod = &socks6.PortParityOptionData{}
+		case message.StackOptionIPTOS:
+			sod = &message.TOSOptionData{}
+		case message.StackOptionIPHappyEyeball:
+			sod = &message.HappyEyeballOptionData{}
+		case message.StackOptionIPTTL:
+			sod = &message.TTLOptionData{}
+		case message.StackOptionIPNoFragment:
+			sod = &message.NoFragmentationOptionData{}
+		case message.StackOptionTCPMultipath:
+			sod = &message.MultipathOptionData{}
+		case message.StackOptionTCPTFO:
+			sod = &message.TFOOptionData{}
+		case message.StackOptionUDPUDPError:
+			sod = &message.UDPErrorOptionData{}
+		case message.StackOptionUDPPortParity:
+			sod = &message.PortParityOptionData{}
 		}
 		sod.SetData(dt)
-		lv, code := socks6.SplitStackOptionID(id)
-		op := socks6.Option{
-			Kind: socks6.OptionKindStack,
-			Data: socks6.BaseStackOptionData{
+		lv, code := message.SplitStackOptionID(id)
+		op := message.Option{
+			Kind: message.OptionKindStack,
+			Data: message.BaseStackOptionData{
 				Level:     lv,
 				Code:      code,
 				ClientLeg: clientLeg,

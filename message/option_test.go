@@ -1,4 +1,4 @@
-package socks6_test
+package message_test
 
 import (
 	"bytes"
@@ -6,17 +6,17 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/studentmain/socks6"
+	"github.com/studentmain/socks6/message"
 )
 
-func optionDataTest(t *testing.T, bin []byte, obj socks6.Option) {
+func optionDataTest(t *testing.T, bin []byte, obj message.Option) {
 	optionDataTestParse(t, bin, obj)
 	optionDataTestMarshal(t, bin, obj)
 }
-func optionDataTestParse(t *testing.T, bin []byte, obj socks6.Option) {
+func optionDataTestParse(t *testing.T, bin []byte, obj message.Option) {
 	buf := make([]byte, len(bin))
 	copy(buf, bin)
-	op, err := socks6.ParseOption(buf)
+	op, err := message.ParseOption(buf)
 	for i := 0; i < len(buf); i++ {
 		buf[i] = byte(rand.Uint32())
 	}
@@ -26,7 +26,7 @@ func optionDataTestParse(t *testing.T, bin []byte, obj socks6.Option) {
 
 	copy(buf, bin)
 	b := bytes.NewBuffer(buf)
-	op, err = socks6.ParseOptionFrom(b)
+	op, err = message.ParseOptionFrom(b)
 	for i := 0; i < len(buf); i++ {
 		buf[i] = byte(rand.Uint32())
 	}
@@ -34,19 +34,19 @@ func optionDataTestParse(t *testing.T, bin []byte, obj socks6.Option) {
 	obj.Length = uint16(len(bin))
 	assert.Equal(t, obj, op)
 }
-func optionDataTestMarshal(t *testing.T, bin []byte, obj socks6.Option) {
+func optionDataTestMarshal(t *testing.T, bin []byte, obj message.Option) {
 	obj.Length = uint16(rand.Uint32())
 	assert.Equal(t, bin, obj.Marshal())
 }
-func optionDataTestProtocolPolice(t *testing.T, bin []byte, obj socks6.Option) {
+func optionDataTestProtocolPolice(t *testing.T, bin []byte, obj message.Option) {
 	buf := make([]byte, len(bin))
 	copy(buf, bin)
-	op, err := socks6.ParseOption(buf)
+	op, err := message.ParseOption(buf)
 	for i := 0; i < len(buf); i++ {
 		buf[i] = byte(rand.Uint32())
 	}
 	// maybe we just want warning
-	assert.ErrorIs(t, err, socks6.ErrProtocolPolice)
+	assert.ErrorIs(t, err, message.ErrProtocolPolice)
 	if obj.Data != nil {
 		obj.Length = uint16(len(bin))
 		assert.Equal(t, obj, op)
@@ -54,23 +54,23 @@ func optionDataTestProtocolPolice(t *testing.T, bin []byte, obj socks6.Option) {
 }
 
 func TestOption(t *testing.T) {
-	_, err := socks6.ParseOption(nil)
-	assert.Error(t, err, socks6.ErrTooShort{ExpectedLen: 4})
-	_, err = socks6.ParseOption([]byte{0, 0, 0, 100})
-	assert.Error(t, err, socks6.ErrTooShort{ExpectedLen: 100})
+	_, err := message.ParseOption(nil)
+	assert.Error(t, err, message.ErrTooShort{ExpectedLen: 4})
+	_, err = message.ParseOption([]byte{0, 0, 0, 100})
+	assert.Error(t, err, message.ErrTooShort{ExpectedLen: 100})
 
 	data := []byte{
 		255, 255, 0, 12,
 		1, 2, 3, 4, 5, 6, 7, 8,
 	}
-	op, err := socks6.ParseOption(data)
+	op, err := message.ParseOption(data)
 	// byte array should copy from buffer
 	data[11] = 10
 	assert.Nil(t, err)
-	assert.Equal(t, socks6.Option{
+	assert.Equal(t, message.Option{
 		Kind:   0xffff,
 		Length: 12,
-		Data: &socks6.RawOptionData{
+		Data: &message.RawOptionData{
 			Data: []byte{1, 2, 3, 4, 5, 6, 7, 8},
 		},
 	}, op)
@@ -78,10 +78,10 @@ func TestOption(t *testing.T) {
 	assert.Equal(t, data, op.Marshal())
 	// length is "calculated" "readonly" property
 	// only read after parse is reliable
-	assert.Equal(t, data, (&socks6.Option{
+	assert.Equal(t, data, (&message.Option{
 		Kind:   0xffff,
 		Length: 9961,
-		Data: &socks6.RawOptionData{
+		Data: &message.RawOptionData{
 			Data: []byte{1, 2, 3, 4, 5, 6, 7, 8},
 		}}).Marshal())
 }
@@ -89,11 +89,11 @@ func TestOption(t *testing.T) {
 func TestRawOptionData(t *testing.T) {
 	buf := make([]byte, 114514)
 
-	tooBig := socks6.RawOptionData{Data: buf}
+	tooBig := message.RawOptionData{Data: buf}
 	assert.Panics(t, func() { tooBig.Len() })
 
 	buf[3] = 9
-	d := socks6.RawOptionData{Data: buf[:4]}
+	d := message.RawOptionData{Data: buf[:4]}
 	assert.EqualValues(t, 4, d.Len())
 	assert.Equal(t, []byte{0, 0, 0, 9}, d.Marshal())
 }
@@ -117,20 +117,20 @@ func (m MyBrokenOptionData) Marshal() []byte {
 }
 
 func TestSetOptionDataParser(t *testing.T) {
-	socks6.SetOptionDataParser(socks6.OptionKind(512), func(b []byte) (socks6.OptionData, error) { return MyOptionData{}, nil })
-	optionDataTest(t, []byte{2, 0, 0, 4}, socks6.Option{
+	message.SetOptionDataParser(message.OptionKind(512), func(b []byte) (message.OptionData, error) { return MyOptionData{}, nil })
+	optionDataTest(t, []byte{2, 0, 0, 4}, message.Option{
 		Kind: 512,
 		Data: MyOptionData{},
 	})
-	socks6.SetOptionDataParser(socks6.OptionKind(512), nil)
-	optionDataTest(t, []byte{2, 0, 0, 4}, socks6.Option{
+	message.SetOptionDataParser(message.OptionKind(512), nil)
+	optionDataTest(t, []byte{2, 0, 0, 4}, message.Option{
 		Kind: 512,
-		Data: &socks6.RawOptionData{
+		Data: &message.RawOptionData{
 			Data: []byte{},
 		},
 	})
-	socks6.SetOptionDataParser(socks6.OptionKind(512), func(b []byte) (socks6.OptionData, error) { return MyBrokenOptionData{}, nil })
-	op, _ := socks6.ParseOption([]byte{2, 0, 0, 4})
+	message.SetOptionDataParser(message.OptionKind(512), func(b []byte) (message.OptionData, error) { return MyBrokenOptionData{}, nil })
+	op, _ := message.ParseOption([]byte{2, 0, 0, 4})
 	assert.Panics(t, func() { op.Marshal() })
 }
 
@@ -140,9 +140,9 @@ func TestAuthenticationMethodAdvertisementOptionData(t *testing.T) {
 			0, 2, 0, 12,
 			0, 100,
 			1, 0, 3, 2, 0, 4,
-		}, socks6.Option{
-			Kind: socks6.OptionKindAuthenticationMethodAdvertisement,
-			Data: socks6.AuthenticationMethodAdvertisementOptionData{
+		}, message.Option{
+			Kind: message.OptionKindAuthenticationMethodAdvertisement,
+			Data: message.AuthenticationMethodAdvertisementOptionData{
 				InitialDataLength: 100,
 				Methods:           []byte{1, 2, 3, 4},
 			},
@@ -151,9 +151,9 @@ func TestAuthenticationMethodAdvertisementOptionData(t *testing.T) {
 		[]byte{
 			0, 2, 0, 8,
 			0, 100, 1, 0,
-		}, socks6.Option{
-			Kind: socks6.OptionKindAuthenticationMethodAdvertisement,
-			Data: socks6.AuthenticationMethodAdvertisementOptionData{
+		}, message.Option{
+			Kind: message.OptionKindAuthenticationMethodAdvertisement,
+			Data: message.AuthenticationMethodAdvertisementOptionData{
 				InitialDataLength: 100,
 				Methods:           []byte{1},
 			},
@@ -165,15 +165,15 @@ func TestAuthenticationMethodSelectionOptionData(t *testing.T) {
 		[]byte{
 			0, 3, 0, 8,
 			2, 0, 0, 0,
-		}, socks6.Option{
-			Kind: socks6.OptionKindAuthenticationMethodSelection,
-			Data: socks6.AuthenticationMethodSelectionOptionData{
+		}, message.Option{
+			Kind: message.OptionKindAuthenticationMethodSelection,
+			Data: message.AuthenticationMethodSelectionOptionData{
 				Method: 2,
 			},
 		})
 	optionDataTestProtocolPolice(t, []byte{
 		0, 3, 0, 5, 1,
-	}, socks6.Option{})
+	}, message.Option{})
 }
 
 func TestAuthenticationDataOptionData(t *testing.T) {
@@ -181,9 +181,9 @@ func TestAuthenticationDataOptionData(t *testing.T) {
 		[]byte{
 			0, 4, 0, 8,
 			2, 3, 2, 1,
-		}, socks6.Option{
-			Kind: socks6.OptionKindAuthenticationData,
-			Data: socks6.AuthenticationDataOptionData{
+		}, message.Option{
+			Kind: message.OptionKindAuthenticationData,
+			Data: message.AuthenticationDataOptionData{
 				Method: 2,
 				Data:   []byte{3, 2, 1},
 			},
@@ -192,9 +192,9 @@ func TestAuthenticationDataOptionData(t *testing.T) {
 		[]byte{
 			0, 4, 0, 6,
 			2, 1,
-		}, socks6.Option{
-			Kind: socks6.OptionKindAuthenticationData,
-			Data: socks6.AuthenticationDataOptionData{
+		}, message.Option{
+			Kind: message.OptionKindAuthenticationData,
+			Data: message.AuthenticationDataOptionData{
 				Method: 2,
 				Data:   []byte{1},
 			},
@@ -205,14 +205,14 @@ func TestSessionRequestOptionData(t *testing.T) {
 	optionDataTest(t,
 		[]byte{
 			0, 5, 0, 4,
-		}, socks6.Option{
-			Kind: socks6.OptionKindSessionRequest,
-			Data: socks6.SessionRequestOptionData{},
+		}, message.Option{
+			Kind: message.OptionKindSessionRequest,
+			Data: message.SessionRequestOptionData{},
 		})
 	optionDataTestProtocolPolice(t,
 		[]byte{
 			0, 5, 0, 5, 1,
-		}, socks6.Option{})
+		}, message.Option{})
 }
 
 func TestSessionIDOptionData(t *testing.T) {
@@ -220,9 +220,9 @@ func TestSessionIDOptionData(t *testing.T) {
 		[]byte{
 			0, 6, 0, 16,
 			1, 3, 2, 4, 5, 7, 6, 8, 1, 2, 3, 4,
-		}, socks6.Option{
-			Kind: socks6.OptionKindSessionID,
-			Data: socks6.SessionIDOptionData{
+		}, message.Option{
+			Kind: message.OptionKindSessionID,
+			Data: message.SessionIDOptionData{
 				ID: []byte{1, 3, 2, 4, 5, 7, 6, 8, 1, 2, 3, 4},
 			},
 		})
@@ -232,40 +232,40 @@ func TestSessionOKOptionData(t *testing.T) {
 	optionDataTest(t,
 		[]byte{
 			0, 8, 0, 4,
-		}, socks6.Option{
-			Kind: socks6.OptionKindSessionOK,
-			Data: socks6.SessionOKOptionData{},
+		}, message.Option{
+			Kind: message.OptionKindSessionOK,
+			Data: message.SessionOKOptionData{},
 		})
 	optionDataTestProtocolPolice(t,
 		[]byte{
 			0, 8, 0, 5, 1,
-		}, socks6.Option{})
+		}, message.Option{})
 }
 func TestSessionInvalidOptionData(t *testing.T) {
 	optionDataTest(t,
 		[]byte{
 			0, 9, 0, 4,
-		}, socks6.Option{
-			Kind: socks6.OptionKindSessionInvalid,
-			Data: socks6.SessionInvalidOptionData{},
+		}, message.Option{
+			Kind: message.OptionKindSessionInvalid,
+			Data: message.SessionInvalidOptionData{},
 		})
 	optionDataTestProtocolPolice(t,
 		[]byte{
 			0, 9, 0, 5, 1,
-		}, socks6.Option{})
+		}, message.Option{})
 }
 func TestSessionSessionTeardownOptionData(t *testing.T) {
 	optionDataTest(t,
 		[]byte{
 			0, 10, 0, 4,
-		}, socks6.Option{
-			Kind: socks6.OptionKindSessionTeardown,
-			Data: socks6.SessionTeardownOptionData{},
+		}, message.Option{
+			Kind: message.OptionKindSessionTeardown,
+			Data: message.SessionTeardownOptionData{},
 		})
 	optionDataTestProtocolPolice(t,
 		[]byte{
 			0, 10, 0, 5, 1,
-		}, socks6.Option{})
+		}, message.Option{})
 }
 
 func TestTokenRequestOptionData(t *testing.T) {
@@ -273,16 +273,16 @@ func TestTokenRequestOptionData(t *testing.T) {
 		[]byte{
 			0, 11, 0, 8,
 			0, 0, 2, 0,
-		}, socks6.Option{
-			Kind: socks6.OptionKindTokenRequest,
-			Data: socks6.TokenRequestOptionData{
+		}, message.Option{
+			Kind: message.OptionKindTokenRequest,
+			Data: message.TokenRequestOptionData{
 				WindowSize: 512,
 			},
 		})
 	optionDataTestProtocolPolice(t,
 		[]byte{
 			0, 11, 0, 5, 1,
-		}, socks6.Option{})
+		}, message.Option{})
 }
 func TestIdempotenceWindowOptionData(t *testing.T) {
 	optionDataTest(t,
@@ -290,9 +290,9 @@ func TestIdempotenceWindowOptionData(t *testing.T) {
 			0, 12, 0, 12,
 			0, 0, 1, 0,
 			0, 0, 1, 1,
-		}, socks6.Option{
-			Kind: socks6.OptionKindIdempotenceWindow,
-			Data: socks6.IdempotenceWindowOptionData{
+		}, message.Option{
+			Kind: message.OptionKindIdempotenceWindow,
+			Data: message.IdempotenceWindowOptionData{
 				WindowBase: 256,
 				WindowSize: 257,
 			},
@@ -300,48 +300,48 @@ func TestIdempotenceWindowOptionData(t *testing.T) {
 	optionDataTestProtocolPolice(t,
 		[]byte{
 			0, 12, 0, 5, 1,
-		}, socks6.Option{})
+		}, message.Option{})
 }
 func TestIdempotenceExpenditureOptionData(t *testing.T) {
 	optionDataTest(t,
 		[]byte{
 			0, 13, 0, 8,
 			0, 0, 1, 0,
-		}, socks6.Option{
-			Kind: socks6.OptionKindIdempotenceExpenditure,
-			Data: socks6.IdempotenceExpenditureOptionData{
+		}, message.Option{
+			Kind: message.OptionKindIdempotenceExpenditure,
+			Data: message.IdempotenceExpenditureOptionData{
 				Token: 256,
 			},
 		})
 	optionDataTestProtocolPolice(t,
 		[]byte{
 			0, 13, 0, 5, 1,
-		}, socks6.Option{})
+		}, message.Option{})
 }
 func TestIdempotenceAcceptedOptionData(t *testing.T) {
 	optionDataTest(t,
 		[]byte{
 			0, 14, 0, 4,
-		}, socks6.Option{
-			Kind: socks6.OptionKindIdempotenceAccepted,
-			Data: socks6.IdempotenceAcceptedOptionData{},
+		}, message.Option{
+			Kind: message.OptionKindIdempotenceAccepted,
+			Data: message.IdempotenceAcceptedOptionData{},
 		})
 	optionDataTestProtocolPolice(t,
 		[]byte{
 			0, 14, 0, 5, 1,
-		}, socks6.Option{})
+		}, message.Option{})
 }
 
 func TestIdempotenceRejectedOptionData(t *testing.T) {
 	optionDataTest(t,
 		[]byte{
 			0, 15, 0, 4,
-		}, socks6.Option{
-			Kind: socks6.OptionKindIdempotenceRejected,
-			Data: socks6.IdempotenceRejectedOptionData{},
+		}, message.Option{
+			Kind: message.OptionKindIdempotenceRejected,
+			Data: message.IdempotenceRejectedOptionData{},
 		})
 	optionDataTestProtocolPolice(t,
 		[]byte{
 			0, 15, 0, 5, 1,
-		}, socks6.Option{})
+		}, message.Option{})
 }

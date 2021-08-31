@@ -1,20 +1,26 @@
-package socks6
+package message
 
 import (
 	"bytes"
 	"encoding/binary"
 	"io"
 	"math"
+
+	"github.com/studentmain/socks6/internal"
 )
 
-type Message interface {
-	Serialize(buf []byte) (int, error)
-	Deserialize(buf []byte) (int, error)
-}
+type CommandCode byte
+
+const (
+	CommandNoop CommandCode = iota
+	CommandConnect
+	CommandBind
+	CommandUdpAssociate
+)
 
 type Request struct {
 	Version     byte
-	CommandCode byte
+	CommandCode CommandCode
 	Endpoint    *Socks6Addr
 	Options     OptionSet
 }
@@ -31,7 +37,7 @@ func ParseRequestFrom(b io.Reader) (*Request, error) {
 	if r.Version != 6 {
 		return r, ErrVersion
 	}
-	r.CommandCode = buf[1]
+	r.CommandCode = CommandCode(buf[1])
 	optLen := binary.BigEndian.Uint16(buf[2:])
 
 	aTyp := AddressType(buf[7])
@@ -56,7 +62,7 @@ func (r *Request) Marshal() (buf []byte) {
 	b := bytes.NewBuffer(buf)
 
 	b.WriteByte(6)
-	b.WriteByte(r.CommandCode)
+	b.WriteByte(byte(r.CommandCode))
 	binary.Write(b, binary.BigEndian, uint16(len(ops)))
 
 	binary.Write(b, binary.BigEndian, r.Endpoint.Port)
@@ -68,6 +74,11 @@ func (r *Request) Marshal() (buf []byte) {
 	b.Write(ops)
 	return b.Bytes()
 }
+
+const (
+	AuthenticationReplySuccess = 0
+	AuthenticationReplyFail    = 1
+)
 
 type AuthenticationReply struct {
 	Type    byte
@@ -104,8 +115,23 @@ func ParseAuthenticationReplyFrom(b io.Reader) (*AuthenticationReply, error) {
 	return a, nil
 }
 
+type ReplyCode byte
+
+const (
+	OperationReplySuccess ReplyCode = iota
+	OperationReplyServerFailure
+	OperationReplyNotAllowedByRule
+	OperationReplyNetworkUnreachable
+	OperationReplyHostUnreachable
+	OperationReplyConnectionRefused
+	OperationReplyTTLExpired
+	OperationReplyCommandNotSupported
+	OperationReplyAddressNotSupported
+	OperationReplyTimeout
+)
+
 type OperationReply struct {
-	ReplyCode byte
+	ReplyCode ReplyCode
 	Endpoint  *Socks6Addr
 	Options   OptionSet
 }
@@ -117,7 +143,7 @@ func (o *OperationReply) Marshal() []byte {
 	b := bytes.Buffer{}
 
 	b.WriteByte(6)
-	b.WriteByte(o.ReplyCode)
+	b.WriteByte(byte(o.ReplyCode))
 	binary.Write(&b, binary.BigEndian, uint16(len(ops)))
 
 	binary.Write(&b, binary.BigEndian, o.Endpoint.Port)
@@ -140,7 +166,7 @@ func ParseOperationReplyFrom(b io.Reader) (*OperationReply, error) {
 	if buf[0] != 6 {
 		return r, ErrProtocolPolice
 	}
-	r.ReplyCode = buf[1]
+	r.ReplyCode = ReplyCode(buf[1])
 	optLen := binary.BigEndian.Uint16(buf[2:])
 
 	aTyp := AddressType(buf[7])
@@ -158,6 +184,14 @@ func ParseOperationReplyFrom(b io.Reader) (*OperationReply, error) {
 	r.Options = ops
 	return r, nil
 }
+
+const (
+	_ byte = iota
+	UDPMessageAssociationInit
+	UDPMessageAssociationAck
+	UDPMessageDatagram
+	UDPMessageError
+)
 
 type UDPHeader struct {
 	Type          byte
@@ -302,7 +336,7 @@ func ParseUDPHeaderFrom(b io.Reader) (*UDPHeader, error) {
 		if _, err := io.ReadFull(b, buf[:remainLen]); err != nil {
 			return nil, err
 		}
-		u.Data = dup(buf[:remainLen])
+		u.Data = internal.Dup(buf[:remainLen])
 		return u, nil
 	}
 

@@ -1,7 +1,9 @@
-package socks6
+package message
 
 import (
 	"encoding/binary"
+
+	"github.com/studentmain/socks6/internal"
 )
 
 type StackOptionLevel byte
@@ -108,14 +110,14 @@ type BaseStackOptionData struct {
 }
 
 func parseRawOptionDataAsStackOptionData(d []byte) (StackOptionData, error) {
-	return &RawOptionData{Data: dup(d)}, nil
+	return &RawOptionData{Data: internal.Dup(d)}, nil
 }
 func (r RawOptionData) GetData() interface{} {
 	return r.Data
 }
 func (r *RawOptionData) SetData(d interface{}) {
 	b := d.([]byte)
-	r.Data = dup(b)
+	r.Data = internal.Dup(b)
 }
 
 func parseStackOptionData(d []byte) (OptionData, error) {

@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/pion/dtls/v2"
-	"github.com/studentmain/socks6"
+	"github.com/studentmain/socks6/message"
 )
 
 type Client struct {
@@ -28,21 +28,21 @@ func (c *Client) Dial(network string, addr string) (net.Conn, error) {
 	if err != nil {
 		return nil, err
 	}
-	_, err = sconn.Write((&socks6.Request{
-		CommandCode: socks6.CommandConnect,
-		Endpoint:    socks6.NewAddrP(addr),
+	_, err = sconn.Write((&message.Request{
+		CommandCode: message.CommandConnect,
+		Endpoint:    message.NewAddrP(addr),
 	}).Marshal())
 	if err != nil {
 		return nil, err
 	}
 	tcc.base = sconn
-	tcc.remote = socks6.NewAddrP(addr)
+	tcc.remote = message.NewAddrP(addr)
 	// todo auth
-	_, err = socks6.ParseAuthenticationReplyFrom(sconn)
+	_, err = message.ParseAuthenticationReplyFrom(sconn)
 	if err != nil {
 		return nil, err
 	}
-	opr, err := socks6.ParseOperationReplyFrom(sconn)
+	opr, err := message.ParseOperationReplyFrom(sconn)
 	if err != nil {
 		return nil, err
 	}
@@ -64,28 +64,28 @@ func (c *Client) ListenUDP(network string, addr string) (net.PacketConn, error) 
 	if err != nil {
 		return nil, err
 	}
-	_, err = sconn.Write((&socks6.Request{
-		CommandCode: socks6.CommandUdpAssociate,
-		Endpoint:    socks6.NewAddrP(addr),
+	_, err = sconn.Write((&message.Request{
+		CommandCode: message.CommandUdpAssociate,
+		Endpoint:    message.NewAddrP(addr),
 	}).Marshal())
 	if err != nil {
 		return nil, err
 	}
-	ar, err := socks6.ParseAuthenticationReplyFrom(sconn)
+	ar, err := message.ParseAuthenticationReplyFrom(sconn)
 	if err != nil {
 		return nil, err
 	}
-	if ar.Type != socks6.AuthenticationReplySuccess {
+	if ar.Type != message.AuthenticationReplySuccess {
 		return nil, errors.New("auth fail")
 	}
-	opr, err := socks6.ParseOperationReplyFrom(sconn)
+	opr, err := message.ParseOperationReplyFrom(sconn)
 	if err != nil {
 		return nil, err
 	}
-	if opr.ReplyCode != socks6.OperationReplySuccess {
+	if opr.ReplyCode != message.OperationReplySuccess {
 		return nil, errors.New("op fail")
 	}
-	u1, err := socks6.ParseUDPHeaderFrom(sconn)
+	u1, err := message.ParseUDPHeaderFrom(sconn)
 	if err != nil {
 		return nil, err
 	}
@@ -175,7 +175,7 @@ func (c *Client) bind(conn net.Conn, is_backlogged_subconn bool) error {
 	return nil
 }
 
-func (c *Client) auth(req *socks6.Request) error {
+func (c *Client) auth(req *message.Request) error {
 	return nil
 }
 
@@ -194,14 +194,14 @@ func (u *UDPClient) ReadFrom(p []byte) (n int, addr net.Addr, err error) {
 		defer u.rlock.Unlock()
 	}
 	if !u.uotAck && u.uot {
-		_, err := socks6.ParseUDPHeaderFrom(u.base)
+		_, err := message.ParseUDPHeaderFrom(u.base)
 		if err != nil {
 			return 0, nil, err
 		}
 	}
-	h := socks6.UDPHeader{}
+	h := message.UDPHeader{}
 	if u.uot {
-		_, err := socks6.ParseUDPHeaderFrom(u.base)
+		_, err := message.ParseUDPHeaderFrom(u.base)
 		if err != nil {
 			return 0, nil, err
 		}
@@ -217,11 +217,11 @@ func (u *UDPClient) ReadFrom(p []byte) (n int, addr net.Addr, err error) {
 		}
 	}
 	if h.AssociationID != u.assocId {
-		return 0, nil, socks6.ErrFormat
+		return 0, nil, message.ErrFormat
 	}
-	if h.Type != socks6.UDPMessageDatagram {
+	if h.Type != message.UDPMessageDatagram {
 		// todo icmp error
-		return 0, nil, socks6.ErrFormat
+		return 0, nil, message.ErrFormat
 	}
 	h.Endpoint.Net = "udp"
 	addr = h.Endpoint
@@ -236,10 +236,10 @@ func (u *UDPClient) ReadFrom(p []byte) (n int, addr net.Addr, err error) {
 }
 
 func (u *UDPClient) WriteTo(p []byte, addr net.Addr) (n int, err error) {
-	h := socks6.UDPHeader{
-		Type:          socks6.UDPMessageDatagram,
+	h := message.UDPHeader{
+		Type:          message.UDPMessageDatagram,
 		AssociationID: u.assocId,
-		Endpoint:      socks6.NewAddrP(addr.String()),
+		Endpoint:      message.NewAddrP(addr.String()),
 		Data:          p,
 	}
 
@@ -274,9 +274,9 @@ type TCPBindClient struct {
 
 func (t *TCPBindClient) Accept() (net.Conn, error) {
 	t.lock.Lock()
-	oprep := socks6.OperationReply{}
+	oprep := message.OperationReply{}
 	// read oprep2
-	_, err := socks6.ParseOperationReplyFrom(t.base)
+	_, err := message.ParseOperationReplyFrom(t.base)
 	if err != nil {
 		t.lock.Unlock()
 		return nil, err

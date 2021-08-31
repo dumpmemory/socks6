@@ -1,4 +1,4 @@
-package socks6
+package internal
 
 import (
 	"sort"
@@ -16,7 +16,7 @@ func ByteArrayEqual(a, b []byte) bool {
 	return true
 }
 
-func dup(i []byte) []byte {
+func Dup(i []byte) []byte {
 	o := make([]byte, len(i))
 	copy(o, i)
 	return o

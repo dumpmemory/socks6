@@ -1,4 +1,4 @@
-package socks6
+package message
 
 import (
 	"bytes"
@@ -7,6 +7,7 @@ import (
 	"net"
 	"strconv"
 
+	"github.com/studentmain/socks6/internal"
 	"golang.org/x/net/idna"
 )
 
@@ -61,7 +62,7 @@ func NewAddr(address string) (*Socks6Addr, error) {
 			return nil, ErrFormat
 		}
 		atyp = AddressTypeDomainName
-		addr = dup([]byte(asc))
+		addr = internal.Dup([]byte(asc))
 	}
 	return &Socks6Addr{
 		AddressType: atyp,
@@ -105,9 +106,9 @@ func (a *Socks6Addr) ParseAddress(atyp AddressType, addr []byte) (int, error) {
 
 	switch a.AddressType {
 	case AddressTypeIPv4:
-		a.Address = dup(addr[:4])
+		a.Address = internal.Dup(addr[:4])
 	case AddressTypeIPv6:
-		a.Address = dup(addr[:16])
+		a.Address = internal.Dup(addr[:16])
 	case AddressTypeDomainName:
 		a.Address = bytes.Trim(addr[1:expLen], "\x00")
 	}
@@ -116,7 +117,7 @@ func (a *Socks6Addr) ParseAddress(atyp AddressType, addr []byte) (int, error) {
 func (a *Socks6Addr) MarshalAddress() []byte {
 	if a.AddressType == AddressTypeDomainName {
 		r := append([]byte{byte(len(a.Address))}, a.Address...)
-		total := PaddedLen(len(r), 4)
+		total := internal.PaddedLen(len(r), 4)
 		lPad := total - len(r)
 		r = append(r, make([]byte, lPad)...)
 		r[0] = byte(total) - 1
@@ -126,7 +127,7 @@ func (a *Socks6Addr) MarshalAddress() []byte {
 	if a.AddressType == AddressTypeIPv4 {
 		l = 4
 	}
-	return dup(a.Address[:l])
+	return internal.Dup(a.Address[:l])
 }
 func ParseAddressFrom(b io.Reader, atyp AddressType) (*Socks6Addr, error) {
 	a := &Socks6Addr{}
@@ -154,7 +155,7 @@ func ParseAddressFrom(b io.Reader, atyp AddressType) (*Socks6Addr, error) {
 		if _, err := io.ReadFull(b, buf[:l]); err != nil {
 			return nil, err
 		}
-		a.Address = dup(buf[:l])
+		a.Address = internal.Dup(buf[:l])
 		return a, nil
 	}
 }

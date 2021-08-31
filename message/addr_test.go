@@ -1,4 +1,4 @@
-package socks6_test
+package message_test
 
 import (
 	"bytes"
@@ -6,28 +6,28 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/studentmain/socks6"
+	"github.com/studentmain/socks6/message"
 )
 
 func TestNewAddr(t *testing.T) {
 	tests := []struct {
 		in     string
-		expect *socks6.Socks6Addr
+		expect *message.Socks6Addr
 		ok     bool
 	}{
 		{in: "", expect: nil, ok: false},
 		{in: "a", expect: nil, ok: false},
 		{in: "a:1",
-			expect: &socks6.Socks6Addr{
-				AddressType: socks6.AddressTypeDomainName,
+			expect: &message.Socks6Addr{
+				AddressType: message.AddressTypeDomainName,
 				Address:     []byte{'a'},
 				Port:        1,
 			},
 			ok: true},
 		{in: "a:1919810", expect: nil, ok: false},
 		{in: "苟:1",
-			expect: &socks6.Socks6Addr{
-				AddressType: socks6.AddressTypeDomainName,
+			expect: &message.Socks6Addr{
+				AddressType: message.AddressTypeDomainName,
 				Address:     []byte("xn--ui1a"),
 				Port:        1,
 			},
@@ -39,15 +39,15 @@ func TestNewAddr(t *testing.T) {
 			"Llanfairpwllgwyngyllgogerychwyrndrobwllllantysiliogogogochuchaf" +
 			":1", expect: nil, ok: false},
 		{in: "127.0.0.1:1",
-			expect: &socks6.Socks6Addr{
-				AddressType: socks6.AddressTypeIPv4,
+			expect: &message.Socks6Addr{
+				AddressType: message.AddressTypeIPv4,
 				Address:     []byte{127, 0, 0, 1},
 				Port:        1,
 			},
 			ok: true},
 		{in: "[fe80:1234::1]:1",
-			expect: &socks6.Socks6Addr{
-				AddressType: socks6.AddressTypeIPv6,
+			expect: &message.Socks6Addr{
+				AddressType: message.AddressTypeIPv6,
 				Address: []byte{
 					0xfe, 0x80, 0x12, 0x34,
 					0, 0, 0, 0,
@@ -59,7 +59,7 @@ func TestNewAddr(t *testing.T) {
 			ok: true},
 	}
 	for _, tt := range tests {
-		actual, err := socks6.NewAddr(tt.in)
+		actual, err := message.NewAddr(tt.in)
 		if tt.ok {
 			assert.Nil(t, err)
 			assert.Equal(t, tt.expect, actual)
@@ -70,20 +70,20 @@ func TestNewAddr(t *testing.T) {
 
 	for _, tt := range tests {
 		if !tt.ok {
-			assert.Panics(t, func() { socks6.NewAddrP(tt.in) })
+			assert.Panics(t, func() { message.NewAddrP(tt.in) })
 		} else {
-			assert.Equal(t, tt.expect, socks6.NewAddrP(tt.in))
+			assert.Equal(t, tt.expect, message.NewAddrP(tt.in))
 		}
 	}
 }
 
 func TestAddrString(t *testing.T) {
 	tests := []struct {
-		in  socks6.Socks6Addr
+		in  message.Socks6Addr
 		out string
 	}{
-		{in: socks6.Socks6Addr{
-			AddressType: socks6.AddressTypeIPv6,
+		{in: message.Socks6Addr{
+			AddressType: message.AddressTypeIPv6,
 			Address: []byte{
 				0xfe, 0x80, 0x12, 0x34,
 				0, 0, 0, 0,
@@ -92,15 +92,15 @@ func TestAddrString(t *testing.T) {
 			},
 			Port: 1,
 		}, out: "[fe80:1234::1]:1"},
-		{in: socks6.Socks6Addr{
-			AddressType: socks6.AddressTypeIPv4,
+		{in: message.Socks6Addr{
+			AddressType: message.AddressTypeIPv4,
 			Address: []byte{
 				127, 0, 0, 1,
 			},
 			Port: 2,
 		}, out: "127.0.0.1:2"},
-		{in: socks6.Socks6Addr{
-			AddressType: socks6.AddressTypeDomainName,
+		{in: message.Socks6Addr{
+			AddressType: message.AddressTypeDomainName,
 			Address:     []byte("example.com"),
 			Port:        3,
 		}, out: "example.com:3"},
@@ -112,21 +112,21 @@ func TestAddrString(t *testing.T) {
 
 func TestAddrParseAddress(t *testing.T) {
 	tests := []struct {
-		atyp socks6.AddressType
+		atyp message.AddressType
 		bin  []byte
-		addr socks6.Socks6Addr
+		addr message.Socks6Addr
 		out  string
 	}{
 		{
-			atyp: socks6.AddressTypeIPv6,
+			atyp: message.AddressTypeIPv6,
 			bin: []byte{
 				0xfe, 0x80, 0x12, 0x34,
 				0, 0, 0, 0,
 				0, 0, 0, 0,
 				0, 0, 0, 1,
 			},
-			addr: socks6.Socks6Addr{
-				AddressType: socks6.AddressTypeIPv6,
+			addr: message.Socks6Addr{
+				AddressType: message.AddressTypeIPv6,
 				Address: []byte{
 					0xfe, 0x80, 0x12, 0x34,
 					0, 0, 0, 0,
@@ -136,43 +136,43 @@ func TestAddrParseAddress(t *testing.T) {
 			},
 		},
 		{
-			atyp: socks6.AddressTypeIPv4,
+			atyp: message.AddressTypeIPv4,
 			bin: []byte{
 				127, 0, 0, 1,
 			},
-			addr: socks6.Socks6Addr{
-				AddressType: socks6.AddressTypeIPv4,
+			addr: message.Socks6Addr{
+				AddressType: message.AddressTypeIPv4,
 				Address: []byte{
 					127, 0, 0, 1,
 				},
 			},
 		},
 		{
-			atyp: socks6.AddressTypeDomainName,
+			atyp: message.AddressTypeDomainName,
 			bin:  append([]byte{16}, []byte("example.com\x00\x00\x00\x00\x00")...),
-			addr: socks6.Socks6Addr{
-				AddressType: socks6.AddressTypeDomainName,
+			addr: message.Socks6Addr{
+				AddressType: message.AddressTypeDomainName,
 				Address:     []byte("example.com"),
 			},
 		},
 	}
 	for _, tt := range tests {
-		a := socks6.Socks6Addr{}
+		a := message.Socks6Addr{}
 		a.ParseAddress(tt.atyp, tt.bin)
 		assert.Equal(t, tt.addr, a)
 	}
 
-	b := socks6.Socks6Addr{}
+	b := message.Socks6Addr{}
 	ftests := []struct {
-		atyp socks6.AddressType
+		atyp message.AddressType
 		addr []byte
 		e    error
 	}{
-		{atyp: socks6.AddressTypeDomainName, addr: nil, e: socks6.ErrTooShort{ExpectedLen: 2}},
-		{atyp: socks6.AddressTypeDomainName, addr: []byte{100, 1}, e: socks6.ErrTooShort{ExpectedLen: 101}},
-		{atyp: socks6.AddressType(9), addr: nil, e: socks6.ErrAddressTypeNotSupport},
-		{atyp: socks6.AddressTypeIPv4, addr: nil, e: socks6.ErrTooShort{ExpectedLen: 4}},
-		{atyp: socks6.AddressTypeIPv6, addr: nil, e: socks6.ErrTooShort{ExpectedLen: 16}},
+		{atyp: message.AddressTypeDomainName, addr: nil, e: message.ErrTooShort{ExpectedLen: 2}},
+		{atyp: message.AddressTypeDomainName, addr: []byte{100, 1}, e: message.ErrTooShort{ExpectedLen: 101}},
+		{atyp: message.AddressType(9), addr: nil, e: message.ErrAddressTypeNotSupport},
+		{atyp: message.AddressTypeIPv4, addr: nil, e: message.ErrTooShort{ExpectedLen: 4}},
+		{atyp: message.AddressTypeIPv6, addr: nil, e: message.ErrTooShort{ExpectedLen: 16}},
 	}
 	for _, tt := range ftests {
 		_, e := b.ParseAddress(tt.atyp, tt.addr)
@@ -182,15 +182,15 @@ func TestAddrParseAddress(t *testing.T) {
 
 func TestAddrMarshalAddress(t *testing.T) {
 	tests := []struct {
-		addr socks6.Socks6Addr
+		addr message.Socks6Addr
 		bin  []byte
 	}{
-		{addr: socks6.Socks6Addr{
-			AddressType: socks6.AddressTypeIPv4,
+		{addr: message.Socks6Addr{
+			AddressType: message.AddressTypeIPv4,
 			Address:     []byte{127, 0, 0, 1},
 		}, bin: []byte{127, 0, 0, 1}},
-		{addr: socks6.Socks6Addr{
-			AddressType: socks6.AddressTypeIPv6,
+		{addr: message.Socks6Addr{
+			AddressType: message.AddressTypeIPv6,
 			Address: []byte{
 				0xfe, 0x80, 0x12, 0x34,
 				0, 0, 0, 0,
@@ -203,12 +203,12 @@ func TestAddrMarshalAddress(t *testing.T) {
 			0, 0, 0, 0,
 			0, 0, 0, 1,
 		}},
-		{addr: socks6.Socks6Addr{
-			AddressType: socks6.AddressTypeDomainName,
+		{addr: message.Socks6Addr{
+			AddressType: message.AddressTypeDomainName,
 			Address:     []byte("aaa"),
 		}, bin: []byte{3, 'a', 'a', 'a'}},
-		{addr: socks6.Socks6Addr{
-			AddressType: socks6.AddressTypeDomainName,
+		{addr: message.Socks6Addr{
+			AddressType: message.AddressTypeDomainName,
 			Address:     []byte("aa"),
 		}, bin: []byte{3, 'a', 'a', 0}},
 	}
@@ -219,21 +219,21 @@ func TestAddrMarshalAddress(t *testing.T) {
 
 func TestAddrParseAddressFrom(t *testing.T) {
 	tests := []struct {
-		atyp socks6.AddressType
+		atyp message.AddressType
 		bin  []byte
-		addr socks6.Socks6Addr
+		addr message.Socks6Addr
 		out  string
 	}{
 		{
-			atyp: socks6.AddressTypeIPv6,
+			atyp: message.AddressTypeIPv6,
 			bin: []byte{
 				0xfe, 0x80, 0x12, 0x34,
 				0, 0, 0, 0,
 				0, 0, 0, 0,
 				0, 0, 0, 1,
 			},
-			addr: socks6.Socks6Addr{
-				AddressType: socks6.AddressTypeIPv6,
+			addr: message.Socks6Addr{
+				AddressType: message.AddressTypeIPv6,
 				Address: []byte{
 					0xfe, 0x80, 0x12, 0x34,
 					0, 0, 0, 0,
@@ -243,48 +243,48 @@ func TestAddrParseAddressFrom(t *testing.T) {
 			},
 		},
 		{
-			atyp: socks6.AddressTypeIPv4,
+			atyp: message.AddressTypeIPv4,
 			bin: []byte{
 				127, 0, 0, 1,
 			},
-			addr: socks6.Socks6Addr{
-				AddressType: socks6.AddressTypeIPv4,
+			addr: message.Socks6Addr{
+				AddressType: message.AddressTypeIPv4,
 				Address: []byte{
 					127, 0, 0, 1,
 				},
 			},
 		},
 		{
-			atyp: socks6.AddressTypeDomainName,
+			atyp: message.AddressTypeDomainName,
 			bin:  append([]byte{16}, []byte("example.com\x00\x00\x00\x00\x00")...),
-			addr: socks6.Socks6Addr{
-				AddressType: socks6.AddressTypeDomainName,
+			addr: message.Socks6Addr{
+				AddressType: message.AddressTypeDomainName,
 				Address:     []byte("example.com"),
 			},
 		},
 	}
 	for _, tt := range tests {
 		buf := bytes.NewBuffer(tt.bin)
-		a, e := socks6.ParseAddressFrom(buf, tt.atyp)
+		a, e := message.ParseAddressFrom(buf, tt.atyp)
 		assert.Nil(t, e)
 		a.ParseAddress(tt.atyp, tt.bin)
 		assert.Equal(t, &tt.addr, a)
 	}
 
 	ftests := []struct {
-		atyp socks6.AddressType
+		atyp message.AddressType
 		addr []byte
 		e    error
 	}{
-		{atyp: socks6.AddressTypeDomainName, addr: nil, e: io.EOF},
-		{atyp: socks6.AddressTypeDomainName, addr: []byte{100, 1}, e: io.ErrUnexpectedEOF},
-		{atyp: socks6.AddressType(9), addr: nil, e: socks6.ErrAddressTypeNotSupport},
-		{atyp: socks6.AddressTypeIPv4, addr: nil, e: io.EOF},
-		{atyp: socks6.AddressTypeIPv6, addr: nil, e: io.EOF},
+		{atyp: message.AddressTypeDomainName, addr: nil, e: io.EOF},
+		{atyp: message.AddressTypeDomainName, addr: []byte{100, 1}, e: io.ErrUnexpectedEOF},
+		{atyp: message.AddressType(9), addr: nil, e: message.ErrAddressTypeNotSupport},
+		{atyp: message.AddressTypeIPv4, addr: nil, e: io.EOF},
+		{atyp: message.AddressTypeIPv6, addr: nil, e: io.EOF},
 	}
 	for _, tt := range ftests {
 		buf := bytes.NewBuffer(tt.addr)
-		_, e := socks6.ParseAddressFrom(buf, tt.atyp)
+		_, e := message.ParseAddressFrom(buf, tt.atyp)
 		assert.ErrorIs(t, e, tt.e)
 	}
 }

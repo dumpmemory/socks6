@@ -7,7 +7,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/studentmain/socks6"
+	socks6 "github.com/studentmain/socks6/message"
 )
 
 func makeDestConn(req socks6.Request) (net.Conn, StackOptionInfo, error) {

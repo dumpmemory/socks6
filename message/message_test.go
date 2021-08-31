@@ -1,16 +1,16 @@
-package socks6_test
+package message_test
 
 import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/studentmain/socks6"
+	"github.com/studentmain/socks6/message"
 )
 
 func Test1(t *testing.T) {
-	req := socks6.Request{
+	req := message.Request{
 		CommandCode: 1,
-		Endpoint:    socks6.NewAddrP("127.0.0.1:1"),
+		Endpoint:    message.NewAddrP("127.0.0.1:1"),
 	}
 	assert.Equal(t, []byte{
 		6, 1, 0, 0,
