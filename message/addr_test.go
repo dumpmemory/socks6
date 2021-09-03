@@ -67,14 +67,6 @@ func TestNewAddr(t *testing.T) {
 			assert.Error(t, err)
 		}
 	}
-
-	for _, tt := range tests {
-		if !tt.ok {
-			assert.Panics(t, func() { message.NewAddrP(tt.in) })
-		} else {
-			assert.Equal(t, tt.expect, message.NewAddrP(tt.in))
-		}
-	}
 }
 
 func TestAddrString(t *testing.T) {

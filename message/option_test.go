@@ -15,18 +15,10 @@ func optionDataTest(t *testing.T, bin []byte, obj message.Option) {
 }
 func optionDataTestParse(t *testing.T, bin []byte, obj message.Option) {
 	buf := make([]byte, len(bin))
-	copy(buf, bin)
-	op, err := message.ParseOption(buf)
-	for i := 0; i < len(buf); i++ {
-		buf[i] = byte(rand.Uint32())
-	}
-	assert.Nil(t, err)
-	obj.Length = uint16(len(bin))
-	assert.Equal(t, obj, op)
 
 	copy(buf, bin)
 	b := bytes.NewBuffer(buf)
-	op, err = message.ParseOptionFrom(b)
+	op, err := message.ParseOptionFrom(b)
 	for i := 0; i < len(buf); i++ {
 		buf[i] = byte(rand.Uint32())
 	}
@@ -41,7 +33,7 @@ func optionDataTestMarshal(t *testing.T, bin []byte, obj message.Option) {
 func optionDataTestProtocolPolice(t *testing.T, bin []byte, obj message.Option) {
 	buf := make([]byte, len(bin))
 	copy(buf, bin)
-	op, err := message.ParseOption(buf)
+	op, err := message.ParseOptionFrom(bytes.NewReader(buf))
 	for i := 0; i < len(buf); i++ {
 		buf[i] = byte(rand.Uint32())
 	}
@@ -54,16 +46,16 @@ func optionDataTestProtocolPolice(t *testing.T, bin []byte, obj message.Option) 
 }
 
 func TestOption(t *testing.T) {
-	_, err := message.ParseOption(nil)
+	_, err := message.ParseOptionFrom(bytes.NewReader(nil))
 	assert.Error(t, err, message.ErrTooShort{ExpectedLen: 4})
-	_, err = message.ParseOption([]byte{0, 0, 0, 100})
+	_, err = message.ParseOptionFrom(bytes.NewReader([]byte{0, 0, 0, 100}))
 	assert.Error(t, err, message.ErrTooShort{ExpectedLen: 100})
 
 	data := []byte{
 		255, 255, 0, 12,
 		1, 2, 3, 4, 5, 6, 7, 8,
 	}
-	op, err := message.ParseOption(data)
+	op, err := message.ParseOptionFrom(bytes.NewReader(data))
 	// byte array should copy from buffer
 	data[11] = 10
 	assert.Nil(t, err)
@@ -130,7 +122,7 @@ func TestSetOptionDataParser(t *testing.T) {
 		},
 	})
 	message.SetOptionDataParser(message.OptionKind(512), func(b []byte) (message.OptionData, error) { return MyBrokenOptionData{}, nil })
-	op, _ := message.ParseOption([]byte{2, 0, 0, 4})
+	op, _ := message.ParseOptionFrom(bytes.NewReader([]byte{2, 0, 0, 4}))
 	assert.Panics(t, func() { op.Marshal() })
 }
 

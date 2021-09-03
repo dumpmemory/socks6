@@ -3,10 +3,10 @@ package message
 import (
 	"bytes"
 	"io"
-	"log"
 	"net"
 	"strconv"
 
+	"github.com/golang/glog"
 	"github.com/studentmain/socks6/internal"
 	"golang.org/x/net/idna"
 )
@@ -27,10 +27,10 @@ type Socks6Addr struct {
 	Net string
 }
 
-func NewAddrP(addr string) *Socks6Addr {
+func NewAddrMust(addr string) *Socks6Addr {
 	r, err := NewAddr(addr)
 	if err != nil {
-		log.Panic(err)
+		glog.Fatal(err)
 	}
 	return r
 }
@@ -45,7 +45,10 @@ func NewAddr(address string) (*Socks6Addr, error) {
 	}
 	var atyp AddressType
 	var addr []byte
-	if ip := net.ParseIP(h); ip != nil {
+	if len(h) == 0 {
+		atyp = AddressTypeIPv4
+		addr = []byte{0, 0, 0, 0}
+	} else if ip := net.ParseIP(h); ip != nil {
 		if ip4 := ip.To4(); ip4 != nil {
 			atyp = AddressTypeIPv4
 			addr = ip4
@@ -168,7 +171,7 @@ func (s *Socks6Addr) AddrLen() int {
 	case AddressTypeDomainName:
 		return len(s.Address) + 1
 	default:
-		log.Panic("address type not set")
+		glog.Fatal("address type not set")
 		return 0
 	}
 }

@@ -30,13 +30,13 @@ func (c *Client) Dial(network string, addr string) (net.Conn, error) {
 	}
 	_, err = sconn.Write((&message.Request{
 		CommandCode: message.CommandConnect,
-		Endpoint:    message.NewAddrP(addr),
+		Endpoint:    message.NewAddrMust(addr),
 	}).Marshal())
 	if err != nil {
 		return nil, err
 	}
 	tcc.base = sconn
-	tcc.remote = message.NewAddrP(addr)
+	tcc.remote = message.NewAddrMust(addr)
 	// todo auth
 	_, err = message.ParseAuthenticationReplyFrom(sconn)
 	if err != nil {
@@ -66,7 +66,7 @@ func (c *Client) ListenUDP(network string, addr string) (net.PacketConn, error) 
 	}
 	_, err = sconn.Write((&message.Request{
 		CommandCode: message.CommandUdpAssociate,
-		Endpoint:    message.NewAddrP(addr),
+		Endpoint:    message.NewAddrMust(addr),
 	}).Marshal())
 	if err != nil {
 		return nil, err
@@ -239,7 +239,7 @@ func (u *UDPClient) WriteTo(p []byte, addr net.Addr) (n int, err error) {
 	h := message.UDPHeader{
 		Type:          message.UDPMessageDatagram,
 		AssociationID: u.assocId,
-		Endpoint:      message.NewAddrP(addr.String()),
+		Endpoint:      message.NewAddrMust(addr.String()),
 		Data:          p,
 	}
 

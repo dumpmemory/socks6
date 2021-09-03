@@ -10,7 +10,7 @@ import (
 func Test1(t *testing.T) {
 	req := message.Request{
 		CommandCode: 1,
-		Endpoint:    message.NewAddrP("127.0.0.1:1"),
+		Endpoint:    message.NewAddrMust("127.0.0.1:1"),
 	}
 	assert.Equal(t, []byte{
 		6, 1, 0, 0,

@@ -2,6 +2,8 @@ package internal
 
 import (
 	"sort"
+
+	"github.com/golang/glog"
 )
 
 func ByteArrayEqual(a, b []byte) bool {
@@ -28,4 +30,11 @@ func PaddedLen(l int, align int) int {
 
 func SortByte(b []byte) {
 	sort.Slice(b, func(i, j int) bool { return b[i] < b[j] })
+}
+
+func Must2(v interface{}, e error) interface{} {
+	if e != nil {
+		glog.Fatal(e)
+	}
+	return v
 }

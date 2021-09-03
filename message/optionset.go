@@ -18,21 +18,6 @@ func NewOptions() OptionSet {
 	}
 }
 
-func parseOptions(b []byte) (OptionSet, int, error) {
-	ops := NewOptions()
-	totalLen := 0
-	remain := b
-	for len(remain) >= 4 {
-		op, err := ParseOption(remain)
-		if err != nil {
-			return ops, 0, addExpectedLen(err, totalLen)
-		}
-		remain = remain[op.Length:]
-		totalLen += int(op.Length)
-		ops.Add(op)
-	}
-	return ops, totalLen, nil
-}
 func parseOptionsFrom(b io.Reader, limit int) (OptionSet, error) {
 	ops := NewOptions()
 	totalLen := 0

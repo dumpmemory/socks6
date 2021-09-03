@@ -1,17 +1,16 @@
-package server
+package socks6
 
 import (
 	"bytes"
 	"crypto/rand"
 	"encoding/binary"
 	"io"
-	"log"
 	"math"
 	"sort"
 	"sync"
 	"time"
 
-	"github.com/studentmain/socks6"
+	"github.com/golang/glog"
 	"github.com/studentmain/socks6/message"
 	"golang.org/x/crypto/sha3"
 )
@@ -38,7 +37,7 @@ func (a *AuthenticationMethodSelector) Authenticate(req message.Request) Authent
 	if len(a.idMap) == 0 {
 		return AuthenticationResult{
 			Success:        true,
-			SelectedMethod: socks6.AuthenticationMethodNone,
+			SelectedMethod: AuthenticationMethodNone,
 		}
 	}
 	m := []byte{0} //append(req.Methods, 0)
@@ -117,7 +116,7 @@ type NoneAuthentication struct {
 }
 
 func (n NoneAuthentication) ID() (byte, string) {
-	return socks6.AuthenticationMethodNone, "none"
+	return AuthenticationMethodNone, "none"
 }
 func (n NoneAuthentication) Authenticate(data []byte) AuthenticationResult {
 	return AuthenticationResult{Success: true}
@@ -137,7 +136,7 @@ func (n UsernamePasswordAuthentication) ID() (byte, string) {
 	return 2, "username-password"
 }
 func (n UsernamePasswordAuthentication) Authenticate(data []byte) AuthenticationResult {
-	log.Print(data)
+	glog.Warning(data)
 	// TODO
 	return AuthenticationResult{Success: true}
 }
@@ -199,7 +198,7 @@ func (s *SessionInfo) AllocateTokens(count uint32) (uint32, uint32) {
 	if !s.useToken {
 		_, err := rand.Read(b)
 		if err != nil {
-			log.Fatal(err)
+			glog.Fatal(err)
 		}
 		s.smallestToken = binary.BigEndian.Uint32(b)
 		s.useToken = true

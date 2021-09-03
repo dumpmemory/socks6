@@ -1,10 +1,13 @@
 package main
 
 import (
+	"context"
 	"crypto/tls"
+	"flag"
 	"log"
+	"time"
 
-	"github.com/studentmain/socks6/server"
+	"github.com/studentmain/socks6"
 )
 
 const (
@@ -60,13 +63,15 @@ fQIXRNDBdXLIdOAl2+PZ
 )
 
 func main() {
+	flag.Parse()
 	log.SetFlags(log.LstdFlags | log.Lshortfile | log.Lmicroseconds)
 	kp, _ := tls.X509KeyPair([]byte(debugPem), []byte(debugKey))
-	s := server.Server{
+	s := socks6.Server{
 		CleartextPort: 10888,
 		EncryptedPort: 10889,
 		Address:       "0.0.0.0",
 		Cert:          kp,
 	}
-	s.Start()
+	s.Start(context.Background())
+	time.Sleep(8 * time.Hour)
 }

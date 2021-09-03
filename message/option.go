@@ -65,41 +65,14 @@ func bufferLengthPolice(b []byte) error {
 
 // kind(i16) length(i16) data(b(length))
 
-// An Option represent a SOCKS6 option
+// Option represent a SOCKS6 option
 type Option struct {
 	Kind   OptionKind
 	Length uint16
 	Data   OptionData
 }
 
-// ParseOption parses b as a SOCKS6 option.
-func ParseOption(b []byte) (Option, error) {
-	if len(b) < 4 {
-		return Option{}, ErrTooShort{ExpectedLen: 4}
-	}
-
-	l := binary.BigEndian.Uint16(b[2:])
-	if len(b) < int(l) {
-		return Option{}, ErrTooShort{ExpectedLen: int(l)}
-	}
-
-	t := OptionKind(binary.BigEndian.Uint16(b))
-	parseFn, ok := optionDataParseFn[t]
-	if !ok || parseFn == nil {
-		parseFn = parseRawOptionData
-	}
-	data := b[4:l]
-	opData, err := parseFn(data)
-	if err != nil {
-		return Option{}, err
-	}
-	op := Option{
-		Kind:   t,
-		Length: l,
-		Data:   opData,
-	}
-	return op, nil
-}
+// ParseOptionFrom parses b as a SOCKS6 option.
 func ParseOptionFrom(b io.Reader) (Option, error) {
 	// kind2 length2
 	buf := make([]byte, math.MaxUint16)
