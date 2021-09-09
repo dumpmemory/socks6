@@ -30,7 +30,8 @@ type Socks6Addr struct {
 func NewAddrMust(addr string) *Socks6Addr {
 	r, err := NewAddr(addr)
 	if err != nil {
-		glog.Fatal(err)
+		glog.Error(err)
+		panic(err)
 	}
 	return r
 }
@@ -86,37 +87,6 @@ func (a *Socks6Addr) String() string {
 	}
 	return net.JoinHostPort(h, strconv.FormatInt(int64(a.Port), 10))
 }
-func (a *Socks6Addr) ParseAddress(atyp AddressType, addr []byte) (int, error) {
-	a.AddressType = atyp
-	expLen := 0
-	switch a.AddressType {
-	case AddressTypeIPv4:
-		expLen = 4
-	case AddressTypeIPv6:
-		expLen = 16
-	case AddressTypeDomainName:
-		if len(addr) < 2 {
-			expLen = 2
-		} else {
-			expLen = int(addr[0]) + 1
-		}
-	default:
-		return 0, ErrAddressTypeNotSupport
-	}
-	if len(addr) < expLen {
-		return 0, ErrTooShort{ExpectedLen: expLen}
-	}
-
-	switch a.AddressType {
-	case AddressTypeIPv4:
-		a.Address = internal.Dup(addr[:4])
-	case AddressTypeIPv6:
-		a.Address = internal.Dup(addr[:16])
-	case AddressTypeDomainName:
-		a.Address = bytes.Trim(addr[1:expLen], "\x00")
-	}
-	return expLen, nil
-}
 func (a *Socks6Addr) MarshalAddress() []byte {
 	if a.AddressType == AddressTypeDomainName {
 		r := append([]byte{byte(len(a.Address))}, a.Address...)
@@ -171,7 +141,7 @@ func (s *Socks6Addr) AddrLen() int {
 	case AddressTypeDomainName:
 		return len(s.Address) + 1
 	default:
-		glog.Fatal("address type not set")
+		glog.Error("address type not set")
 		return 0
 	}
 }

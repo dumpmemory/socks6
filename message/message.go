@@ -19,10 +19,9 @@ const (
 )
 
 type Request struct {
-	Version     byte
 	CommandCode CommandCode
 	Endpoint    *Socks6Addr
-	Options     OptionSet
+	Options     *OptionSet
 }
 
 func ParseRequestFrom(b io.Reader) (*Request, error) {
@@ -33,9 +32,8 @@ func ParseRequestFrom(b io.Reader) (*Request, error) {
 	if _, err := io.ReadFull(b, buf[:8]); err != nil {
 		return nil, err
 	}
-	r.Version = buf[0]
-	if r.Version != 6 {
-		return r, ErrVersion
+	if buf[0] != 6 {
+		return r, ErrVersion{Version: int(buf[0]), ConsumedBytes: buf[:8]}
 	}
 	r.CommandCode = CommandCode(buf[1])
 	optLen := binary.BigEndian.Uint16(buf[2:])
@@ -48,7 +46,7 @@ func ParseRequestFrom(b io.Reader) (*Request, error) {
 	addr.Port = binary.BigEndian.Uint16(buf[4:])
 	r.Endpoint = addr
 
-	ops, err := parseOptionsFrom(b, int(optLen))
+	ops, err := ParseOptionSetFrom(b, int(optLen))
 	if err != nil {
 		return nil, err
 	}
@@ -75,14 +73,16 @@ func (r *Request) Marshal() (buf []byte) {
 	return b.Bytes()
 }
 
+type AuthenticationReplyType byte
+
 const (
-	AuthenticationReplySuccess = 0
-	AuthenticationReplyFail    = 1
+	AuthenticationReplySuccess AuthenticationReplyType = 0
+	AuthenticationReplyFail    AuthenticationReplyType = 1
 )
 
 type AuthenticationReply struct {
-	Type    byte
-	Options OptionSet
+	Type    AuthenticationReplyType
+	Options *OptionSet
 }
 
 func (a *AuthenticationReply) Marshal() []byte {
@@ -90,7 +90,7 @@ func (a *AuthenticationReply) Marshal() []byte {
 	b := bytes.Buffer{}
 
 	b.WriteByte(6)
-	b.WriteByte(a.Type)
+	b.WriteByte(byte(a.Type))
 	binary.Write(&b, binary.BigEndian, uint16(len(ops)))
 
 	b.Write(ops)
@@ -105,9 +105,9 @@ func ParseAuthenticationReplyFrom(b io.Reader) (*AuthenticationReply, error) {
 	if buf[0] != 6 {
 		return nil, ErrProtocolPolice
 	}
-	a.Type = buf[1]
+	a.Type = AuthenticationReplyType(buf[1])
 	opsLen := int(binary.BigEndian.Uint16(buf[2:]))
-	ops, err := parseOptionsFrom(b, opsLen)
+	ops, err := ParseOptionSetFrom(b, opsLen)
 	if err != nil {
 		return nil, err
 	}
@@ -133,7 +133,7 @@ const (
 type OperationReply struct {
 	ReplyCode ReplyCode
 	Endpoint  *Socks6Addr
-	Options   OptionSet
+	Options   *OptionSet
 }
 
 func (o *OperationReply) Marshal() []byte {
@@ -177,7 +177,7 @@ func ParseOperationReplyFrom(b io.Reader) (*OperationReply, error) {
 	addr.Port = binary.BigEndian.Uint16(buf[4:])
 	r.Endpoint = addr
 
-	ops, err := parseOptionsFrom(b, int(optLen))
+	ops, err := ParseOptionSetFrom(b, int(optLen))
 	if err != nil {
 		return nil, err
 	}
@@ -254,63 +254,17 @@ func (u *UDPHeader) Marshal() []byte {
 	}
 	return b.Bytes()
 }
-func (u *UDPHeader) Deserialize(buf []byte) (int, error) {
-	// todo socks5 fallback support?
-	if len(buf) < 12 {
-		return 0, ErrTooShort{ExpectedLen: 12}
-	}
-	lMsg := binary.BigEndian.Uint16(buf[2:])
-	if len(buf) < int(lMsg) {
-		return 0, ErrTooShort{ExpectedLen: int(lMsg)}
-	}
-	u.Type = buf[1]
-	u.AssociationID = binary.BigEndian.Uint64(buf[4:])
 
-	if u.Type == UDPMessageAssociationInit || u.Type == UDPMessageAssociationAck {
-		return 12, nil
-	}
-	if len(buf) < 18 {
-		return 0, ErrTooShort{ExpectedLen: 18}
-	}
-	u.Endpoint = &Socks6Addr{
-		Port: binary.BigEndian.Uint16(buf[14:]),
-	}
-	lAddr, err := u.Endpoint.ParseAddress(AddressType(buf[12]), buf[16:])
-	if err != nil {
-		return 0, addExpectedLen(err, 16)
-	}
-	lFull := binary.BigEndian.Uint16(buf[2:])
-	if len(buf) < int(lFull) {
-		return 0, ErrTooShort{ExpectedLen: int(lFull)}
-	}
-	if int(lFull) < 16+lAddr {
-		return 0, ErrFormat
-	}
-	u.Data = buf[16+lAddr : lFull]
-
-	if u.Type == UDPMessageDatagram {
-		return int(lFull), nil
-	}
-
-	pIcmp := 16 + lAddr
-	if len(buf) < pIcmp+6 {
-		return 0, ErrTooShort{ExpectedLen: pIcmp + 6}
-	}
-	u.ErrorCode = buf[pIcmp+1]
-	u.ErrorEndpoint = &Socks6Addr{}
-	lAddr2, err := u.ErrorEndpoint.ParseAddress(AddressType(buf[pIcmp]), buf[pIcmp+4:])
-	if err != nil {
-		return 0, addExpectedLen(err, pIcmp+lAddr2+4)
-	}
-	return pIcmp + lAddr2 + 4, nil
-}
 func ParseUDPHeaderFrom(b io.Reader) (*UDPHeader, error) {
-	// todo socks5 fallback support?
 	u := &UDPHeader{}
 	buf := make([]byte, math.MaxUint16)
 	if _, err := io.ReadFull(b, buf[:8]); err != nil {
 		return nil, err
 	}
+	if buf[0] != 6 {
+		return nil, ErrVersion{Version: int(buf[0])}
+	}
+
 	totalLen := binary.BigEndian.Uint16(buf[2:])
 
 	u.Type = buf[1]

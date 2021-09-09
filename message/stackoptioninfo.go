@@ -2,12 +2,12 @@ package message
 
 type StackOptionInfo map[int]interface{}
 
-func getStackOptions(options OptionSet, clientLeg bool) []Option {
+func getStackOptions(options *OptionSet, clientLeg bool) []Option {
 	return options.GetKindF(OptionKindStack, func(o Option) bool {
 		return o.Data.(BaseStackOptionData).RemoteLeg
 	})
 }
-func GetStackOptionInfo(ops OptionSet, clientLeg bool) StackOptionInfo {
+func GetStackOptionInfo(ops *OptionSet, clientLeg bool) StackOptionInfo {
 	rso := StackOptionInfo{}
 	o := getStackOptions(ops, false)
 	rso.AddMany(o)

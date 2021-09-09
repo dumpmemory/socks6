@@ -2,7 +2,7 @@ package message
 
 import (
 	"errors"
-	"strconv"
+	"fmt"
 )
 
 var ErrMessageProcess = errors.New("message error")
@@ -25,7 +25,6 @@ func NewMessageError(msg string) error {
 }
 
 var ErrEnumValue = NewMessageError("unexpected enum value")
-var ErrVersion = NewMessageError("version is not 6")
 var ErrFormat = NewMessageError("wrong message format")
 var ErrAddressTypeNotSupport = NewMessageError("unknown address type")
 
@@ -51,26 +50,18 @@ func newProtocolPoliceError(msg string) error {
 
 var errProtocolPoliceBufferSize = newProtocolPoliceError("buffer size not allowed")
 
-type ErrTooShort struct {
-	ExpectedLen int
+type ErrVersion struct {
+	Version       int
+	ConsumedBytes []byte
 }
 
-func (e ErrTooShort) Error() string {
-	return "buffer too short, need at least " + strconv.FormatInt(int64(e.ExpectedLen), 10)
+func (e ErrVersion) Error() string {
+	return fmt.Sprintf("version %d not supported", e.Version)
 }
-
-func (e ErrTooShort) Unwrap() error {
+func (e ErrVersion) Unwrap() error {
 	return ErrMessageProcess
 }
-
-func (e ErrTooShort) Is(t error) bool {
-	_, ok := t.(ErrTooShort)
+func (e ErrVersion) Is(e2 error) bool {
+	_, ok := e2.(ErrVersion)
 	return ok
-}
-
-func addExpectedLen(e error, l int) error {
-	if ets, ok := e.(ErrTooShort); ok {
-		return ErrTooShort{ExpectedLen: ets.ExpectedLen + l}
-	}
-	return e
 }

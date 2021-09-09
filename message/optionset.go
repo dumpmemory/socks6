@@ -10,21 +10,21 @@ type OptionSet struct {
 	cache  []byte
 }
 
-func NewOptions() OptionSet {
-	return OptionSet{
+func NewOptionSet() *OptionSet {
+	return &OptionSet{
 		perKind: map[OptionKind][]Option{},
 		list:    []Option{},
 		cached:  false,
 	}
 }
 
-func parseOptionsFrom(b io.Reader, limit int) (OptionSet, error) {
-	ops := NewOptions()
+func ParseOptionSetFrom(b io.Reader, limit int) (*OptionSet, error) {
+	ops := NewOptionSet()
 	totalLen := 0
 	for totalLen < limit {
 		op, err := ParseOptionFrom(b)
 		if err != nil {
-			return ops, addExpectedLen(err, totalLen)
+			return nil, err
 		}
 		totalLen += int(op.Length)
 		ops.Add(op)
@@ -55,7 +55,11 @@ func (s *OptionSet) Marshal() []byte {
 		b = append(b, opb...)
 	}
 	s.cache = b
+	s.cached = true
 	return b
+}
+func (s *OptionSet) Len() int {
+	return len(s.list)
 }
 
 func (s *OptionSet) get(kind OptionKind) (Option, bool) {

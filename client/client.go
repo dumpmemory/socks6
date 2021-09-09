@@ -1,6 +1,7 @@
 package client
 
 import (
+	"bytes"
 	"crypto/tls"
 	"errors"
 	"log"
@@ -211,7 +212,7 @@ func (u *UDPClient) ReadFrom(p []byte) (n int, addr net.Addr, err error) {
 		if err != nil {
 			return 0, nil, err
 		}
-		_, err = h.Deserialize(buf[:l])
+		_, err = message.ParseUDPHeaderFrom(bytes.NewReader(buf[:l]))
 		if err != nil {
 			return 0, nil, err
 		}

@@ -47,9 +47,9 @@ func optionDataTestProtocolPolice(t *testing.T, bin []byte, obj message.Option) 
 
 func TestOption(t *testing.T) {
 	_, err := message.ParseOptionFrom(bytes.NewReader(nil))
-	assert.Error(t, err, message.ErrTooShort{ExpectedLen: 4})
+	assert.Error(t, err)
 	_, err = message.ParseOptionFrom(bytes.NewReader([]byte{0, 0, 0, 100}))
-	assert.Error(t, err, message.ErrTooShort{ExpectedLen: 100})
+	assert.Error(t, err)
 
 	data := []byte{
 		255, 255, 0, 12,
