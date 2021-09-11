@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/binary"
 	"io"
-	"math"
 
 	"github.com/studentmain/socks6/internal"
 )
@@ -26,7 +25,8 @@ type Request struct {
 
 func ParseRequestFrom(b io.Reader) (*Request, error) {
 	r := &Request{}
-	buf := make([]byte, math.MaxUint16)
+	buf := internal.BytesPool64k.Rent()
+	defer internal.BytesPool64k.Return(buf)
 
 	// ver cc opLen2 port2 0 aTyp
 	if _, err := io.ReadFull(b, buf[:8]); err != nil {
@@ -98,7 +98,10 @@ func (a *AuthenticationReply) Marshal() []byte {
 }
 func ParseAuthenticationReplyFrom(b io.Reader) (*AuthenticationReply, error) {
 	a := &AuthenticationReply{}
-	buf := make([]byte, math.MaxUint16)
+
+	buf := internal.BytesPool64k.Rent()
+	defer internal.BytesPool64k.Return(buf)
+
 	if _, err := io.ReadFull(b, buf[:4]); err != nil {
 		return nil, err
 	}
@@ -157,8 +160,8 @@ func (o *OperationReply) Marshal() []byte {
 }
 func ParseOperationReplyFrom(b io.Reader) (*OperationReply, error) {
 	r := &OperationReply{}
-	buf := make([]byte, math.MaxUint16)
-
+	buf := internal.BytesPool64k.Rent()
+	defer internal.BytesPool64k.Return(buf)
 	// ver cc opLen2 port2 0 aTyp
 	if _, err := io.ReadFull(b, buf[:8]); err != nil {
 		return nil, err
@@ -257,7 +260,8 @@ func (u *UDPHeader) Marshal() []byte {
 
 func ParseUDPHeaderFrom(b io.Reader) (*UDPHeader, error) {
 	u := &UDPHeader{}
-	buf := make([]byte, math.MaxUint16)
+	buf := internal.BytesPool64k.Rent()
+	defer internal.BytesPool64k.Return(buf)
 	if _, err := io.ReadFull(b, buf[:8]); err != nil {
 		return nil, err
 	}

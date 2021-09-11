@@ -19,21 +19,29 @@ type Server struct {
 	Cert tls.Certificate
 
 	worker ServerWorker
-	tcp    net.Listener
-	udp    net.PacketConn
-	tls    net.Listener
-	dtls   net.Listener
+
+	// listeners
+
+	tcp  net.Listener
+	udp  net.PacketConn
+	tls  net.Listener
+	dtls net.Listener
 }
 
 func (s *Server) Start(ctx context.Context) {
-	cleartextEndpoint := net.JoinHostPort(s.Address, fmt.Sprintf("%d", s.CleartextPort))
-	encryptedEndpoint := net.JoinHostPort(s.Address, fmt.Sprintf("%d", s.EncryptedPort))
 	s.worker = *NewServerWorker()
 
-	s.startTCP(ctx, cleartextEndpoint)
-	s.startTLS(ctx, encryptedEndpoint)
-	s.startUDP(ctx, cleartextEndpoint)
-	s.startDTLS(ctx, encryptedEndpoint)
+	if s.CleartextPort != 0 {
+		cleartextEndpoint := net.JoinHostPort(s.Address, fmt.Sprintf("%d", s.CleartextPort))
+		s.startTCP(ctx, cleartextEndpoint)
+		s.startUDP(ctx, cleartextEndpoint)
+	}
+
+	if s.EncryptedPort != 0 {
+		encryptedEndpoint := net.JoinHostPort(s.Address, fmt.Sprintf("%d", s.EncryptedPort))
+		s.startTLS(ctx, encryptedEndpoint)
+		s.startDTLS(ctx, encryptedEndpoint)
+	}
 }
 
 func (s *Server) startTCP(ctx context.Context, addr string) {
@@ -76,7 +84,7 @@ func (s *Server) startTLS(ctx context.Context, addr string) {
 func (s *Server) startUDP(ctx context.Context, addr string) {
 	addr2 := internal.Must2(net.ResolveUDPAddr("udp", addr)).(*net.UDPAddr)
 	s.udp = internal.Must2(net.ListenUDP("udp", addr2)).(*net.UDPConn)
-	glog.Infof("start UDP server at %s", s.tls.Addr())
+	glog.Infof("start UDP server at %s", s.udp.LocalAddr())
 
 	go func() {
 		buf := make([]byte, 4096)
@@ -104,6 +112,7 @@ func (s *Server) startDTLS(ctx context.Context, addr string) {
 	s.dtls = internal.Must2(dtls.Listen("udp", addr2, &dtls.Config{
 		Certificates: []tls.Certificate{s.Cert},
 	})).(net.Listener)
+	glog.Infof("start DTLS server at %s", s.dtls.Addr())
 
 	go func() {
 		for {

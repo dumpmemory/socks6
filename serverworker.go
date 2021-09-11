@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/golang/glog"
+	"github.com/studentmain/socks6/auth"
+	"github.com/studentmain/socks6/internal"
 	"github.com/studentmain/socks6/internal/socket"
 	"github.com/studentmain/socks6/message"
 )
@@ -20,25 +22,43 @@ type CommandHandler func(
 	ctx context.Context,
 	conn net.Conn,
 	req *message.Request,
-	auth AuthenticationResult,
+	clientInfo ClientInfo,
 	initData []byte,
 )
 
+// ServerWorker is a customizeable SOCKS 6 server
 type ServerWorker struct {
+	Authenticator auth.ServerAuthenticator
+	Rule          func(op message.CommandCode, dst, src net.Addr, cid string) bool
+
+	CommandHandlers     map[message.CommandCode]CommandHandler
 	VersionErrorHandler func(ctx context.Context, ver message.ErrVersion, conn net.Conn)
-
-	Authenticator Authenticator
-
-	Rule func(op message.CommandCode, dst, src net.Addr, cid ClientID) bool
-
-	CommandHandlers map[message.CommandCode]CommandHandler
 }
 
+type ClientInfo struct {
+	Name      string
+	SessionID []byte
+}
+
+// NewServerWorker create a standard SOCKS 6 server
 func NewServerWorker() *ServerWorker {
+	defaultAuth := &auth.DefaultServerAuthenticator{
+		Methods: map[byte]auth.ServerAuthenticationMethod{},
+	}
+	defaultAuth.AddMethod(0, auth.NoneServerAuthenticationMethod{})
+	// todo: remove them
+	defaultAuth.AddMethod(2, auth.PasswordServerAuthenticationMethod{
+		Passwords: map[string]string{
+			"user": "pass",
+		},
+	})
+	defaultAuth.AddMethod(0xdd, auth.FakeEchoServerAuthenticationMethod{})
+
 	r := &ServerWorker{
 		VersionErrorHandler: ReplyErrorByVersion,
-		Authenticator:       NullAuthenticator{},
+		Authenticator:       defaultAuth,
 	}
+
 	r.CommandHandlers = map[message.CommandCode]CommandHandler{
 		message.CommandNoop:    r.NoopHandler,
 		message.CommandConnect: r.ConnectHandler,
@@ -63,17 +83,19 @@ func ReplyErrorByVersion(ctx context.Context, ver message.ErrVersion, conn net.C
 	}
 }
 
+// ServeStream process incoming TCP and TLS connection
 func (s *ServerWorker) ServeStream(
 	ctx context.Context,
 	conn net.Conn,
 ) {
 	deferClose := true
 	defer func() {
-		if deferClose {
-			conn.Close()
+		if !deferClose {
+			return
 		}
+		conn.Close()
 	}()
-
+	defer conn.Close()
 	req, err := message.ParseRequestFrom(conn)
 	if err != nil {
 		// not socks6
@@ -108,25 +130,68 @@ func (s *ServerWorker) ServeStream(
 		}
 	}
 
-	auth, reply := s.Authenticator.Authenticate(*req)
-
-	glog.V(2).Infof("request %s authenticate %+v , %+v", conn.RemoteAddr(), auth, reply)
-
-	if _, err = conn.Write(reply.Marshal()); err != nil {
-		glog.Error("can't write reply", err)
-		return
+	result1, sac := s.Authenticator.Authenticate(ctx, conn, *req)
+	var auth auth.ServerAuthenticationResult
+	if result1.Success {
+		auth = *result1
+		reply := setAuthMethodInfo(&message.AuthenticationReply{
+			Type:    message.AuthenticationReplySuccess,
+			Options: message.NewOptionSet(),
+		}, *result1)
+		glog.V(2).Infof("request %s authenticate %+v , %+v", conn.RemoteAddr(), auth, reply)
+		if _, err = conn.Write(reply.Marshal()); err != nil {
+			glog.Error("can't write reply", err)
+			return
+		}
+	} else if !result1.Continue {
+		reply := &message.AuthenticationReply{
+			Type:    message.AuthenticationReplyFail,
+			Options: message.NewOptionSet(),
+		}
+		if _, err = conn.Write(reply.Marshal()); err != nil {
+			glog.Error("can't write reply", err)
+			return
+		}
+	} else {
+		reply1 := setAuthMethodInfo(&message.AuthenticationReply{
+			Type:    message.AuthenticationReplyFail,
+			Options: message.NewOptionSet(),
+		}, *result1)
+		if _, err = conn.Write(reply1.Marshal()); err != nil {
+			glog.Error("can't write reply1", err)
+			return
+		}
+		result2, err := s.Authenticator.ContinueAuthenticate(sac)
+		if err != nil {
+			glog.Error("auth stage2 error", err)
+			conn.Write((&message.AuthenticationReply{
+				Type: message.AuthenticationReplyFail,
+			}).Marshal())
+			return
+		}
+		auth = *result2
+		reply := setAuthMethodInfo(&message.AuthenticationReply{
+			Options: message.NewOptionSet(),
+		}, *result2)
+		if result2.Success {
+			reply.Type = message.AuthenticationReplySuccess
+		} else {
+			reply.Type = message.AuthenticationReplyFail
+		}
+		glog.V(2).Infof("request %s authenticate interactive %+v , %+v", conn.RemoteAddr(), auth, reply)
+		if _, err = conn.Write(reply.Marshal()); err != nil {
+			glog.Error("can't write reply2", err)
+			return
+		}
 	}
 
 	if !auth.Success {
-		glog.Warningf("interactive auth not implemented")
-		// todo: slow path, but how?
 		return
 	}
 	glog.V(2).Infof("request %s authenticate success", conn.RemoteAddr())
 
 	if s.Rule != nil {
-
-		if !s.Rule(req.CommandCode, req.Endpoint, conn.RemoteAddr(), auth.ClientID) {
+		if !s.Rule(req.CommandCode, req.Endpoint, conn.RemoteAddr(), auth.ClientName) {
 			glog.V(2).Infof("request %s not allowed by rule", conn.RemoteAddr())
 			conn.Write((&message.OperationReply{
 				ReplyCode: message.OperationReplyAddressNotSupported,
@@ -144,8 +209,11 @@ func (s *ServerWorker) ServeStream(
 		return
 	}
 	glog.V(2).Infof("request %s start command specific process", conn.RemoteAddr())
-
-	h(ctx, conn, req, auth, initData)
+	info := ClientInfo{
+		Name:      auth.ClientName,
+		SessionID: auth.SessionID,
+	}
+	h(ctx, conn, req, info, initData)
 }
 
 func (s *ServerWorker) ServeDatagram(
@@ -161,15 +229,17 @@ func (s *ServerWorker) NoopHandler(
 	ctx context.Context,
 	conn net.Conn,
 	req *message.Request,
-	auth AuthenticationResult,
+	info ClientInfo,
 	initData []byte,
 ) {
 	conn.Write(
 		setSessionId(
 			&message.OperationReply{
 				ReplyCode: message.OperationReplySuccess,
+				Options:   message.NewOptionSet(),
+				Endpoint:  message.NewAddrMust(":0"),
 			},
-			auth.SessionID,
+			info.SessionID,
 		).Marshal())
 }
 
@@ -177,7 +247,7 @@ func (s *ServerWorker) ConnectHandler(
 	ctx context.Context,
 	conn net.Conn,
 	req *message.Request,
-	auth AuthenticationResult,
+	info ClientInfo,
 	initData []byte,
 ) {
 	clientOpt := message.GetStackOptionInfo(req.Options, true)
@@ -185,15 +255,25 @@ func (s *ServerWorker) ConnectHandler(
 	remoteOpt := message.GetStackOptionInfo(req.Options, false)
 
 	glog.V(2).Infof("request %s dial to %s", conn.RemoteAddr(), req.Endpoint)
+
+	// todo custom dialer
 	rconn, remoteAppliedOpt, err := socket.DialWithOption(ctx, *req.Endpoint, remoteOpt)
 	code := getReplyCode(err)
 	reply := message.OperationReply{
 		ReplyCode: code,
 		Options:   message.NewOptionSet(),
+		Endpoint:  message.NewAddrMust(":0"),
 	}
-	setSessionId(&reply, auth.SessionID)
+	setSessionId(&reply, info.SessionID)
+	// mmp......
+	// todo: either rewrite worker, or remove stack options, or write a blocking tcpconn
+	//
+	// https://stackoverflow.com/questions/28967701/golang-tcp-socket-cant-close-after-get-file?rq=1
 	if code != message.OperationReplySuccess {
 		conn.Write(reply.Marshal())
+		glog.Info("unsuccess, exit")
+		conn.(*net.TCPConn).CloseRead()
+		conn.Close()
 		return
 	}
 	defer rconn.Close()
@@ -217,6 +297,7 @@ func (s *ServerWorker) ConnectHandler(
 	glog.V(2).Infof("request %s relay end", conn.RemoteAddr())
 }
 
+// setSessionId append session id option to operation reply when id is not null
 func setSessionId(oprep *message.OperationReply, id []byte) *message.OperationReply {
 	if id == nil {
 		return oprep
@@ -230,6 +311,7 @@ func setSessionId(oprep *message.OperationReply, id []byte) *message.OperationRe
 	return oprep
 }
 
+// getReplyCode convert dial error to socks6 error code
 func getReplyCode(err error) message.ReplyCode {
 	if err == nil {
 		return message.OperationReplySuccess
@@ -305,7 +387,9 @@ func relay(ctx context.Context, c1, c2 net.Conn, timeout time.Duration) error {
 
 func relayOneDirection(ctx context.Context, c1, c2 net.Conn, timeout time.Duration) error {
 	var done error = nil
-	buf := make([]byte, 2048) // classic buffer size from "that" proxy
+	buf := internal.BytesPool4k.Rent()
+	defer internal.BytesPool4k.Return(buf)
+
 	id := fmt.Sprintf("%s--%s ==> %s--%s", c1.LocalAddr(), c1.RemoteAddr(), c2.LocalAddr(), c2.RemoteAddr())
 	glog.V(2).Infof("relay %s start", id)
 	go func() {
@@ -342,4 +426,25 @@ func relayOneDirection(ctx context.Context, c1, c2 net.Conn, timeout time.Durati
 			return eRead
 		}
 	}
+}
+
+func setAuthMethodInfo(arep *message.AuthenticationReply, result auth.ServerAuthenticationResult) *message.AuthenticationReply {
+	if result.SelectedMethod != 0 && result.SelectedMethod != 0xff {
+		arep.Options.Add(message.Option{
+			Kind: message.OptionKindAuthenticationMethodSelection,
+			Data: message.AuthenticationMethodSelectionOptionData{
+				Method: result.SelectedMethod,
+			},
+		})
+	}
+	if result.OptionData != nil {
+		arep.Options.Add(message.Option{
+			Kind: message.OptionKindAuthenticationData,
+			Data: message.AuthenticationDataOptionData{
+				Method: result.SelectedMethod,
+				Data:   result.OptionData,
+			},
+		})
+	}
+	return arep
 }

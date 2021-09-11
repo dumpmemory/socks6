@@ -1,6 +1,7 @@
 package message
 
 import (
+	"bytes"
 	"encoding/binary"
 	"io"
 	"log"
@@ -75,7 +76,8 @@ type Option struct {
 // ParseOptionFrom parses b as a SOCKS6 option.
 func ParseOptionFrom(b io.Reader) (Option, error) {
 	// kind2 length2
-	buf := make([]byte, math.MaxUint16)
+	buf := internal.BytesPool64k.Rent()
+	defer internal.BytesPool64k.Return(buf)
 	if _, err := io.ReadFull(b, buf[:4]); err != nil {
 		return Option{}, err
 	}
@@ -113,11 +115,11 @@ func (o *Option) Marshal() []byte {
 		log.Panic("too much option data")
 	}
 	o.Length = uint16(l)
-	ret := make([]byte, l)
-	copy(ret[4:], data)
-	binary.BigEndian.PutUint16(ret, uint16(o.Kind))
-	binary.BigEndian.PutUint16(ret[2:], o.Length)
-	return ret
+	buf := &bytes.Buffer{}
+	binary.Write(buf, binary.BigEndian, o.Kind)
+	binary.Write(buf, binary.BigEndian, o.Length)
+	buf.Write(data)
+	return buf.Bytes()
 }
 
 // maybe MarshalTo([]byte)
@@ -156,16 +158,16 @@ type AuthenticationMethodAdvertisementOptionData struct {
 }
 
 func parseAuthenticationMethodAdvertisementOptionData(d []byte) (OptionData, error) {
-	mm := map[byte]bool{}
+	methodMap := map[byte]bool{}
 	idl := binary.BigEndian.Uint16(d)
 	for _, v := range d[2:] {
 		if v != 0 {
-			mm[v] = true
+			methodMap[v] = true
 		}
 	}
-	m := make([]byte, len(mm))
+	m := make([]byte, len(methodMap))
 	i := 0
-	for k := range mm {
+	for k := range methodMap {
 		m[i] = k
 		i++
 	}

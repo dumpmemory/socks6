@@ -105,7 +105,8 @@ func (a *Socks6Addr) MarshalAddress() []byte {
 func ParseAddressFrom(b io.Reader, atyp AddressType) (*Socks6Addr, error) {
 	a := &Socks6Addr{}
 	a.AddressType = atyp
-	buf := make([]byte, 256)
+	buf := internal.BytesPool256.Rent()
+	defer internal.BytesPool256.Return(buf)
 	if a.AddressType == AddressTypeDomainName {
 		if _, err := io.ReadFull(b, buf[:1]); err != nil {
 			return nil, err

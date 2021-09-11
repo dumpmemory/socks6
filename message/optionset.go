@@ -34,7 +34,7 @@ func ParseOptionSetFrom(b io.Reader, limit int) (*OptionSet, error) {
 func (s *OptionSet) Add(o Option) {
 	arr, ok := s.perKind[o.Kind]
 	if !ok {
-		arr = make([]Option, 0)
+		arr = []Option{}
 	}
 	s.perKind[o.Kind] = append(arr, o)
 	s.list = append(s.list, o)
