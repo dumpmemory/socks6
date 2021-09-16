@@ -6,46 +6,42 @@ Not production ready.
 
 currently based on draft 11
 
-### What works
+done: finished
+n/a: not applicable
+todo: will do
+how: investigating API design
+wtf: want to do, but has technical problem
 
-? means not tested at all
-
-- TCP relay
-- Bind
-- UDP
-- Noop
-- Session
-- Happy Eyeball Option (RFC6555 only)
-- TLS
-- IP DF, TTL, TOS Option ? (remote leg only)
-- Bind with backlog ? (backlog is simulated) 
-- Client API ? (no bind)
-- DTLS ?
-- Token ?
-- Linux ?
-- Port parity Option ?
-
-### TODO list
-
-- Follow golang conventions
-- Authentication
-- Test coverage
-- SOCKS 5 to 6 converter ?
-- Client demo ?
-- ...
-
-### Not TODO
-
-If somebody implemented these feature, just send patch.
-
-- TFO Option. 
-    TFO is not supported in Go stdlib, need special OS API to establish TFO connection, need write a custom dialer to do that.
-- MPTCP Option.
-    Not supported in Go stdlib and some desktop OS (yet).
-- UDP Error Option.
-    Non privileged ICMP PacketConn in Go is not supported on some desktop OS (yet).
-- Multicast UDP
-    I need to read the *TCP/IP Illustrated* first...
+- Message parse and serialize (done)
+- Handshake (#3, done)
+    - Initial data (#3, server done, client how)
+    - Authenticate (server done, client todo)
+    - Authenticate protocol (#3, server done, client todo)
+    - Version mismatch (#5, server done, client n/a)
+- Commands (#7)
+    - NOOP (#7, server done, client how)
+    - CONNECT (#7.1, done)
+    - BIND (#7.2, todo)
+    - UDP ASSOCIATE (#7.3, todo)
+        - Over TCP
+        - Over UDP/DTLS
+        - Proxy UDP server (#7.3.1, server n/a, client todo)
+        - Proxy multicast (#7.3.2, todo)
+        - ICMP Error (#7.3.3, todo)
+- Options (#8)
+    - Stack options (#8.1, server done, client todo)
+        - TOS (#8.1.1, wtf)
+        - Happy eyeballs (#8.1.2, todo)
+        - TTL (#8.1.3, wtf)
+        - No fragmentation (#8.1.4, wtf)
+        - TFO (#8.1.5, wtf)
+        - Multipath (#8.1.6, wtf)
+        - Listen backlog (#8.1.7, todo)
+        - Port parity (#8.1.9, how)
+    - Session (#8.4, todo)
+    - Idempotence (#8.5, todo)
+- Authentication methods
+    - Username password (#9, server done, client todo)
 
 ## Reference
 

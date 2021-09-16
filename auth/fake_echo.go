@@ -22,7 +22,7 @@ func (f FakeEchoServerAuthenticationMethod) Authenticate(
 
 	sac.Result <- ServerAuthenticationResult{
 		Success:    false,
-		OptionData: buf,
+		MethodData: buf,
 		Continue:   true,
 	}
 	selected := <-sac.Continue

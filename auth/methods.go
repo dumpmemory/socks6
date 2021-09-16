@@ -22,8 +22,8 @@ type ServerAuthenticationChannels struct {
 
 func NewServerAuthenticationChannels() *ServerAuthenticationChannels {
 	return &ServerAuthenticationChannels{
-		Result:   make(chan ServerAuthenticationResult),
-		Continue: make(chan bool, 1),  // so 1 step auth can ignore it's input
-		Err:      make(chan error, 1), // so auth can exit fast
+		Result:   make(chan ServerAuthenticationResult, 2),
+		Continue: make(chan bool, 1),
+		Err:      make(chan error, 1),
 	}
 }

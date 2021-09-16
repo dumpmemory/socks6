@@ -22,10 +22,13 @@ type ServerAuthenticator interface {
 type ServerAuthenticationResult struct {
 	Success        bool
 	SelectedMethod byte
-	ClientName     string
-	SessionID      []byte
-	OptionData     []byte
 	Continue       bool
+
+	SessionID         []byte
+	MethodData        []byte
+	AdditionalOptions []message.Option
+
+	ClientName string
 }
 
 type NullServerAuthenticator struct{}
@@ -89,9 +92,12 @@ func (d DefaultServerAuthenticator) pickMethod(
 	*ServerAuthenticationChannels,
 ) {
 	for _, m := range order {
-		data, _ := authData[m]
+		data := authData[m]
 		sac := NewServerAuthenticationChannels()
-		method := d.Methods[m]
+		method, support := d.Methods[m]
+		if !support {
+			continue
+		}
 		go method.Authenticate(ctx, conn, data, sac)
 		result1 := <-sac.Result
 		if result1.Success {
@@ -101,6 +107,7 @@ func (d DefaultServerAuthenticator) pickMethod(
 				Success:        true,
 				SelectedMethod: m,
 				ClientName:     result1.ClientName,
+				MethodData:     result1.MethodData,
 				Continue:       false,
 			}, sac
 		} else if result1.Continue {
@@ -109,6 +116,7 @@ func (d DefaultServerAuthenticator) pickMethod(
 				Success:        false,
 				SelectedMethod: m,
 				ClientName:     result1.ClientName,
+				MethodData:     result1.MethodData,
 				Continue:       true,
 			}, sac
 		} else {

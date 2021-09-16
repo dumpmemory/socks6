@@ -70,7 +70,7 @@ func (p PasswordServerAuthenticationMethod) Authenticate(
 		sac.Result <- ServerAuthenticationResult{
 			Success:    false,
 			Continue:   false,
-			OptionData: []byte{1, 1},
+			MethodData: []byte{1, 1},
 		}
 		sac.Err <- nil
 		return
@@ -79,7 +79,7 @@ func (p PasswordServerAuthenticationMethod) Authenticate(
 		sac.Result <- ServerAuthenticationResult{
 			Success:    false,
 			Continue:   false,
-			OptionData: []byte{1, 1},
+			MethodData: []byte{1, 1},
 		}
 		sac.Err <- nil
 		return
@@ -87,7 +87,7 @@ func (p PasswordServerAuthenticationMethod) Authenticate(
 	sac.Result <- ServerAuthenticationResult{
 		Success:    true,
 		Continue:   false,
-		OptionData: []byte{1, 0},
+		MethodData: []byte{1, 0},
 	}
 	sac.Err <- nil
 }

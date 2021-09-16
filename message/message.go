@@ -23,18 +23,31 @@ type Request struct {
 	Options     *OptionSet
 }
 
+func NewRequest() *Request {
+	return &Request{
+		Endpoint: &Socks6Addr{
+			AddressType: AddressTypeIPv4,
+			Address:     []byte{0, 0, 0, 0},
+		},
+		Options: NewOptionSet(),
+	}
+}
 func ParseRequestFrom(b io.Reader) (*Request, error) {
 	r := &Request{}
 	buf := internal.BytesPool64k.Rent()
 	defer internal.BytesPool64k.Return(buf)
 
-	// ver cc opLen2 port2 0 aTyp
-	if _, err := io.ReadFull(b, buf[:8]); err != nil {
+	if _, err := io.ReadFull(b, buf[:1]); err != nil {
 		return nil, err
 	}
 	if buf[0] != 6 {
-		return r, ErrVersion{Version: int(buf[0]), ConsumedBytes: buf[:8]}
+		return r, ErrVersion{Version: int(buf[0]), ConsumedBytes: buf[:1]}
 	}
+	// ver cc opLen2 port2 0 aTyp
+	if _, err := io.ReadFull(b, buf[1:8]); err != nil {
+		return nil, err
+	}
+
 	r.CommandCode = CommandCode(buf[1])
 	optLen := binary.BigEndian.Uint16(buf[2:])
 
@@ -85,6 +98,16 @@ type AuthenticationReply struct {
 	Options *OptionSet
 }
 
+func NewAuthenticationReply() *AuthenticationReply {
+	return &AuthenticationReply{
+		Options: NewOptionSet(),
+	}
+}
+func NewAuthenticationReplyWithType(typ AuthenticationReplyType) *AuthenticationReply {
+	ar := NewAuthenticationReply()
+	ar.Type = typ
+	return ar
+}
 func (a *AuthenticationReply) Marshal() []byte {
 	ops := a.Options.Marshal()
 	b := bytes.Buffer{}
@@ -139,6 +162,20 @@ type OperationReply struct {
 	Options   *OptionSet
 }
 
+func NewOperationReply() *OperationReply {
+	return &OperationReply{
+		Endpoint: &Socks6Addr{
+			AddressType: AddressTypeIPv4,
+			Address:     []byte{0, 0, 0, 0},
+		},
+		Options: NewOptionSet(),
+	}
+}
+func NewOperationReplyWithCode(code ReplyCode) *OperationReply {
+	rep := NewOperationReply()
+	rep.ReplyCode = code
+	return rep
+}
 func (o *OperationReply) Marshal() []byte {
 	ops := o.Options.Marshal()
 	addr := o.Endpoint.MarshalAddress()
