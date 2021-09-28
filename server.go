@@ -42,6 +42,7 @@ func (s *Server) Start(ctx context.Context) {
 		s.startTLS(ctx, encryptedEndpoint)
 		s.startDTLS(ctx, encryptedEndpoint)
 	}
+	go s.worker.ClearUnusedResource(ctx)
 }
 
 func (s *Server) startTCP(ctx context.Context, addr string) {

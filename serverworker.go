@@ -16,6 +16,7 @@ import (
 	"github.com/studentmain/socks6/internal"
 	"github.com/studentmain/socks6/internal/socket"
 	"github.com/studentmain/socks6/message"
+	"golang.org/x/sync/semaphore"
 )
 
 type CommandHandler func(
@@ -33,6 +34,8 @@ type ServerWorker struct {
 
 	CommandHandlers     map[message.CommandCode]CommandHandler
 	VersionErrorHandler func(ctx context.Context, ver message.ErrVersion, conn net.Conn)
+
+	backlogListener sync.Map // map[string]*bl
 }
 
 type ClientInfo struct {
@@ -57,12 +60,15 @@ func NewServerWorker() *ServerWorker {
 	r := &ServerWorker{
 		VersionErrorHandler: ReplyVersionSpecificError,
 		Authenticator:       defaultAuth,
+		backlogListener:     sync.Map{},
 	}
 
 	r.CommandHandlers = map[message.CommandCode]CommandHandler{
 		message.CommandNoop:    r.NoopHandler,
 		message.CommandConnect: r.ConnectHandler,
+		message.CommandBind:    r.BindHandler,
 	}
+
 	return r
 }
 
@@ -191,6 +197,7 @@ func (s *ServerWorker) ServeStream(
 		Name:      auth.ClientName,
 		SessionID: auth.SessionID,
 	}
+	deferClose = false
 	h(ctx, conn, req, info, initData)
 }
 
@@ -210,6 +217,7 @@ func (s *ServerWorker) NoopHandler(
 	info ClientInfo,
 	initData []byte,
 ) {
+	defer conn.Close()
 	conn.Write(
 		setSessionId(
 			message.NewOperationReplyWithCode(message.OperationReplySuccess),
@@ -224,35 +232,27 @@ func (s *ServerWorker) ConnectHandler(
 	info ClientInfo,
 	initData []byte,
 ) {
-	//clientOpt := message.GetStackOptionInfo(req.Options, true)
-	//clientAppliedOpt := socket.SetConnOpt(conn, clientOpt)
-	//remoteOpt := message.GetStackOptionInfo(req.Options, false)
+	defer conn.Close()
+	clientAppliedOpt := message.StackOptionInfo{}
+	remoteOpt := message.GetStackOptionInfo(req.Options, false)
 
 	glog.V(2).Infof("request %s dial to %s", conn.RemoteAddr(), req.Endpoint)
 
 	// todo custom dialer
-	//rconn, remoteAppliedOpt, err := socket.DialWithOption(ctx, *req.Endpoint, remoteOpt)
-	d := net.Dialer{}
-	rconn, err := d.DialContext(ctx, "tcp", req.Endpoint.String())
+	rconn, remoteAppliedOpt, err := socket.DialWithOption(ctx, *req.Endpoint, remoteOpt)
 	code := getReplyCode(err)
 	reply := message.NewOperationReplyWithCode(code)
 	setSessionId(reply, info.SessionID)
-	// mmp......
-	// todo: either rewrite worker, or remove stack options, or write a blocking tcpconn
-	//
-	// https://stackoverflow.com/questions/28967701/golang-tcp-socket-cant-close-after-get-file?rq=1
+
 	if code != message.OperationReplySuccess {
 		conn.Write(reply.Marshal())
-		glog.Info("unsuccess, exit")
-		conn.(*net.TCPConn).CloseRead()
-		conn.Close()
 		return
 	}
 	defer rconn.Close()
 
 	glog.V(2).Infof("request %s remote conn established", conn.RemoteAddr())
-	//appliedOpt := message.GetCombinedStackOptions(clientAppliedOpt, remoteAppliedOpt)
-	//reply.Options.AddMany(appliedOpt)
+	appliedOpt := message.GetCombinedStackOptions(clientAppliedOpt, remoteAppliedOpt)
+	reply.Options.AddMany(appliedOpt)
 
 	if _, err := rconn.Write(initData); err != nil {
 		// it will fail again at relay()
@@ -267,6 +267,107 @@ func (s *ServerWorker) ConnectHandler(
 
 	relay(ctx, conn, rconn, 10*time.Minute)
 	glog.V(2).Infof("request %s relay end", conn.RemoteAddr())
+}
+
+func (s *ServerWorker) BindHandler(
+	ctx context.Context,
+	conn net.Conn,
+	req *message.Request,
+	info ClientInfo,
+	initData []byte,
+) {
+	deferClose := true
+	defer func() {
+		if !deferClose {
+			return
+		}
+		conn.Close()
+	}()
+	ibl, accept := s.backlogListener.Load(req.Endpoint.String())
+	if accept {
+		bl := ibl.(*backlogListener)
+		bl.handler(ctx, conn, req, info, initData)
+		return
+	}
+
+	remoteOpt := message.GetStackOptionInfo(req.Options, false)
+	iBacklog, backlogged := remoteOpt[message.StackOptionTCPBacklog]
+
+	listener, remoteAppliedOpt, err := socket.ListenerWithOption(ctx, *req.Endpoint, remoteOpt)
+	code := getReplyCode(err)
+	reply := message.NewOperationReplyWithCode(code)
+	setSessionId(reply, info.SessionID)
+	if code != message.OperationReplySuccess {
+		conn.Write(reply.Marshal())
+		return
+	}
+
+	defer listener.Close()
+	reply.Endpoint = message.NewAddrMust(listener.Addr().String())
+	appliedOpt := message.GetCombinedStackOptions(message.StackOptionInfo{}, remoteAppliedOpt)
+	reply.Options.AddMany(appliedOpt)
+
+	if _, err := conn.Write(reply.Marshal()); err != nil {
+		glog.Error("can't write reply")
+		return
+	}
+
+	if backlogged {
+		deferClose = false
+		backlog := iBacklog.(uint16)
+		// todo
+		// backlog will simulated on server
+		// https://github.com/golang/go/issues/39000
+		bl := &backlogListener{
+			listener: listener,
+			session:  info.SessionID,
+			conn:     conn,
+
+			sem:   *semaphore.NewWeighted(int64(backlog)),
+			queue: make(chan net.Conn, backlog),
+			alive: true,
+		}
+		blAddr := listener.Addr().String()
+		s.backlogListener.Store(blAddr, bl)
+		go bl.worker(ctx)
+		return
+	}
+	// non backlogged path
+	rconn, err := listener.Accept()
+	code2 := getReplyCode(err)
+	reply2 := message.NewOperationReplyWithCode(code)
+	setSessionId(reply2, info.SessionID)
+	if code2 != message.OperationReplySuccess {
+		conn.Write(reply.Marshal())
+		return
+	}
+	reply2.Endpoint = message.NewAddrMust(rconn.RemoteAddr().String())
+	defer rconn.Close()
+
+	relay(ctx, conn, rconn, 10*time.Minute)
+}
+
+func (s *ServerWorker) ClearUnusedResource(ctx context.Context) {
+	stop := false
+
+	go func() {
+		<-ctx.Done()
+		stop = true
+	}()
+	tick := time.NewTicker(1 * time.Minute)
+
+	for !stop {
+		<-tick.C
+
+		s.backlogListener.Range(func(key, value interface{}) bool {
+			bl := value.(*backlogListener)
+			if !bl.alive {
+				s.backlogListener.Delete(key)
+			}
+			return true
+		})
+
+	}
 }
 
 // setSessionId append session id option to operation reply when id is not null
