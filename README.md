@@ -21,7 +21,7 @@ wtf: want to do, but has technical problem
 - Commands (#7)
     - NOOP (#7, server done, client how)
     - CONNECT (#7.1, done)
-    - BIND (#7.2, todo)
+    - BIND (#7.2, server done, client todo)
     - UDP ASSOCIATE (#7.3, todo)
         - Over TCP
         - Over UDP/DTLS
@@ -36,7 +36,7 @@ wtf: want to do, but has technical problem
         - No fragmentation (#8.1.4, wtf)
         - TFO (#8.1.5, wtf)
         - Multipath (#8.1.6, wtf)
-        - Listen backlog (#8.1.7, todo)
+        - Listen backlog (#8.1.7, server done, client how)
         - Port parity (#8.1.9, how)
     - Session (#8.4, todo)
     - Idempotence (#8.5, todo)

@@ -102,7 +102,6 @@ func (s *ServerWorker) ServeStream(
 		}
 		conn.Close()
 	}()
-	defer conn.Close()
 	req, err := message.ParseRequestFrom(conn)
 	if err != nil {
 		// not socks6
@@ -281,6 +280,7 @@ func (s *ServerWorker) BindHandler(
 		if !deferClose {
 			return
 		}
+		glog.V(2).Info("client conn defer close")
 		conn.Close()
 	}()
 	ibl, accept := s.backlogListener.Load(req.Endpoint.String())
@@ -302,7 +302,6 @@ func (s *ServerWorker) BindHandler(
 		return
 	}
 
-	defer listener.Close()
 	reply.Endpoint = message.NewAddrMust(listener.Addr().String())
 	appliedOpt := message.GetCombinedStackOptions(message.StackOptionInfo{}, remoteAppliedOpt)
 	reply.Options.AddMany(appliedOpt)
@@ -333,15 +332,22 @@ func (s *ServerWorker) BindHandler(
 		return
 	}
 	// non backlogged path
+	defer listener.Close()
+	go func() {
+		<-time.After(60 * time.Second)
+		listener.Close()
+	}()
+
 	rconn, err := listener.Accept()
 	code2 := getReplyCode(err)
 	reply2 := message.NewOperationReplyWithCode(code)
 	setSessionId(reply2, info.SessionID)
 	if code2 != message.OperationReplySuccess {
-		conn.Write(reply.Marshal())
+		conn.Write(reply2.Marshal())
 		return
 	}
 	reply2.Endpoint = message.NewAddrMust(rconn.RemoteAddr().String())
+	conn.Write(reply2.Marshal())
 	defer rconn.Close()
 
 	relay(ctx, conn, rconn, 10*time.Minute)

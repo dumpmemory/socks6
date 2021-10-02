@@ -35,9 +35,9 @@ func (b *backlogListener) handler(
 	c := <-b.queue
 	rep := message.NewOperationReplyWithCode(message.OperationReplySuccess)
 	rep.Endpoint = message.NewAddrMust(b.listener.Addr().String())
-	b.conn.Write(rep.Marshal())
+	conn.Write(rep.Marshal())
 	rep.Endpoint = message.NewAddrMust(c.RemoteAddr().String())
-	b.conn.Write(rep.Marshal())
+	conn.Write(rep.Marshal())
 
 	relay(ctx, conn, c, 10*time.Minute)
 }

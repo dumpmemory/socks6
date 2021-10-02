@@ -171,7 +171,7 @@ func (c *Client) makeDGramConn() (net.Conn, error) {
 	return nc, nil
 }
 
-func (c *Client) bind(conn net.Conn, is_backlogged_subconn bool) error {
+func (c *Client) bind(conn net.Conn, isAccept bool) error {
 	//todo
 	return nil
 }

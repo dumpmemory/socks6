@@ -32,7 +32,7 @@ func TestRequest(t *testing.T) {
 		{
 			in:     []byte{5, 1, 0, 1, 127, 0, 0, 1, 0, 0},
 			expect: nil,
-			e:      message.ErrVersion{Version: 5, ConsumedBytes: []byte{5, 1, 0, 1, 127, 0, 0, 1}},
+			e:      message.ErrVersion{Version: 5, ConsumedBytes: []byte{5}},
 		},
 		{
 			in: []byte{

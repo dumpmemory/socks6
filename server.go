@@ -58,7 +58,7 @@ func (s *Server) startTCP(ctx context.Context, addr string) {
 				glog.Warning("stop TCP server")
 				return
 			}
-			s.worker.ServeStream(ctx, conn)
+			go s.worker.ServeStream(ctx, conn)
 		}
 	}()
 }
@@ -77,7 +77,7 @@ func (s *Server) startTLS(ctx context.Context, addr string) {
 				glog.Warning("stop TLS server")
 				return
 			}
-			s.worker.ServeStream(ctx, conn)
+			go s.worker.ServeStream(ctx, conn)
 		}
 	}()
 }
@@ -95,7 +95,7 @@ func (s *Server) startUDP(ctx context.Context, addr string) {
 				glog.Error(err)
 			}
 
-			s.worker.ServeDatagram(
+			go s.worker.ServeDatagram(
 				ctx,
 				rAddr,
 				buf[:nRead],
@@ -133,7 +133,7 @@ func (s *Server) startDTLS(ctx context.Context, addr string) {
 						glog.Warningf("DTLS conn %s read error %s", conn.RemoteAddr(), err)
 						return
 					}
-					s.worker.ServeDatagram(
+					go s.worker.ServeDatagram(
 						ctx,
 						conn.RemoteAddr(),
 						buf[:nRead],
