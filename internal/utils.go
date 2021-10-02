@@ -1,9 +1,11 @@
 package internal
 
 import (
+	"io"
 	"sort"
 
 	"github.com/golang/glog"
+	"github.com/stretchr/testify/assert"
 )
 
 func ByteArrayEqual(a, b []byte) bool {
@@ -18,6 +20,7 @@ func ByteArrayEqual(a, b []byte) bool {
 	return true
 }
 
+// Dup create a duplicate of input byte array
 func Dup(i []byte) []byte {
 	o := make([]byte, len(i))
 	copy(o, i)
@@ -28,6 +31,7 @@ func PaddedLen(l int, align int) int {
 	return (l + align - 1) / align * align
 }
 
+// SortByte ascending sort a byte array in position
 func SortByte(b []byte) {
 	sort.Slice(b, func(i, j int) bool { return b[i] < b[j] })
 }
@@ -37,4 +41,11 @@ func Must2(v interface{}, e error) interface{} {
 		glog.Fatal(e)
 	}
 	return v
+}
+
+func AssertRead(t assert.TestingT, r io.Reader, b []byte) {
+	b2 := Dup(b)
+	_, err := io.ReadFull(r, b2)
+	assert.Nil(t, err)
+	assert.Equal(t, b, b2)
 }

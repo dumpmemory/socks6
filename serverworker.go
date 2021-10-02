@@ -16,7 +16,6 @@ import (
 	"github.com/studentmain/socks6/internal"
 	"github.com/studentmain/socks6/internal/socket"
 	"github.com/studentmain/socks6/message"
-	"golang.org/x/sync/semaphore"
 )
 
 type CommandHandler func(
@@ -91,6 +90,7 @@ func ReplyVersionSpecificError(ctx context.Context, ver message.ErrVersion, conn
 }
 
 // ServeStream process incoming TCP and TLS connection
+// return when connection process complete, e.g. remote closed connection
 func (s *ServerWorker) ServeStream(
 	ctx context.Context,
 	conn net.Conn,
@@ -283,6 +283,8 @@ func (s *ServerWorker) BindHandler(
 		glog.V(2).Info("client conn defer close")
 		conn.Close()
 	}()
+
+	// find backlogged listener
 	ibl, accept := s.backlogListener.Load(req.Endpoint.String())
 	if accept {
 		bl := ibl.(*backlogListener)
@@ -302,6 +304,17 @@ func (s *ServerWorker) BindHandler(
 		return
 	}
 
+	if backlogged {
+		remoteAppliedOpt.Add(message.BaseStackOptionData{
+			RemoteLeg: true,
+			Level:     message.StackOptionLevelTCP,
+			Code:      message.StackOptionCodeBacklog,
+			Data: &message.BacklogOptionData{
+				Backlog: iBacklog.(uint16),
+			},
+		})
+	}
+
 	reply.Endpoint = message.NewAddrMust(listener.Addr().String())
 	appliedOpt := message.GetCombinedStackOptions(message.StackOptionInfo{}, remoteAppliedOpt)
 	reply.Options.AddMany(appliedOpt)
@@ -314,18 +327,10 @@ func (s *ServerWorker) BindHandler(
 	if backlogged {
 		deferClose = false
 		backlog := iBacklog.(uint16)
-		// todo
-		// backlog will simulated on server
+		// backlog will only simulated on server
 		// https://github.com/golang/go/issues/39000
-		bl := &backlogListener{
-			listener: listener,
-			session:  info.SessionID,
-			conn:     conn,
+		bl := newBacklogListener(listener, info.SessionID, conn, backlog)
 
-			sem:   *semaphore.NewWeighted(int64(backlog)),
-			queue: make(chan net.Conn, backlog),
-			alive: true,
-		}
 		blAddr := listener.Addr().String()
 		s.backlogListener.Store(blAddr, bl)
 		go bl.worker(ctx)
