@@ -4,10 +4,10 @@ import (
 	"bytes"
 	"encoding/binary"
 	"io"
-	"log"
 	"math"
 
 	"github.com/studentmain/socks6/internal"
+	"github.com/studentmain/socks6/internal/lg"
 )
 
 type OptionKind uint16
@@ -112,7 +112,7 @@ func (o *Option) Marshal() []byte {
 	data := o.Data.Marshal()
 	l := len(data) + 4
 	if l > math.MaxUint16 {
-		log.Panic("too much option data")
+		lg.Panic("too much option data")
 	}
 	o.Length = uint16(l)
 	buf := &bytes.Buffer{}
@@ -130,7 +130,7 @@ type OptionData interface {
 
 func overflowCheck(n int) uint16 {
 	if n > math.MaxUint16 {
-		log.Panic("too much option data bytes")
+		lg.Panic("too much option data bytes")
 	}
 	return uint16(n)
 }

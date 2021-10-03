@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"net"
 
-	"github.com/golang/glog"
 	"github.com/pion/dtls/v2"
 	"github.com/studentmain/socks6/internal"
+	"github.com/studentmain/socks6/internal/lg"
 )
 
 type Server struct {
@@ -48,14 +48,14 @@ func (s *Server) Start(ctx context.Context) {
 func (s *Server) startTCP(ctx context.Context, addr string) {
 	addr2 := internal.Must2(net.ResolveTCPAddr("tcp", addr)).(*net.TCPAddr)
 	s.tcp = internal.Must2(net.ListenTCP("tcp", addr2)).(*net.TCPListener)
-	glog.Infof("start TCP server at %s", s.tcp.Addr())
+	lg.Infof("start TCP server at %s", s.tcp.Addr())
 
 	go func() {
 		for {
 			conn, err := s.tcp.Accept()
 			if err != nil {
-				glog.Error(err)
-				glog.Warning("stop TCP server")
+				lg.Error(err)
+				lg.Warning("stop TCP server")
 				return
 			}
 			go s.worker.ServeStream(ctx, conn)
@@ -67,14 +67,14 @@ func (s *Server) startTLS(ctx context.Context, addr string) {
 	s.tls = internal.Must2(tls.Listen("tcp", addr, &tls.Config{
 		Certificates: []tls.Certificate{s.Cert},
 	})).(net.Listener)
-	glog.Infof("start TLS server at %s", s.tls.Addr())
+	lg.Infof("start TLS server at %s", s.tls.Addr())
 
 	go func() {
 		for {
 			conn, err := s.tls.Accept()
 			if err != nil {
-				glog.Error(err)
-				glog.Warning("stop TLS server")
+				lg.Error(err)
+				lg.Warning("stop TLS server")
 				return
 			}
 			go s.worker.ServeStream(ctx, conn)
@@ -85,14 +85,14 @@ func (s *Server) startTLS(ctx context.Context, addr string) {
 func (s *Server) startUDP(ctx context.Context, addr string) {
 	addr2 := internal.Must2(net.ResolveUDPAddr("udp", addr)).(*net.UDPAddr)
 	s.udp = internal.Must2(net.ListenUDP("udp", addr2)).(*net.UDPConn)
-	glog.Infof("start UDP server at %s", s.udp.LocalAddr())
+	lg.Infof("start UDP server at %s", s.udp.LocalAddr())
 
 	go func() {
 		buf := make([]byte, 4096)
 		for {
 			nRead, rAddr, err := s.udp.ReadFrom(buf)
 			if err != nil {
-				glog.Error(err)
+				lg.Error(err)
 			}
 
 			go s.worker.ServeDatagram(
@@ -113,14 +113,14 @@ func (s *Server) startDTLS(ctx context.Context, addr string) {
 	s.dtls = internal.Must2(dtls.Listen("udp", addr2, &dtls.Config{
 		Certificates: []tls.Certificate{s.Cert},
 	})).(net.Listener)
-	glog.Infof("start DTLS server at %s", s.dtls.Addr())
+	lg.Infof("start DTLS server at %s", s.dtls.Addr())
 
 	go func() {
 		for {
 			conn, err := s.dtls.Accept()
 			if err != nil {
-				glog.Error(err)
-				glog.Warning("stop DTLS server")
+				lg.Error(err)
+				lg.Warning("stop DTLS server")
 				return
 			}
 			go func() {
@@ -130,7 +130,7 @@ func (s *Server) startDTLS(ctx context.Context, addr string) {
 				for {
 					nRead, err := conn.Read(buf)
 					if err != nil {
-						glog.Warningf("DTLS conn %s read error %s", conn.RemoteAddr(), err)
+						lg.Warningf("DTLS conn %s read error %s", conn.RemoteAddr(), err)
 						return
 					}
 					go s.worker.ServeDatagram(

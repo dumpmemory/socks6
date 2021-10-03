@@ -3,11 +3,10 @@ package main
 import (
 	"context"
 	"crypto/tls"
-	"flag"
-	"log"
 	"time"
 
 	"github.com/studentmain/socks6"
+	"github.com/studentmain/socks6/internal/lg"
 )
 
 const (
@@ -63,8 +62,7 @@ fQIXRNDBdXLIdOAl2+PZ
 )
 
 func main() {
-	flag.Parse()
-	log.SetFlags(log.LstdFlags | log.Lshortfile | log.Lmicroseconds)
+	lg.MinimalLevel = lg.LvDebug
 	kp, _ := tls.X509KeyPair([]byte(debugPem), []byte(debugKey))
 	s := socks6.Server{
 		CleartextPort: 10888,

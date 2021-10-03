@@ -4,13 +4,13 @@ import (
 	"bytes"
 	"crypto/tls"
 	"errors"
-	"log"
 	"net"
 	"strconv"
 	"sync"
 	"time"
 
 	"github.com/pion/dtls/v2"
+	"github.com/studentmain/socks6/internal/lg"
 	"github.com/studentmain/socks6/message"
 )
 
@@ -117,7 +117,7 @@ func (c *Client) ListenUDP(network string, addr string) (net.PacketConn, error) 
 func (c *Client) makeStreamConn() (net.Conn, error) {
 	var nc net.Conn
 	if c.EncryptedPort != 0 {
-		log.Print("connect via tls")
+		lg.Debug("connect via tls")
 		addr := net.JoinHostPort(c.ProxyHost, strconv.FormatInt(int64(c.EncryptedPort), 10))
 		conn, err := c.Dialer.Dial("tcp", addr)
 		if err != nil {
@@ -131,7 +131,7 @@ func (c *Client) makeStreamConn() (net.Conn, error) {
 		}
 		nc = pc
 	} else {
-		log.Print("connect via tcp")
+		lg.Debug("connect via tcp")
 		addr := net.JoinHostPort(c.ProxyHost, strconv.FormatInt(int64(c.CleartextPort), 10))
 		pc, err := c.Dialer.Dial("tcp", addr)
 		if err != nil {
@@ -146,7 +146,7 @@ func (c *Client) makeStreamConn() (net.Conn, error) {
 func (c *Client) makeDGramConn() (net.Conn, error) {
 	var nc net.Conn
 	if c.EncryptedPort != 0 {
-		log.Print("connect via dtls")
+		lg.Debug("connect via dtls")
 		addr := net.JoinHostPort(c.ProxyHost, strconv.FormatInt(int64(c.EncryptedPort), 10))
 		conn, err := c.Dialer.Dial("udp", addr)
 		if err != nil {
@@ -160,7 +160,7 @@ func (c *Client) makeDGramConn() (net.Conn, error) {
 		}
 		nc = pc
 	} else {
-		log.Print("connect via udp")
+		lg.Debug("connect via udp")
 		addr := net.JoinHostPort(c.ProxyHost, strconv.FormatInt(int64(c.CleartextPort), 10))
 		pc, err := c.Dialer.Dial("udp", addr)
 		if err != nil {

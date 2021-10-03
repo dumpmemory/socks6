@@ -3,7 +3,6 @@ module github.com/studentmain/socks6
 go 1.17
 
 require (
-	github.com/golang/glog v1.0.0
 	github.com/pion/dtls/v2 v2.0.9
 	github.com/stretchr/testify v1.7.0
 	golang.org/x/net v0.0.0-20210929193557-e81a3d93ecf6

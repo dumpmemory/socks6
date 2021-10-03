@@ -4,8 +4,8 @@ import (
 	"io"
 	"sort"
 
-	"github.com/golang/glog"
 	"github.com/stretchr/testify/assert"
+	"github.com/studentmain/socks6/internal/lg"
 )
 
 func ByteArrayEqual(a, b []byte) bool {
@@ -38,7 +38,7 @@ func SortByte(b []byte) {
 
 func Must2(v interface{}, e error) interface{} {
 	if e != nil {
-		glog.Fatal(e)
+		lg.Fatal(e)
 	}
 	return v
 }

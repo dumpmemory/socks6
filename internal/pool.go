@@ -1,6 +1,6 @@
 package internal
 
-import "github.com/golang/glog"
+import "github.com/studentmain/socks6/internal/lg"
 
 // BytesPool is a fixed size byte array pool
 // byte array is fized size, but byte array count is increased automatically
@@ -34,7 +34,7 @@ func (p *BytesPool) Return(b []byte) {
 	capacity := cap(p.ch)
 
 	if len(p.ch) == capacity {
-		glog.Warning("returned more than rented")
+		lg.Warning("returned more than rented")
 		ch2 := make(chan []byte, capacity*2)
 		for i := 0; i < capacity; i++ {
 			ch2 <- <-p.ch

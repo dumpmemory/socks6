@@ -11,9 +11,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/golang/glog"
 	"github.com/studentmain/socks6/auth"
 	"github.com/studentmain/socks6/internal"
+	"github.com/studentmain/socks6/internal/lg"
 	"github.com/studentmain/socks6/internal/socket"
 	"github.com/studentmain/socks6/message"
 )
@@ -115,18 +115,18 @@ func (s *ServerWorker) ServeStream(
 			conn.Write(message.NewOperationReplyWithCode(message.OperationReplyAddressNotSupported).Marshal())
 			return
 		} else {
-			glog.Warning("can't parse request", err)
+			lg.Warning("can't parse request", err)
 			return
 		}
 	}
-	glog.V(2).Infof("request from %s, %+v", conn.RemoteAddr(), req)
+	lg.Tracef("request from %s, %+v", conn.RemoteAddr(), req)
 
 	var initData []byte
 	if am, ok := req.Options.GetData(message.OptionKindAuthenticationMethodAdvertisement); ok {
 		initDataLen := int(am.(message.AuthenticationMethodAdvertisementOptionData).InitialDataLength)
 		initData = make([]byte, initDataLen)
 		if _, err = io.ReadFull(conn, initData); err != nil {
-			glog.Error("can't read initdata", err)
+			lg.Error("can't read initdata", err)
 			return
 		}
 	}
@@ -136,26 +136,26 @@ func (s *ServerWorker) ServeStream(
 	if result1.Success {
 		auth = *result1
 		reply := setAuthMethodInfo(message.NewAuthenticationReplyWithType(message.AuthenticationReplySuccess), *result1)
-		glog.V(2).Infof("request %s authenticate %+v , %+v", conn.RemoteAddr(), auth, reply)
+		lg.Tracef("request %s authenticate %+v , %+v", conn.RemoteAddr(), auth, reply)
 		if _, err = conn.Write(reply.Marshal()); err != nil {
-			glog.Error("can't write reply", err)
+			lg.Error("can't write reply", err)
 			return
 		}
 	} else if !result1.Continue {
 		reply := message.NewAuthenticationReplyWithType(message.AuthenticationReplyFail)
 		if _, err = conn.Write(reply.Marshal()); err != nil {
-			glog.Error("can't write reply", err)
+			lg.Error("can't write reply", err)
 			return
 		}
 	} else {
 		reply1 := setAuthMethodInfo(message.NewAuthenticationReplyWithType(message.AuthenticationReplyFail), *result1)
 		if _, err = conn.Write(reply1.Marshal()); err != nil {
-			glog.Error("can't write reply1", err)
+			lg.Error("can't write reply1", err)
 			return
 		}
 		result2, err := s.Authenticator.ContinueAuthenticate(sac)
 		if err != nil {
-			glog.Error("auth stage2 error", err)
+			lg.Error("auth stage2 error", err)
 			conn.Write(message.NewAuthenticationReplyWithType(message.AuthenticationReplyFail).Marshal())
 			return
 		}
@@ -166,9 +166,9 @@ func (s *ServerWorker) ServeStream(
 		} else {
 			reply.Type = message.AuthenticationReplyFail
 		}
-		glog.V(2).Infof("request %s authenticate interactive %+v , %+v", conn.RemoteAddr(), auth, reply)
+		lg.Tracef("request %s authenticate interactive %+v , %+v", conn.RemoteAddr(), auth, reply)
 		if _, err = conn.Write(reply.Marshal()); err != nil {
-			glog.Error("can't write reply2", err)
+			lg.Error("can't write reply2", err)
 			return
 		}
 	}
@@ -176,11 +176,11 @@ func (s *ServerWorker) ServeStream(
 	if !auth.Success {
 		return
 	}
-	glog.V(2).Infof("request %s authenticate success", conn.RemoteAddr())
+	lg.Tracef("request %s authenticate success", conn.RemoteAddr())
 
 	if s.Rule != nil {
 		if !s.Rule(req.CommandCode, req.Endpoint, conn.RemoteAddr(), auth.ClientName) {
-			glog.V(2).Infof("request %s not allowed by rule", conn.RemoteAddr())
+			lg.Tracef("request %s not allowed by rule", conn.RemoteAddr())
 			conn.Write(message.NewOperationReplyWithCode(message.OperationReplyNotAllowedByRule).Marshal())
 			return
 		}
@@ -191,7 +191,7 @@ func (s *ServerWorker) ServeStream(
 		conn.Write(message.NewOperationReplyWithCode(message.OperationReplyCommandNotSupported).Marshal())
 		return
 	}
-	glog.V(2).Infof("request %s start command specific process", conn.RemoteAddr())
+	lg.Tracef("request %s start command specific process", conn.RemoteAddr())
 	info := ClientInfo{
 		Name:      auth.ClientName,
 		SessionID: auth.SessionID,
@@ -235,7 +235,7 @@ func (s *ServerWorker) ConnectHandler(
 	clientAppliedOpt := message.StackOptionInfo{}
 	remoteOpt := message.GetStackOptionInfo(req.Options, false)
 
-	glog.V(2).Infof("request %s dial to %s", conn.RemoteAddr(), req.Endpoint)
+	lg.Tracef("request %s dial to %s", conn.RemoteAddr(), req.Endpoint)
 
 	// todo custom dialer
 	rconn, remoteAppliedOpt, err := socket.DialWithOption(ctx, *req.Endpoint, remoteOpt)
@@ -249,23 +249,23 @@ func (s *ServerWorker) ConnectHandler(
 	}
 	defer rconn.Close()
 
-	glog.V(2).Infof("request %s remote conn established", conn.RemoteAddr())
+	lg.Tracef("request %s remote conn established", conn.RemoteAddr())
 	appliedOpt := message.GetCombinedStackOptions(clientAppliedOpt, remoteAppliedOpt)
 	reply.Options.AddMany(appliedOpt)
 
 	if _, err := rconn.Write(initData); err != nil {
 		// it will fail again at relay()
-		glog.Error("can't write initdata to remote connection")
+		lg.Error("can't write initdata to remote connection")
 	}
 	reply.Endpoint = message.NewAddrMust(rconn.LocalAddr().String())
 
 	// it will fail again at relay() too
 	if _, err := conn.Write(reply.Marshal()); err != nil {
-		glog.Error("can't write reply")
+		lg.Error("can't write reply")
 	}
 
 	relay(ctx, conn, rconn, 10*time.Minute)
-	glog.V(2).Infof("request %s relay end", conn.RemoteAddr())
+	lg.Tracef("request %s relay end", conn.RemoteAddr())
 }
 
 func (s *ServerWorker) BindHandler(
@@ -280,7 +280,7 @@ func (s *ServerWorker) BindHandler(
 		if !deferClose {
 			return
 		}
-		glog.V(2).Info("client conn defer close")
+		lg.Debug("client conn defer close")
 		conn.Close()
 	}()
 
@@ -320,7 +320,7 @@ func (s *ServerWorker) BindHandler(
 	reply.Options.AddMany(appliedOpt)
 
 	if _, err := conn.Write(reply.Marshal()); err != nil {
-		glog.Error("can't write reply")
+		lg.Error("can't write reply")
 		return
 	}
 
@@ -402,7 +402,7 @@ func getReplyCode(err error) message.ReplyCode {
 	}
 	netErr, ok := err.(net.Error)
 	if !ok {
-		glog.Warning(err)
+		lg.Warning(err)
 		return message.OperationReplyServerFailure
 	}
 	if netErr.Timeout() {
@@ -441,7 +441,7 @@ func relay(ctx context.Context, c1, c2 net.Conn, timeout time.Duration) error {
 	wg.Add(2)
 	var err error = nil
 	id := fmt.Sprintf("%s--%s <=> %s--%s", c1.LocalAddr(), c1.RemoteAddr(), c2.LocalAddr(), c2.RemoteAddr())
-	glog.V(2).Infof("relay %s start", id)
+	lg.Tracef("relay %s start", id)
 	go func() {
 		defer wg.Done()
 		e := relayOneDirection(ctx, c1, c2, timeout)
@@ -462,7 +462,7 @@ func relay(ctx context.Context, c1, c2 net.Conn, timeout time.Duration) error {
 	}()
 	wg.Wait()
 
-	glog.V(2).Infof("relay %s done %s", id, err)
+	lg.Tracef("relay %s done %s", id, err)
 	if err == io.EOF {
 		return nil
 	}
@@ -475,13 +475,13 @@ func relayOneDirection(ctx context.Context, c1, c2 net.Conn, timeout time.Durati
 	defer internal.BytesPool4k.Return(buf)
 
 	id := fmt.Sprintf("%s--%s ==> %s--%s", c1.LocalAddr(), c1.RemoteAddr(), c2.LocalAddr(), c2.RemoteAddr())
-	glog.V(2).Infof("relay %s start", id)
+	lg.Tracef("relay %s start", id)
 	go func() {
 		<-ctx.Done()
 		done = ctx.Err()
-		glog.V(2).Infof("relay %s ctx done", id)
+		lg.Tracef("relay %s ctx done", id)
 	}()
-	defer glog.V(2).Infof("relay %s exit", id)
+	defer lg.Tracef("relay %s exit", id)
 	// copy pasted from io.Copy with some modify
 	for {
 		c1.SetReadDeadline(time.Now().Add(timeout))
@@ -498,7 +498,7 @@ func relayOneDirection(ctx context.Context, c1, c2 net.Conn, timeout time.Durati
 			}
 
 			if eWrite != nil {
-				glog.V(2).Infof("relay %s write error %s", id, eWrite)
+				lg.Tracef("relay %s write error %s", id, eWrite)
 				return eWrite
 			}
 			if nRead != nWrite {
@@ -506,7 +506,7 @@ func relayOneDirection(ctx context.Context, c1, c2 net.Conn, timeout time.Durati
 			}
 		}
 		if eRead != nil {
-			glog.V(2).Infof("relay %s read error %s", id, eRead)
+			lg.Tracef("relay %s read error %s", id, eRead)
 			return eRead
 		}
 	}

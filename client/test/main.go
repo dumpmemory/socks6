@@ -1,9 +1,8 @@
 package main
 
 import (
-	"log"
-
 	"github.com/studentmain/socks6/client"
+	"github.com/studentmain/socks6/internal/lg"
 )
 
 func main() {
@@ -14,10 +13,10 @@ func main() {
 	}
 	conn, err := c.Dial("tcp", "127.0.0.1:32768")
 	if err != nil {
-		log.Fatal(err)
+		lg.Fatal(err)
 	}
 	_, err = conn.Write([]byte{1, 2, 3, 4, 5, 6})
 	if err != nil {
-		log.Fatal(err)
+		lg.Fatal(err)
 	}
 }

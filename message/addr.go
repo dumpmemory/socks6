@@ -6,8 +6,8 @@ import (
 	"net"
 	"strconv"
 
-	"github.com/golang/glog"
 	"github.com/studentmain/socks6/internal"
+	"github.com/studentmain/socks6/internal/lg"
 	"golang.org/x/net/idna"
 )
 
@@ -30,7 +30,7 @@ type Socks6Addr struct {
 func NewAddrMust(addr string) *Socks6Addr {
 	r, err := NewAddr(addr)
 	if err != nil {
-		glog.Error(err)
+		lg.Error(err)
 		panic(err)
 	}
 	return r
@@ -142,7 +142,7 @@ func (s *Socks6Addr) AddrLen() int {
 	case AddressTypeDomainName:
 		return len(s.Address) + 1
 	default:
-		glog.Error("address type not set")
+		lg.Error("address type not set")
 		return 0
 	}
 }
