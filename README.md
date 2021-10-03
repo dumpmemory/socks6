@@ -43,6 +43,10 @@ wtf: want to do, but has technical problem
 - Authentication methods
     - Username password (#9, server done, client todo)
 
+Many stack options require `setsockopt()`, which will (indirectly) cause the connetion can't closed by `net.Conn.Close()`.
+Some even needs break TCP model.
+A fd based new network stack is needed in order to support them.
+
 ## Reference
 
 - [SOCKS 6 draft GitHub repo](https://github.com/45G/socks6-draft)

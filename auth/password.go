@@ -9,7 +9,9 @@ import (
 	"github.com/studentmain/socks6/message"
 )
 
+// PasswordServerAuthenticationMethod is IANA method 2, check for plaintext user name and password
 type PasswordServerAuthenticationMethod struct {
+	// Passwords is client password table, key is user name
 	Passwords map[string]string
 }
 
@@ -57,33 +59,28 @@ func (p PasswordServerAuthenticationMethod) Authenticate(
 	sac *ServerAuthenticationChannels,
 ) {
 	ad, err := ParsePasswordAuthenticationData(data)
+	failResult := ServerAuthenticationResult{
+		Success:  false,
+		Continue: false,
+	}
 	if err != nil {
-		sac.Result <- ServerAuthenticationResult{
-			Success:  false,
-			Continue: false,
-		}
+		sac.Result <- failResult
 		sac.Err <- err
 		return
 	}
 	expect, ok := p.Passwords[string(ad.Username)]
+	failResult.MethodData = []byte{1, 1}
 	if !ok {
-		sac.Result <- ServerAuthenticationResult{
-			Success:    false,
-			Continue:   false,
-			MethodData: []byte{1, 1},
-		}
+		sac.Result <- failResult
 		sac.Err <- nil
 		return
 	}
 	if expect != string(ad.Password) {
-		sac.Result <- ServerAuthenticationResult{
-			Success:    false,
-			Continue:   false,
-			MethodData: []byte{1, 1},
-		}
+		sac.Result <- failResult
 		sac.Err <- nil
 		return
 	}
+
 	sac.Result <- ServerAuthenticationResult{
 		Success:    true,
 		Continue:   false,

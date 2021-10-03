@@ -23,7 +23,7 @@ func TestRequest(t *testing.T) {
 				127, 0, 0, 1,
 			}, expect: &message.Request{
 				CommandCode: 1,
-				Endpoint:    message.NewAddrMust("127.0.0.1:1"),
+				Endpoint:    message.ParseAddr("127.0.0.1:1"),
 				Options:     message.NewOptionSet(),
 			}, e: nil,
 		},
@@ -42,7 +42,7 @@ func TestRequest(t *testing.T) {
 				1, 0, 0, 4,
 			}, expect: &message.Request{
 				CommandCode: 1,
-				Endpoint:    message.NewAddrMust("127.0.0.1:1"),
+				Endpoint:    message.ParseAddr("127.0.0.1:1"),
 				Options:     internal.Must2(message.ParseOptionSetFrom(bytes.NewReader([]byte{1, 0, 0, 4}), 4)).(*message.OptionSet),
 			}, e: nil,
 		}, {

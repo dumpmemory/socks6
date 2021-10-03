@@ -3,7 +3,6 @@ package socks6
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"net"
 	"os"
@@ -31,7 +30,9 @@ type ServerWorker struct {
 	Authenticator auth.ServerAuthenticator
 	Rule          func(op message.CommandCode, dst, src net.Addr, cid string) bool
 
-	CommandHandlers     map[message.CommandCode]CommandHandler
+	CommandHandlers map[message.CommandCode]CommandHandler
+	// VersionErrorHandler will handle non-SOCKS6 protocol request.
+	// VersionErrorHandler should close connection by itself
 	VersionErrorHandler func(ctx context.Context, ver message.ErrVersion, conn net.Conn)
 
 	backlogListener sync.Map // map[string]*bl
@@ -95,67 +96,74 @@ func (s *ServerWorker) ServeStream(
 	ctx context.Context,
 	conn net.Conn,
 ) {
-	deferClose := true
-	defer func() {
-		if !deferClose {
-			return
-		}
+	closeConn := internal.NewCancellableDefer(func() {
 		conn.Close()
-	}()
+	})
+	defer closeConn.Defer()
+
+	ccid := conn3Tuple(conn)
+
 	req, err := message.ParseRequestFrom(conn)
 	if err != nil {
 		// not socks6
 		if errors.Is(err, message.ErrVersion{}) {
-			deferClose = false
+			closeConn.Cancel()
 			s.VersionErrorHandler(ctx, err.(message.ErrVersion), conn)
 			return
 		}
+		// detect and reply addr not support early, as auth can't continue
 		if errors.Is(err, message.ErrAddressTypeNotSupport) {
 			conn.Write(message.NewAuthenticationReplyWithType(message.AuthenticationReplyFail).Marshal())
 			conn.Write(message.NewOperationReplyWithCode(message.OperationReplyAddressNotSupported).Marshal())
 			return
 		} else {
-			lg.Warning("can't parse request", err)
+			lg.Warningf("can't parse request from %s, %+v", ccid, err)
 			return
 		}
 	}
-	lg.Tracef("request from %s, %+v", conn.RemoteAddr(), req)
+	lg.Tracef("request from %s, %+v", ccid, req)
 
 	var initData []byte
 	if am, ok := req.Options.GetData(message.OptionKindAuthenticationMethodAdvertisement); ok {
 		initDataLen := int(am.(message.AuthenticationMethodAdvertisementOptionData).InitialDataLength)
 		initData = make([]byte, initDataLen)
 		if _, err = io.ReadFull(conn, initData); err != nil {
-			lg.Error("can't read initdata", err)
+			lg.Warningf("%s can't read %d bytes initdata: %s", ccid, initDataLen, err)
 			return
 		}
 	}
 
 	result1, sac := s.Authenticator.Authenticate(ctx, conn, *req)
-	var auth auth.ServerAuthenticationResult
+	// final auth result
+	auth := *result1
 	if result1.Success {
+		// one stage auth, success
 		auth = *result1
 		reply := setAuthMethodInfo(message.NewAuthenticationReplyWithType(message.AuthenticationReplySuccess), *result1)
-		lg.Tracef("request %s authenticate %+v , %+v", conn.RemoteAddr(), auth, reply)
+		lg.Debugf("%s authenticate %+v , %+v", ccid, auth, reply)
 		if _, err = conn.Write(reply.Marshal()); err != nil {
-			lg.Error("can't write reply", err)
+			lg.Warning(ccid, "can't write auth reply", err)
 			return
 		}
 	} else if !result1.Continue {
 		reply := message.NewAuthenticationReplyWithType(message.AuthenticationReplyFail)
 		if _, err = conn.Write(reply.Marshal()); err != nil {
-			lg.Error("can't write reply", err)
+			lg.Warning(ccid, "can't write reply", err)
 			return
 		}
 	} else {
+		// two stage auth
 		reply1 := setAuthMethodInfo(message.NewAuthenticationReplyWithType(message.AuthenticationReplyFail), *result1)
 		if _, err = conn.Write(reply1.Marshal()); err != nil {
-			lg.Error("can't write reply1", err)
+			lg.Warning(ccid, "can't write auth reply 1", err)
 			return
 		}
+		// run stage 2
+		lg.Debug(ccid, "auth stage 2")
+
 		result2, err := s.Authenticator.ContinueAuthenticate(sac)
 		if err != nil {
-			lg.Error("auth stage2 error", err)
+			lg.Warning(ccid, "auth stage 2 error", err)
 			conn.Write(message.NewAuthenticationReplyWithType(message.AuthenticationReplyFail).Marshal())
 			return
 		}
@@ -166,21 +174,23 @@ func (s *ServerWorker) ServeStream(
 		} else {
 			reply.Type = message.AuthenticationReplyFail
 		}
-		lg.Tracef("request %s authenticate interactive %+v , %+v", conn.RemoteAddr(), auth, reply)
+		lg.Debugf("%s auth stage 2 done %+v , %+v", ccid, auth, reply)
 		if _, err = conn.Write(reply.Marshal()); err != nil {
-			lg.Error("can't write reply2", err)
+			lg.Warning(ccid, "can't write auth reply 2", err)
 			return
 		}
 	}
 
 	if !auth.Success {
+		lg.Info(ccid, "authenticate fail")
 		return
 	}
-	lg.Tracef("request %s authenticate success", conn.RemoteAddr())
+
+	lg.Trace(ccid, "authenticate success")
 
 	if s.Rule != nil {
 		if !s.Rule(req.CommandCode, req.Endpoint, conn.RemoteAddr(), auth.ClientName) {
-			lg.Tracef("request %s not allowed by rule", conn.RemoteAddr())
+			lg.Info(ccid, "not allowed by rule")
 			conn.Write(message.NewOperationReplyWithCode(message.OperationReplyNotAllowedByRule).Marshal())
 			return
 		}
@@ -191,12 +201,13 @@ func (s *ServerWorker) ServeStream(
 		conn.Write(message.NewOperationReplyWithCode(message.OperationReplyCommandNotSupported).Marshal())
 		return
 	}
-	lg.Tracef("request %s start command specific process", conn.RemoteAddr())
+	lg.Trace(ccid, "start command specific process", req.CommandCode)
 	info := ClientInfo{
 		Name:      auth.ClientName,
 		SessionID: auth.SessionID,
 	}
-	deferClose = false
+	// it's handler's job to close conn
+	closeConn.Cancel()
 	h(ctx, conn, req, info, initData)
 }
 
@@ -217,6 +228,7 @@ func (s *ServerWorker) NoopHandler(
 	initData []byte,
 ) {
 	defer conn.Close()
+	lg.Trace(conn3Tuple(conn), "noop")
 	conn.Write(
 		setSessionId(
 			message.NewOperationReplyWithCode(message.OperationReplySuccess),
@@ -235,7 +247,8 @@ func (s *ServerWorker) ConnectHandler(
 	clientAppliedOpt := message.StackOptionInfo{}
 	remoteOpt := message.GetStackOptionInfo(req.Options, false)
 
-	lg.Tracef("request %s dial to %s", conn.RemoteAddr(), req.Endpoint)
+	ccid := conn3Tuple(conn)
+	lg.Trace(ccid, "dial to", req.Endpoint)
 
 	// todo custom dialer
 	rconn, remoteAppliedOpt, err := socket.DialWithOption(ctx, *req.Endpoint, remoteOpt)
@@ -249,23 +262,23 @@ func (s *ServerWorker) ConnectHandler(
 	}
 	defer rconn.Close()
 
-	lg.Tracef("request %s remote conn established", conn.RemoteAddr())
+	lg.Trace(ccid, "remote conn established")
 	appliedOpt := message.GetCombinedStackOptions(clientAppliedOpt, remoteAppliedOpt)
 	reply.Options.AddMany(appliedOpt)
 
 	if _, err := rconn.Write(initData); err != nil {
 		// it will fail again at relay()
-		lg.Error("can't write initdata to remote connection")
+		lg.Info(ccid, "can't write initdata to remote connection")
 	}
-	reply.Endpoint = message.NewAddrMust(rconn.LocalAddr().String())
+	reply.Endpoint = message.ParseAddr(rconn.LocalAddr().String())
 
 	// it will fail again at relay() too
 	if _, err := conn.Write(reply.Marshal()); err != nil {
-		lg.Error("can't write reply")
+		lg.Warning(ccid, "can't write reply")
 	}
 
 	relay(ctx, conn, rconn, 10*time.Minute)
-	lg.Tracef("request %s relay end", conn.RemoteAddr())
+	lg.Trace(ccid, "relay end")
 }
 
 func (s *ServerWorker) BindHandler(
@@ -275,27 +288,29 @@ func (s *ServerWorker) BindHandler(
 	info ClientInfo,
 	initData []byte,
 ) {
-	deferClose := true
-	defer func() {
-		if !deferClose {
-			return
-		}
-		lg.Debug("client conn defer close")
+	closeConn := internal.NewCancellableDefer(func() {
 		conn.Close()
-	}()
+	})
 
+	defer closeConn.Defer()
+	ccid := conn3Tuple(conn)
 	// find backlogged listener
 	ibl, accept := s.backlogListener.Load(req.Endpoint.String())
 	if accept {
 		bl := ibl.(*backlogListener)
+		lg.Info(ccid, "trying accept backlogged connection at", bl.listener.Addr())
+		// bl.handler is blocking, needn't cancel defer
 		bl.handler(ctx, conn, req, info, initData)
 		return
 	}
+
+	// not a backlogged accept
 
 	remoteOpt := message.GetStackOptionInfo(req.Options, false)
 	iBacklog, backlogged := remoteOpt[message.StackOptionTCPBacklog]
 
 	listener, remoteAppliedOpt, err := socket.ListenerWithOption(ctx, *req.Endpoint, remoteOpt)
+	lg.Info(ccid, "bind at", listener.Addr())
 	code := getReplyCode(err)
 	reply := message.NewOperationReplyWithCode(code)
 	setSessionId(reply, info.SessionID)
@@ -304,7 +319,9 @@ func (s *ServerWorker) BindHandler(
 		return
 	}
 
+	// add backlog option to notify client
 	if backlogged {
+		lg.Info(ccid, "start backlogged bind at", listener.Addr())
 		remoteAppliedOpt.Add(message.BaseStackOptionData{
 			RemoteLeg: true,
 			Level:     message.StackOptionLevelTCP,
@@ -315,17 +332,19 @@ func (s *ServerWorker) BindHandler(
 		})
 	}
 
-	reply.Endpoint = message.NewAddrMust(listener.Addr().String())
+	reply.Endpoint = message.ParseAddr(listener.Addr().String())
 	appliedOpt := message.GetCombinedStackOptions(message.StackOptionInfo{}, remoteAppliedOpt)
 	reply.Options.AddMany(appliedOpt)
 
 	if _, err := conn.Write(reply.Marshal()); err != nil {
-		lg.Error("can't write reply")
+		lg.Error(ccid, "can't write reply")
 		return
 	}
+	// bind "handshake" done
 
 	if backlogged {
-		deferClose = false
+		// let backloglistener handle conn
+		closeConn.Cancel()
 		backlog := iBacklog.(uint16)
 		// backlog will only simulated on server
 		// https://github.com/golang/go/issues/39000
@@ -333,29 +352,37 @@ func (s *ServerWorker) BindHandler(
 
 		blAddr := listener.Addr().String()
 		s.backlogListener.Store(blAddr, bl)
+		lg.Trace(ccid, "start backlog listener worker")
 		go bl.worker(ctx)
 		return
 	}
 	// non backlogged path
 	defer listener.Close()
+	// timeout
 	go func() {
 		<-time.After(60 * time.Second)
 		listener.Close()
 	}()
 
+	// accept a conn
+	lg.Trace(ccid, "waiting inbound connection")
 	rconn, err := listener.Accept()
+	listener.Close()
 	code2 := getReplyCode(err)
 	reply2 := message.NewOperationReplyWithCode(code)
 	setSessionId(reply2, info.SessionID)
 	if code2 != message.OperationReplySuccess {
 		conn.Write(reply2.Marshal())
+		lg.Warning(ccid, "can't accept inbound connection", err)
 		return
 	}
-	reply2.Endpoint = message.NewAddrMust(rconn.RemoteAddr().String())
+	lg.Info(ccid, "inbound connection accepted")
+	reply2.Endpoint = message.ParseAddr(rconn.RemoteAddr().String())
 	conn.Write(reply2.Marshal())
 	defer rconn.Close()
 
 	relay(ctx, conn, rconn, 10*time.Minute)
+	lg.Tracef(ccid, "relay end")
 }
 
 func (s *ServerWorker) ClearUnusedResource(ctx context.Context) {
@@ -436,33 +463,33 @@ func getReplyCode(err error) message.ReplyCode {
 	return message.OperationReplyServerFailure
 }
 
-func relay(ctx context.Context, c1, c2 net.Conn, timeout time.Duration) error {
+func relay(ctx context.Context, c, r net.Conn, timeout time.Duration) error {
 	var wg sync.WaitGroup
 	wg.Add(2)
 	var err error = nil
-	id := fmt.Sprintf("%s--%s <=> %s--%s", c1.LocalAddr(), c1.RemoteAddr(), c2.LocalAddr(), c2.RemoteAddr())
-	lg.Tracef("relay %s start", id)
+	lg.Debugf("relay %s start", relayConnTuple(c, r))
 	go func() {
 		defer wg.Done()
-		e := relayOneDirection(ctx, c1, c2, timeout)
+		e := relayOneDirection(ctx, c, r, timeout)
+		// if already recorded an err, that means another direction already closed
 		if e != nil && err == nil {
 			err = e
-			c1.Close()
-			c2.Close()
+			c.Close()
+			r.Close()
 		}
 	}()
 	go func() {
 		defer wg.Done()
-		e := relayOneDirection(ctx, c2, c1, timeout)
+		e := relayOneDirection(ctx, r, c, timeout)
 		if e != nil && err == nil {
 			err = e
-			c1.Close()
-			c2.Close()
+			c.Close()
+			r.Close()
 		}
 	}()
 	wg.Wait()
 
-	lg.Tracef("relay %s done %s", id, err)
+	lg.Debugf("relay %s done %s", relayConnTuple(c, r), err)
 	if err == io.EOF {
 		return nil
 	}
@@ -473,15 +500,13 @@ func relayOneDirection(ctx context.Context, c1, c2 net.Conn, timeout time.Durati
 	var done error = nil
 	buf := internal.BytesPool4k.Rent()
 	defer internal.BytesPool4k.Return(buf)
-
-	id := fmt.Sprintf("%s--%s ==> %s--%s", c1.LocalAddr(), c1.RemoteAddr(), c2.LocalAddr(), c2.RemoteAddr())
-	lg.Tracef("relay %s start", id)
+	id := relayConnTuple(c1, c2)
+	lg.Debugf("relayOneDirection %s start", id)
 	go func() {
 		<-ctx.Done()
 		done = ctx.Err()
-		lg.Tracef("relay %s ctx done", id)
 	}()
-	defer lg.Tracef("relay %s exit", id)
+	defer lg.Debugf("relayOneDirection %s exit", id)
 	// copy pasted from io.Copy with some modify
 	for {
 		c1.SetReadDeadline(time.Now().Add(timeout))
@@ -498,7 +523,7 @@ func relayOneDirection(ctx context.Context, c1, c2 net.Conn, timeout time.Durati
 			}
 
 			if eWrite != nil {
-				lg.Tracef("relay %s write error %s", id, eWrite)
+				lg.Debugf("relayOneDirection %s write error %s", id, eWrite)
 				return eWrite
 			}
 			if nRead != nWrite {
@@ -506,7 +531,7 @@ func relayOneDirection(ctx context.Context, c1, c2 net.Conn, timeout time.Durati
 			}
 		}
 		if eRead != nil {
-			lg.Tracef("relay %s read error %s", id, eRead)
+			lg.Debugf("relayOneDirection %s read error %s", id, eRead)
 			return eRead
 		}
 	}

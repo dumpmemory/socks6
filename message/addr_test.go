@@ -71,12 +71,12 @@ func TestNewAddr(t *testing.T) {
 			assert.Nil(t, err)
 			assert.Equal(t, tt.expect, actual)
 
-			actual = message.NewAddrMust(tt.in)
+			actual = message.ParseAddr(tt.in)
 			assert.Equal(t, tt.expect, actual)
 		} else {
 			assert.Error(t, err)
 
-			assert.Panics(t, func() { message.NewAddrMust(tt.in) })
+			assert.Panics(t, func() { message.ParseAddr(tt.in) })
 		}
 	}
 }

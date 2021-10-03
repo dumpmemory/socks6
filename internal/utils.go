@@ -49,3 +49,28 @@ func AssertRead(t assert.TestingT, r io.Reader, b []byte) {
 	assert.Nil(t, err)
 	assert.Equal(t, b, b2)
 }
+
+type CancellableDefer struct {
+	f      func()
+	cancel bool
+}
+
+func NewCancellableDefer(f func()) *CancellableDefer {
+	return &CancellableDefer{
+		f:      f,
+		cancel: false,
+	}
+}
+
+func (c *CancellableDefer) Defer() {
+	if c.cancel {
+		return
+	}
+	if c.f != nil {
+		c.f()
+	}
+}
+
+func (c *CancellableDefer) Cancel() {
+	c.cancel = true
+}

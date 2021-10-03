@@ -47,6 +47,8 @@ func (n *NullServerAuthenticator) Authenticate(
 	}, nil, nil
 }
 
+// todo session
+
 type DefaultServerAuthenticator struct {
 	Methods map[byte]ServerAuthenticationMethod
 }

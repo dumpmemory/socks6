@@ -27,7 +27,7 @@ type Socks6Addr struct {
 	Net string
 }
 
-func NewAddrMust(addr string) *Socks6Addr {
+func ParseAddr(addr string) *Socks6Addr {
 	r, err := NewAddr(addr)
 	if err != nil {
 		lg.Error(err)

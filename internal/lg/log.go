@@ -31,77 +31,80 @@ var levelPrefix = map[Level]string{
 
 var MinimalLevel Level = LvInfo
 
-func Printf(lv Level, format string, v ...interface{}) {
+func lgprintf(lv Level, format string, v ...interface{}) {
 	if lv > MinimalLevel {
 		return
 	}
 	f := fmt.Sprintf("[%s] %s", levelPrefix[lv], format)
-	log.Printf(f, v...)
+	msg := fmt.Sprintf(f, v...)
+	log.Output(3, msg)
 }
 
-func Print(lv Level, v ...interface{}) {
+func lgprint(lv Level, v ...interface{}) {
 	if lv > MinimalLevel {
 		return
 	}
-	log.Print(v...)
+	f := fmt.Sprintf("[%s]", levelPrefix[lv])
+	msg := fmt.Sprintln(append([]interface{}{f}, v...)...)
+	log.Output(3, msg)
 }
 
 func Fatalf(format string, v ...interface{}) {
-	Printf(LvFatal, format, v...)
+	lgprintf(LvFatal, format, v...)
 	os.Exit(1)
 }
 
 func Panicf(format string, v ...interface{}) {
-	Printf(LvPanic, format, v...)
+	lgprintf(LvPanic, format, v...)
 	e := fmt.Sprintf(format, v...)
 	panic(e)
 }
 
 func Errorf(format string, v ...interface{}) {
-	Printf(LvError, format, v...)
+	lgprintf(LvError, format, v...)
 }
 
 func Warningf(format string, v ...interface{}) {
-	Printf(LvWarning, format, v...)
+	lgprintf(LvWarning, format, v...)
 }
 
 func Infof(format string, v ...interface{}) {
-	Printf(LvInfo, format, v...)
+	lgprintf(LvInfo, format, v...)
 }
 
 func Tracef(format string, v ...interface{}) {
-	Printf(LvTrace, format, v...)
+	lgprintf(LvTrace, format, v...)
 }
 
 func Debugf(format string, v ...interface{}) {
-	Printf(LvDebug, format, v...)
+	lgprintf(LvDebug, format, v...)
 }
 
 func Fatal(v ...interface{}) {
-	Print(LvFatal, v...)
+	lgprint(LvFatal, v...)
 	os.Exit(1)
 }
 func Panic(v ...interface{}) {
-	Print(LvPanic, v...)
+	lgprint(LvPanic, v...)
 	panic(v[0])
 }
 
 func Error(v ...interface{}) {
-	Print(LvError, v...)
+	lgprint(LvError, v...)
 }
 
 func Warning(v ...interface{}) {
-	Print(LvWarning, v...)
+	lgprint(LvWarning, v...)
 }
 
 func Info(v ...interface{}) {
-	Print(LvInfo, v...)
+	lgprint(LvInfo, v...)
 }
 
 func Trace(v ...interface{}) {
-	Print(LvTrace, v...)
+	lgprint(LvTrace, v...)
 }
 
 func Debug(v ...interface{}) {
-	Print(LvDebug, v...)
+	lgprint(LvDebug, v...)
 }

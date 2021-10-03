@@ -5,6 +5,7 @@ import (
 	"net"
 )
 
+// NoneServerAuthenticationMethod is IANA method 0, require no authn at all
 type NoneServerAuthenticationMethod struct{}
 
 func (n NoneServerAuthenticationMethod) Authenticate(

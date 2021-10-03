@@ -14,10 +14,14 @@ type ServerAuthenticationMethod interface {
 	)
 }
 
+// ServerAuthenticationChannels are three channels used to control auth step 2
 type ServerAuthenticationChannels struct {
-	Result   chan ServerAuthenticationResult
+	// Result is where authenticate method write it's result
+	Result chan ServerAuthenticationResult
+	// Continue is used by server process to signal auth step 1 result has been written to client
 	Continue chan bool
-	Err      chan error
+	// Err used by authn method to report error
+	Err chan error
 }
 
 func NewServerAuthenticationChannels() *ServerAuthenticationChannels {
