@@ -1,6 +1,7 @@
 package socks6
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -33,7 +34,8 @@ type ServerWorker struct {
 	VersionErrorHandler func(ctx context.Context, ver message.ErrVersion, conn net.Conn)
 
 	backlogListener sync.Map // map[string]*bl
-	reservedUdpAddr sync.Map // map[string]string
+	reservedUdpAddr sync.Map // map[string]uint64
+	udpAssociation  sync.Map // map[uint64]*ua
 }
 
 // NewServerWorker create a standard SOCKS 6 server
@@ -217,7 +219,22 @@ func (s *ServerWorker) ServeDatagram(
 	data []byte,
 	downlink func([]byte) error,
 ) {
+	h, err := message.ParseUDPHeaderFrom(bytes.NewReader(data))
+	if err != nil {
+		return
+	}
+	iassoc, ok := s.udpAssociation.Load(h.AssociationID)
+	if !ok {
+		return
+	}
+	assoc := iassoc.(*udpAssociation)
 
+	cp := ClientPacket{
+		Message:  h,
+		Source:   addr,
+		Downlink: downlink,
+	}
+	assoc.handleUdpUp(ctx, cp)
 }
 
 func (s *ServerWorker) NoopHandler(
@@ -366,7 +383,79 @@ func (s *ServerWorker) UdpAssociateHandler(
 	ctx context.Context,
 	cc ClientConn,
 ) {
+	closeConn := internal.NewCancellableDefer(func() {
+		cc.Conn.Close()
+	})
 
+	defer closeConn.Defer()
+
+	destStr := message.AddrString(cc.Destination())
+	irid64, reserved := s.reservedUdpAddr.Load(destStr)
+	// already reserved
+	if reserved {
+		rid := irid64.(uint64)
+		irua, ok := s.udpAssociation.Load(rid)
+		if !ok {
+			lg.Warning("reserve port exist after association delete")
+		} else {
+			rua := irua.(*udpAssociation)
+			// not same session
+			if !internal.ByteArrayEqual(rua.cc.Session, cc.Session) {
+				cc.WriteReplyCode(message.OperationReplyConnectionRefused)
+				return
+			}
+		}
+	}
+
+	// reserve check pass
+	pc, err := net.ListenPacket("udp", destStr)
+	code := getReplyCode(err)
+	if code != message.OperationReplySuccess {
+		cc.WriteReplyCode(code)
+		return
+	}
+	remoteOpt := message.GetStackOptionInfo(cc.Request.Options, false)
+	remoteAppliedOpt := message.StackOptionInfo{}
+	var reservedAddr net.Addr
+	if ippod, ok := remoteOpt[message.StackOptionUDPPortParity]; ok {
+		appliedPpod := message.PortParityOptionData{
+			Reserve: true,
+			Parity:  message.StackPortParityOptionParityNo,
+		}
+		ppod := ippod.(message.PortParityOptionData)
+		if ppod.Reserve {
+			s6a := message.ParseAddr(pc.LocalAddr().String())
+			if s6a.Port&1 == 0 {
+				s6a.Port += 1
+				appliedPpod.Parity = message.StackPortParityOptionParityEven
+			} else {
+				s6a.Port -= 1
+				appliedPpod.Parity = message.StackPortParityOptionParityOdd
+			}
+			reservedAddr = s6a
+		}
+		if !udpPortAvaliable(reservedAddr) {
+			reservedAddr = nil
+			appliedPpod.Reserve = false
+		} else {
+			remoteAppliedOpt.Add(message.BaseStackOptionData{
+				RemoteLeg: true,
+				Level:     message.StackOptionLevelUDP,
+				Code:      message.StackOptionCodePortParity,
+				Data:      &appliedPpod,
+			})
+		}
+	}
+
+	assoc := newUdpAssociation(cc, pc, reservedAddr)
+	s.udpAssociation.Store(assoc.id, assoc)
+	if reservedAddr != nil {
+		s.reservedUdpAddr.Store(message.AddrString(reservedAddr), assoc.id)
+	}
+	closeConn.Cancel()
+
+	go assoc.handleTcpUp(ctx)
+	go assoc.handleUdpDown(ctx)
 }
 
 func (s *ServerWorker) ClearUnusedResource(ctx context.Context) {

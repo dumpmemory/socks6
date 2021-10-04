@@ -40,3 +40,9 @@ func connNet(c net.Conn) string {
 	}
 	return n
 }
+
+func udpPortAvaliable(a net.Addr) bool {
+	p, err := net.ListenPacket("udp", a.String())
+	p.Close()
+	return err == nil
+}

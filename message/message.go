@@ -225,8 +225,10 @@ func ParseOperationReplyFrom(b io.Reader) (*OperationReply, error) {
 	return r, nil
 }
 
+type UDPHeaderType byte
+
 const (
-	_ byte = iota
+	_ UDPHeaderType = iota
 	UDPMessageAssociationInit
 	UDPMessageAssociationAck
 	UDPMessageDatagram
@@ -234,7 +236,7 @@ const (
 )
 
 type UDPHeader struct {
-	Type          byte
+	Type          UDPHeaderType
 	AssociationID uint64
 	// dgram & icmp
 	Endpoint *Socks6Addr
@@ -251,14 +253,14 @@ func (u *UDPHeader) Marshal() []byte {
 	switch u.Type {
 	case UDPMessageAssociationInit, UDPMessageAssociationAck:
 		b.WriteByte(6)
-		b.WriteByte(u.Type)
+		b.WriteByte(byte(u.Type))
 		binary.Write(&b, binary.BigEndian, uint16(12))
 		binary.Write(&b, binary.BigEndian, u.AssociationID)
 	case UDPMessageDatagram:
 		addr := u.Endpoint.MarshalAddress()
 		totalLen := 16 + len(addr) + len(u.Data)
 		b.WriteByte(6)
-		b.WriteByte(u.Type)
+		b.WriteByte(byte(u.Type))
 		binary.Write(&b, binary.BigEndian, uint16(totalLen))
 		binary.Write(&b, binary.BigEndian, u.AssociationID)
 
@@ -274,7 +276,7 @@ func (u *UDPHeader) Marshal() []byte {
 		totalLen := 20 + len(addr) + len(eaddr)
 
 		b.WriteByte(6)
-		b.WriteByte(u.Type)
+		b.WriteByte(byte(u.Type))
 		binary.Write(&b, binary.BigEndian, uint16(totalLen))
 
 		binary.Write(&b, binary.BigEndian, u.AssociationID)
@@ -308,7 +310,7 @@ func ParseUDPHeaderFrom(b io.Reader) (*UDPHeader, error) {
 
 	totalLen := binary.BigEndian.Uint16(buf[2:])
 
-	u.Type = buf[1]
+	u.Type = UDPHeaderType(buf[1])
 	u.AssociationID = binary.BigEndian.Uint64(buf[4:])
 
 	if u.Type == UDPMessageAssociationInit || u.Type == UDPMessageAssociationAck {
