@@ -13,19 +13,17 @@ import (
 
 type backlogListener struct {
 	listener net.Listener
-	session  []byte
-	conn     net.Conn
+	cc       ClientConn
 
 	sem   semaphore.Weighted
 	queue chan net.Conn
 	alive bool
 }
 
-func newBacklogListener(l net.Listener, session []byte, c net.Conn, backlog uint16) *backlogListener {
+func newBacklogListener(l net.Listener, cc ClientConn, backlog uint16) *backlogListener {
 	return &backlogListener{
 		listener: l,
-		session:  session,
-		conn:     c,
+		cc:       cc,
 
 		sem:   *semaphore.NewWeighted(int64(backlog)),
 		queue: make(chan net.Conn, backlog),
@@ -36,30 +34,26 @@ func newBacklogListener(l net.Listener, session []byte, c net.Conn, backlog uint
 // handler check for same session and relay between request connection and an accepted connection
 func (b *backlogListener) handler(
 	ctx context.Context,
-	conn net.Conn,
-	req *message.Request,
-	info ClientInfo,
-	initData []byte,
+	cc ClientConn,
 ) {
-	if !internal.ByteArrayEqual(info.SessionID, b.session) {
-		lg.Warning(conn3Tuple(conn), "session mismatch")
-
-		conn.Write(message.NewOperationReplyWithCode(message.OperationReplySuccess).Marshal())
+	if !internal.ByteArrayEqual(cc.Session, b.cc.Session) {
+		lg.Warning(cc.ConnId(), "session mismatch")
+		cc.WriteReplyCode(message.OperationReplyConnectionRefused)
 		return
 	}
 	b.sem.Release(1)
 	c, ok := <-b.queue
 	if !ok {
 		// todo is this ok?
-		conn.Write(message.NewOperationReplyWithCode(message.OperationReplyConnectionRefused).Marshal())
+		cc.WriteReplyCode(message.OperationReplyServerFailure)
 	}
 	rep := message.NewOperationReplyWithCode(message.OperationReplySuccess)
 	rep.Endpoint = message.ParseAddr(b.listener.Addr().String())
-	conn.Write(rep.Marshal())
+	cc.WriteReplyAddr(message.OperationReplySuccess, b.listener.Addr())
 	rep.Endpoint = message.ParseAddr(c.RemoteAddr().String())
-	conn.Write(rep.Marshal())
+	cc.WriteReplyAddr(message.OperationReplySuccess, c.RemoteAddr())
 
-	relay(ctx, conn, c, 10*time.Minute)
+	relay(ctx, cc.Conn, c, 10*time.Minute)
 }
 
 // accept accept an incoming connection, notify client, put connection to backlog queue
@@ -67,17 +61,17 @@ func (b *backlogListener) accept(ctx context.Context) {
 	b.sem.Acquire(ctx, 1)
 	c, err := b.listener.Accept()
 	if err != nil {
-		lg.Debug(conn3Tuple(b.conn), "backlog accept fail", err)
+		lg.Debug(b.cc.ConnId(), "backlog accept fail", err)
 		c.Close()
 		return
 	}
 	b.queue <- c
 	rep := message.NewOperationReplyWithCode(message.OperationReplySuccess)
 	rep.Endpoint = message.ParseAddr(c.RemoteAddr().String())
-	lg.Info(conn3Tuple(b.conn), "backlog accepted from", conn3Tuple(c))
-	if _, err := b.conn.Write(rep.Marshal()); err != nil {
-		lg.Warning(conn3Tuple(b.conn), "backlog write reply fail", err)
-		b.conn.Close()
+	lg.Info(b.cc.ConnId(), "backlog accepted from", conn3Tuple(c))
+	if err := b.cc.WriteReplyAddr(message.OperationReplySuccess, c.RemoteAddr()); err != nil {
+		lg.Warning(b.cc.ConnId(), "backlog write reply fail", err)
+		b.cc.Conn.Close()
 		b.alive = false
 	}
 }
@@ -88,10 +82,10 @@ func (b *backlogListener) worker(ctx context.Context) {
 		buf := internal.BytesPool16.Rent()
 		defer internal.BytesPool16.Return(buf)
 		for b.alive {
-			if _, err := b.conn.Read(buf); err != nil {
-				lg.Trace(conn3Tuple(b.conn), "read fail, closing backlog listener")
+			if _, err := b.cc.Conn.Read(buf); err != nil {
+				lg.Trace(b.cc.ConnId(), "read fail, closing backlog listener")
 				b.listener.Close()
-				b.conn.Close()
+				b.cc.Conn.Close()
 				b.alive = false
 				return
 			}

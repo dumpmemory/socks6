@@ -19,10 +19,7 @@ import (
 
 type CommandHandler func(
 	ctx context.Context,
-	conn net.Conn,
-	req *message.Request,
-	clientInfo ClientInfo,
-	initData []byte,
+	cc ClientConn,
 )
 
 // ServerWorker is a customizeable SOCKS 6 server
@@ -36,11 +33,7 @@ type ServerWorker struct {
 	VersionErrorHandler func(ctx context.Context, ver message.ErrVersion, conn net.Conn)
 
 	backlogListener sync.Map // map[string]*bl
-}
-
-type ClientInfo struct {
-	Name      string
-	SessionID []byte
+	reservedUdpAddr sync.Map // map[string]string
 }
 
 // NewServerWorker create a standard SOCKS 6 server
@@ -198,17 +191,24 @@ func (s *ServerWorker) ServeStream(
 	// per-command
 	h, ok := s.CommandHandlers[req.CommandCode]
 	if !ok {
+		lg.Warning(ccid, "command not supported", req.CommandCode)
 		conn.Write(message.NewOperationReplyWithCode(message.OperationReplyCommandNotSupported).Marshal())
 		return
 	}
 	lg.Trace(ccid, "start command specific process", req.CommandCode)
-	info := ClientInfo{
-		Name:      auth.ClientName,
-		SessionID: auth.SessionID,
+
+	cc := ClientConn{
+		Conn:    conn,
+		Request: req,
+
+		ClientId: auth.ClientName,
+		Session:  auth.SessionID,
+
+		InitialData: initData,
 	}
 	// it's handler's job to close conn
 	closeConn.Cancel()
-	h(ctx, conn, req, info, initData)
+	h(ctx, cc)
 }
 
 func (s *ServerWorker) ServeDatagram(
@@ -222,106 +222,86 @@ func (s *ServerWorker) ServeDatagram(
 
 func (s *ServerWorker) NoopHandler(
 	ctx context.Context,
-	conn net.Conn,
-	req *message.Request,
-	info ClientInfo,
-	initData []byte,
+	cc ClientConn,
 ) {
-	defer conn.Close()
-	lg.Trace(conn3Tuple(conn), "noop")
-	conn.Write(
-		setSessionId(
-			message.NewOperationReplyWithCode(message.OperationReplySuccess),
-			info.SessionID,
-		).Marshal())
+	defer cc.Conn.Close()
+	lg.Trace(cc.ConnId(), "noop")
+	cc.WriteReplyCode(message.OperationReplySuccess)
 }
 
 func (s *ServerWorker) ConnectHandler(
 	ctx context.Context,
-	conn net.Conn,
-	req *message.Request,
-	info ClientInfo,
-	initData []byte,
+	cc ClientConn,
 ) {
-	defer conn.Close()
+	defer cc.Conn.Close()
 	clientAppliedOpt := message.StackOptionInfo{}
-	remoteOpt := message.GetStackOptionInfo(req.Options, false)
+	remoteOpt := message.GetStackOptionInfo(cc.Request.Options, false)
 
-	ccid := conn3Tuple(conn)
-	lg.Trace(ccid, "dial to", req.Endpoint)
+	lg.Trace(cc.ConnId(), "dial to", cc.Destination())
 
 	// todo custom dialer
-	rconn, remoteAppliedOpt, err := socket.DialWithOption(ctx, *req.Endpoint, remoteOpt)
+	rconn, remoteAppliedOpt, err := socket.DialWithOption(ctx, *cc.Destination(), remoteOpt)
 	code := getReplyCode(err)
-	reply := message.NewOperationReplyWithCode(code)
-	setSessionId(reply, info.SessionID)
 
 	if code != message.OperationReplySuccess {
-		conn.Write(reply.Marshal())
+		cc.WriteReplyCode(code)
 		return
 	}
 	defer rconn.Close()
 
-	lg.Trace(ccid, "remote conn established")
-	appliedOpt := message.GetCombinedStackOptions(clientAppliedOpt, remoteAppliedOpt)
-	reply.Options.AddMany(appliedOpt)
-
-	if _, err := rconn.Write(initData); err != nil {
+	lg.Trace(cc.ConnId(), "remote conn established")
+	if _, err := rconn.Write(cc.InitialData); err != nil {
 		// it will fail again at relay()
-		lg.Info(ccid, "can't write initdata to remote connection")
+		lg.Info(cc.ConnId(), "can't write initdata to remote connection")
 	}
-	reply.Endpoint = message.ParseAddr(rconn.LocalAddr().String())
 
+	appliedOpt := message.GetCombinedStackOptions(clientAppliedOpt, remoteAppliedOpt)
+	options := message.NewOptionSet()
+	options.AddMany(appliedOpt)
 	// it will fail again at relay() too
-	if _, err := conn.Write(reply.Marshal()); err != nil {
-		lg.Warning(ccid, "can't write reply")
+	if err := cc.WriteReply(code, rconn.LocalAddr(), options); err != nil {
+		lg.Warning(cc.ConnId(), "can't write reply", err)
 	}
 
-	relay(ctx, conn, rconn, 10*time.Minute)
-	lg.Trace(ccid, "relay end")
+	relay(ctx, cc.Conn, rconn, 10*time.Minute)
+	lg.Trace(cc.ConnId(), "relay end")
 }
 
 func (s *ServerWorker) BindHandler(
 	ctx context.Context,
-	conn net.Conn,
-	req *message.Request,
-	info ClientInfo,
-	initData []byte,
+	cc ClientConn,
 ) {
 	closeConn := internal.NewCancellableDefer(func() {
-		conn.Close()
+		cc.Conn.Close()
 	})
 
 	defer closeConn.Defer()
-	ccid := conn3Tuple(conn)
 	// find backlogged listener
-	ibl, accept := s.backlogListener.Load(req.Endpoint.String())
+	ibl, accept := s.backlogListener.Load(cc.Destination().String())
 	if accept {
 		bl := ibl.(*backlogListener)
-		lg.Info(ccid, "trying accept backlogged connection at", bl.listener.Addr())
+		lg.Info(cc.ConnId(), "trying accept backlogged connection at", bl.listener.Addr())
 		// bl.handler is blocking, needn't cancel defer
-		bl.handler(ctx, conn, req, info, initData)
+		bl.handler(ctx, cc)
 		return
 	}
 
 	// not a backlogged accept
 
-	remoteOpt := message.GetStackOptionInfo(req.Options, false)
+	remoteOpt := message.GetStackOptionInfo(cc.Request.Options, false)
 	iBacklog, backlogged := remoteOpt[message.StackOptionTCPBacklog]
 
-	listener, remoteAppliedOpt, err := socket.ListenerWithOption(ctx, *req.Endpoint, remoteOpt)
-	lg.Info(ccid, "bind at", listener.Addr())
+	listener, remoteAppliedOpt, err := socket.ListenerWithOption(ctx, *cc.Destination(), remoteOpt)
+	lg.Info(cc.ConnId(), "bind at", listener.Addr())
 	code := getReplyCode(err)
-	reply := message.NewOperationReplyWithCode(code)
-	setSessionId(reply, info.SessionID)
 	if code != message.OperationReplySuccess {
-		conn.Write(reply.Marshal())
+		cc.WriteReplyCode(code)
 		return
 	}
 
 	// add backlog option to notify client
 	if backlogged {
-		lg.Info(ccid, "start backlogged bind at", listener.Addr())
+		lg.Info(cc.ConnId(), "start backlogged bind at", listener.Addr())
 		remoteAppliedOpt.Add(message.BaseStackOptionData{
 			RemoteLeg: true,
 			Level:     message.StackOptionLevelTCP,
@@ -332,12 +312,12 @@ func (s *ServerWorker) BindHandler(
 		})
 	}
 
-	reply.Endpoint = message.ParseAddr(listener.Addr().String())
 	appliedOpt := message.GetCombinedStackOptions(message.StackOptionInfo{}, remoteAppliedOpt)
-	reply.Options.AddMany(appliedOpt)
+	options := message.NewOptionSet()
+	options.AddMany(appliedOpt)
 
-	if _, err := conn.Write(reply.Marshal()); err != nil {
-		lg.Error(ccid, "can't write reply")
+	if err := cc.WriteReply(code, listener.Addr(), options); err != nil {
+		lg.Error(cc.ConnId(), "can't write reply", err)
 		return
 	}
 	// bind "handshake" done
@@ -348,11 +328,11 @@ func (s *ServerWorker) BindHandler(
 		backlog := iBacklog.(uint16)
 		// backlog will only simulated on server
 		// https://github.com/golang/go/issues/39000
-		bl := newBacklogListener(listener, info.SessionID, conn, backlog)
+		bl := newBacklogListener(listener, cc, backlog)
 
 		blAddr := listener.Addr().String()
 		s.backlogListener.Store(blAddr, bl)
-		lg.Trace(ccid, "start backlog listener worker")
+		lg.Trace(cc.ConnId(), "start backlog listener worker")
 		go bl.worker(ctx)
 		return
 	}
@@ -365,24 +345,28 @@ func (s *ServerWorker) BindHandler(
 	}()
 
 	// accept a conn
-	lg.Trace(ccid, "waiting inbound connection")
+	lg.Trace(cc.ConnId(), "waiting inbound connection")
 	rconn, err := listener.Accept()
 	listener.Close()
 	code2 := getReplyCode(err)
-	reply2 := message.NewOperationReplyWithCode(code)
-	setSessionId(reply2, info.SessionID)
 	if code2 != message.OperationReplySuccess {
-		conn.Write(reply2.Marshal())
-		lg.Warning(ccid, "can't accept inbound connection", err)
+		cc.WriteReplyCode(code2)
+		lg.Warning(cc.ConnId(), "can't accept inbound connection", err)
 		return
 	}
-	lg.Info(ccid, "inbound connection accepted")
-	reply2.Endpoint = message.ParseAddr(rconn.RemoteAddr().String())
-	conn.Write(reply2.Marshal())
+	lg.Info(cc.ConnId(), "inbound connection accepted")
+	cc.WriteReplyAddr(code2, rconn.RemoteAddr())
 	defer rconn.Close()
 
-	relay(ctx, conn, rconn, 10*time.Minute)
-	lg.Tracef(ccid, "relay end")
+	relay(ctx, cc.Conn, rconn, 10*time.Minute)
+	lg.Trace(cc.ConnId(), "relay end")
+}
+
+func (s *ServerWorker) UdpAssociateHandler(
+	ctx context.Context,
+	cc ClientConn,
+) {
+
 }
 
 func (s *ServerWorker) ClearUnusedResource(ctx context.Context) {

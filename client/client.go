@@ -224,8 +224,10 @@ func (u *UDPClient) ReadFrom(p []byte) (n int, addr net.Addr, err error) {
 		// todo icmp error
 		return 0, nil, message.ErrFormat
 	}
-	h.Endpoint.Net = "udp"
-	addr = h.Endpoint
+	addr, err = net.ResolveUDPAddr("udp", h.Endpoint.String())
+	if err != nil {
+		return 0, nil, err
+	}
 	ld := len(h.Data)
 	lp := len(p)
 	if ld > lp {

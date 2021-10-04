@@ -23,18 +23,22 @@ type Socks6Addr struct {
 	AddressType AddressType
 	Address     []byte
 	Port        uint16
-
-	Net string
 }
 
 func ParseAddr(addr string) *Socks6Addr {
 	r, err := NewAddr(addr)
 	if err != nil {
-		lg.Error(err)
-		panic(err)
+		lg.Panic("can't parse address", addr, err)
 	}
 	return r
 }
+
+// AddrString create a stable string represtation for n
+func AddrString(n net.Addr) string {
+	s6a := ParseAddr(n.String())
+	return s6a.String()
+}
+
 func NewAddr(address string) (*Socks6Addr, error) {
 	h, p, err := net.SplitHostPort(address)
 	if err != nil {
@@ -75,7 +79,7 @@ func NewAddr(address string) (*Socks6Addr, error) {
 	}, nil
 }
 func (a *Socks6Addr) Network() string {
-	return a.Net
+	return "socks6"
 }
 func (a *Socks6Addr) String() string {
 	var h string

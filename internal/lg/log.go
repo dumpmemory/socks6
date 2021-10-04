@@ -86,6 +86,11 @@ func Fatal(v ...interface{}) {
 }
 func Panic(v ...interface{}) {
 	lgprint(LvPanic, v...)
+	for i := 0; i < len(v); i++ {
+		if err, ok := v[i].(error); ok {
+			panic(err)
+		}
+	}
 	panic(v[0])
 }
 
