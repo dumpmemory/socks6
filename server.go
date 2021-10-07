@@ -28,8 +28,12 @@ type Server struct {
 	dtls net.Listener
 }
 
-func (s *Server) Start(ctx context.Context) {
-	s.worker = *NewServerWorker()
+func (s *Server) Start(ctx context.Context, worker *ServerWorker) {
+	if worker == nil {
+		s.worker = *NewServerWorker()
+	} else {
+		s.worker = *worker
+	}
 
 	if s.CleartextPort != 0 {
 		cleartextEndpoint := net.JoinHostPort(s.Address, fmt.Sprintf("%d", s.CleartextPort))

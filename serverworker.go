@@ -33,9 +33,32 @@ type ServerWorker struct {
 	// VersionErrorHandler should close connection by itself
 	VersionErrorHandler func(ctx context.Context, ver message.ErrVersion, conn net.Conn)
 
+	Outbound ServerOutbound
+
 	backlogListener sync.Map // map[string]*bl
 	reservedUdpAddr sync.Map // map[string]uint64
 	udpAssociation  sync.Map // map[uint64]*ua
+}
+
+type ServerOutbound interface {
+	Dial(ctx context.Context, option message.StackOptionInfo, addr net.Addr) (net.Conn, message.StackOptionInfo, error)
+	Listen(ctx context.Context, option message.StackOptionInfo, addr net.Addr) (net.Listener, message.StackOptionInfo, error)
+	ListenPacket(ctx context.Context, option message.StackOptionInfo, addr net.Addr) (net.PacketConn, message.StackOptionInfo, error)
+}
+
+type InternetServerOutbound struct{}
+
+func (i InternetServerOutbound) Dial(ctx context.Context, option message.StackOptionInfo, addr net.Addr) (net.Conn, message.StackOptionInfo, error) {
+	a := message.ParseAddr(addr.String())
+	return socket.DialWithOption(ctx, *a, option)
+}
+func (i InternetServerOutbound) Listen(ctx context.Context, option message.StackOptionInfo, addr net.Addr) (net.Listener, message.StackOptionInfo, error) {
+	a := message.ParseAddr(addr.String())
+	return socket.ListenerWithOption(ctx, *a, option)
+}
+func (i InternetServerOutbound) ListenPacket(ctx context.Context, option message.StackOptionInfo, addr net.Addr) (net.PacketConn, message.StackOptionInfo, error) {
+	p, err := net.ListenPacket("udp", addr.String())
+	return p, message.StackOptionInfo{}, err
 }
 
 // NewServerWorker create a standard SOCKS 6 server
@@ -55,6 +78,7 @@ func NewServerWorker() *ServerWorker {
 	r := &ServerWorker{
 		VersionErrorHandler: ReplyVersionSpecificError,
 		Authenticator:       defaultAuth,
+		Outbound:            InternetServerOutbound{},
 		backlogListener:     sync.Map{},
 	}
 
@@ -257,7 +281,7 @@ func (s *ServerWorker) ConnectHandler(
 	lg.Trace(cc.ConnId(), "dial to", cc.Destination())
 
 	// todo custom dialer
-	rconn, remoteAppliedOpt, err := socket.DialWithOption(ctx, *cc.Destination(), remoteOpt)
+	rconn, remoteAppliedOpt, err := s.Outbound.Dial(ctx, remoteOpt, cc.Destination())
 	code := getReplyCode(err)
 
 	if code != message.OperationReplySuccess {
@@ -308,7 +332,7 @@ func (s *ServerWorker) BindHandler(
 	remoteOpt := message.GetStackOptionInfo(cc.Request.Options, false)
 	iBacklog, backlogged := remoteOpt[message.StackOptionTCPBacklog]
 
-	listener, remoteAppliedOpt, err := socket.ListenerWithOption(ctx, *cc.Destination(), remoteOpt)
+	listener, remoteAppliedOpt, err := s.Outbound.Listen(ctx, remoteOpt, cc.Destination())
 	lg.Info(cc.ConnId(), "bind at", listener.Addr())
 	code := getReplyCode(err)
 	if code != message.OperationReplySuccess {
@@ -399,7 +423,7 @@ func (s *ServerWorker) UdpAssociateHandler(
 			lg.Warning("reserve port exist after association delete")
 		} else {
 			rua := irua.(*udpAssociation)
-			// not same session
+			// not same session, fail
 			if !internal.ByteArrayEqual(rua.cc.Session, cc.Session) {
 				cc.WriteReplyCode(message.OperationReplyConnectionRefused)
 				return
@@ -408,14 +432,13 @@ func (s *ServerWorker) UdpAssociateHandler(
 	}
 
 	// reserve check pass
-	pc, err := net.ListenPacket("udp", destStr)
+	remoteOpt := message.GetStackOptionInfo(cc.Request.Options, false)
+	pc, remoteAppliedOpt, err := s.Outbound.ListenPacket(ctx, remoteOpt, cc.Destination())
 	code := getReplyCode(err)
 	if code != message.OperationReplySuccess {
 		cc.WriteReplyCode(code)
 		return
 	}
-	remoteOpt := message.GetStackOptionInfo(cc.Request.Options, false)
-	remoteAppliedOpt := message.StackOptionInfo{}
 	var reservedAddr net.Addr
 	if ippod, ok := remoteOpt[message.StackOptionUDPPortParity]; ok {
 		appliedPpod := message.PortParityOptionData{

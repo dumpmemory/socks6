@@ -72,6 +72,6 @@ func main() {
 		Address:       "0.0.0.0",
 		Cert:          kp,
 	}
-	s.Start(context.Background())
+	s.Start(context.Background(), nil)
 	time.Sleep(8 * time.Hour)
 }
