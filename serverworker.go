@@ -156,7 +156,7 @@ func (s *ServerWorker) ServeStream(
 		// run stage 2
 		lg.Debug(ccid, "auth stage 2")
 
-		result2, err := s.Authenticator.ContinueAuthenticate(sac)
+		result2, err := s.Authenticator.ContinueAuthenticate(sac, *req)
 		if err != nil {
 			lg.Warning(ccid, "auth stage 2 error", err)
 			conn.Write(message.NewAuthenticationReplyWithType(message.AuthenticationReplyFail).Marshal())
