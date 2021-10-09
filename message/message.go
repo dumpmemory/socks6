@@ -67,7 +67,10 @@ func ParseRequestFrom(b io.Reader) (*Request, error) {
 	return r, nil
 }
 func (r *Request) Marshal() (buf []byte) {
-	ops := r.Options.Marshal()
+	ops := []byte{}
+	if r.Options != nil {
+		ops = r.Options.Marshal()
+	}
 	addr := r.Endpoint.MarshalAddress()
 
 	b := bytes.NewBuffer(buf)

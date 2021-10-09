@@ -3,6 +3,8 @@ package auth
 import (
 	"context"
 	"net"
+
+	"github.com/studentmain/socks6/message"
 )
 
 type ServerAuthenticationMethod interface {
@@ -30,4 +32,28 @@ func NewServerAuthenticationChannels() *ServerAuthenticationChannels {
 		Continue: make(chan bool, 1),
 		Err:      make(chan error, 1),
 	}
+}
+
+type ClientAuthenticationChannels struct {
+	Data           chan []byte
+	FirstAuthReply chan *message.AuthenticationReply
+	FinalAuthReply chan *message.AuthenticationReply
+	Error          chan error
+}
+
+func NewClientAuthenticationChannels() *ClientAuthenticationChannels {
+	return &ClientAuthenticationChannels{
+		Data:           make(chan []byte, 1),
+		FirstAuthReply: make(chan *message.AuthenticationReply, 1),
+		FinalAuthReply: make(chan *message.AuthenticationReply, 1),
+		Error:          make(chan error, 1),
+	}
+}
+
+type ClientAuthenticationMethod interface {
+	Authenticate(
+		ctx context.Context,
+		conn net.Conn,
+		cac ClientAuthenticationChannels,
+	) (*message.AuthenticationReply, error)
 }

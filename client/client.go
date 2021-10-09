@@ -1,15 +1,15 @@
 package client
 
 import (
-	"bytes"
+	"context"
 	"crypto/tls"
 	"errors"
 	"net"
 	"strconv"
-	"sync"
-	"time"
 
 	"github.com/pion/dtls/v2"
+	"github.com/studentmain/socks6/auth"
+	"github.com/studentmain/socks6/internal"
 	"github.com/studentmain/socks6/internal/lg"
 	"github.com/studentmain/socks6/message"
 )
@@ -19,38 +19,34 @@ type Client struct {
 	EncryptedPort uint16
 	CleartextPort uint16
 
-	UDPOverTCP bool
-	Dialer     net.Dialer
+	UDPOverTCP             bool
+	Dialer                 net.Dialer
+	AuthenticationMethod   auth.ClientAuthenticationMethod
+	AuthenticationMethodId byte
+
+	UseSession bool
+	UseToken   uint32
+	Backlog    int
+
+	session  []byte
+	token    uint32
+	maxToken uint32
 }
 
 func (c *Client) Dial(network string, addr string) (net.Conn, error) {
-	tcc := TCPConnectClient{}
-	sconn, err := c.makeStreamConn()
+	return c.DialWithOption(network, addr, nil, nil)
+}
+
+func (c *Client) DialWithOption(network string, addr string, initData []byte, option *message.OptionSet) (net.Conn, error) {
+	sconn, opr, err := c.handshake(context.TODO(), message.CommandConnect, addr, initData, option)
 	if err != nil {
 		return nil, err
 	}
-	_, err = sconn.Write((&message.Request{
-		CommandCode: message.CommandConnect,
-		Endpoint:    message.ParseAddr(addr),
-	}).Marshal())
-	if err != nil {
-		return nil, err
-	}
-	tcc.base = sconn
-	tcc.remote = message.ParseAddr(addr)
-	// todo auth
-	_, err = message.ParseAuthenticationReplyFrom(sconn)
-	if err != nil {
-		return nil, err
-	}
-	opr, err := message.ParseOperationReplyFrom(sconn)
-	if err != nil {
-		return nil, err
-	}
-	if opr.ReplyCode != 0 {
-		return nil, errors.New("operation reply fail")
-	}
-	return &tcc, nil
+	return &TCPConnectClient{
+		base:   sconn,
+		remote: message.ParseAddr(addr),
+		rbind:  opr.Endpoint,
+	}, nil
 }
 
 func (c *Client) Listen(network string, addr string) (net.Listener, error) {
@@ -58,34 +54,21 @@ func (c *Client) Listen(network string, addr string) (net.Listener, error) {
 }
 
 func (c *Client) ListenUDP(network string, addr string) (net.PacketConn, error) {
+	sconn, opr, err := c.handshake(
+		context.TODO(),
+		message.CommandUdpAssociate,
+		addr,
+		[]byte{},
+		nil,
+	)
+	if err != nil {
+		return nil, err
+	}
 	uc := UDPClient{
-		uot: c.UDPOverTCP,
+		uot:   c.UDPOverTCP,
+		rbind: opr.Endpoint,
 	}
-	sconn, err := c.makeStreamConn()
-	if err != nil {
-		return nil, err
-	}
-	_, err = sconn.Write((&message.Request{
-		CommandCode: message.CommandUdpAssociate,
-		Endpoint:    message.ParseAddr(addr),
-	}).Marshal())
-	if err != nil {
-		return nil, err
-	}
-	ar, err := message.ParseAuthenticationReplyFrom(sconn)
-	if err != nil {
-		return nil, err
-	}
-	if ar.Type != message.AuthenticationReplySuccess {
-		return nil, errors.New("auth fail")
-	}
-	opr, err := message.ParseOperationReplyFrom(sconn)
-	if err != nil {
-		return nil, err
-	}
-	if opr.ReplyCode != message.OperationReplySuccess {
-		return nil, errors.New("op fail")
-	}
+
 	u1, err := message.ParseUDPHeaderFrom(sconn)
 	if err != nil {
 		return nil, err
@@ -112,6 +95,15 @@ func (c *Client) ListenUDP(network string, addr string) (net.PacketConn, error) 
 	}
 
 	return &uc, nil
+}
+
+func (c *Client) Test() error {
+	sconn, _, err := c.handshake(context.TODO(), message.CommandNoop, ":0", []byte{}, nil)
+	if err != nil {
+		return err
+	}
+	sconn.Close()
+	return nil
 }
 
 func (c *Client) makeStreamConn() (net.Conn, error) {
@@ -176,217 +168,166 @@ func (c *Client) bind(conn net.Conn, isAccept bool) error {
 	return nil
 }
 
-func (c *Client) auth(req *message.Request) error {
+func (c *Client) authn(req message.Request, sconn net.Conn, initData []byte) error {
+	var cac *auth.ClientAuthenticationChannels
+	if len(c.session) > 0 {
+		// use session
+		req.Options.Add(message.Option{Kind: message.OptionKindSessionID, Data: message.SessionIDOptionData{ID: c.session}})
+		if c.maxToken-c.token > 0 {
+			// use token
+			req.Options.Add(message.Option{Kind: message.OptionKindIdempotenceExpenditure, Data: message.IdempotenceExpenditureOptionData{Token: c.token}})
+			c.token++
+			// request token when necessary
+			if c.maxToken-c.token < c.UseToken/8 {
+				req.Options.Add(message.Option{Kind: message.OptionKindTokenRequest, Data: message.TokenRequestOptionData{WindowSize: c.UseToken}})
+			}
+		}
+	} else {
+		ld := len(initData)
+		if ld > 0 || c.AuthenticationMethodId != 0 {
+			req.Options.Add(message.Option{
+				Kind: message.OptionKindAuthenticationMethodAdvertisement,
+				Data: message.AuthenticationMethodAdvertisementOptionData{
+					InitialDataLength: uint16(ld),
+					Methods:           []byte{c.AuthenticationMethodId},
+				},
+			})
+		}
+		if c.AuthenticationMethodId != 0 {
+			cac = auth.NewClientAuthenticationChannels()
+			go c.AuthenticationMethod.Authenticate(context.TODO(), sconn, *cac)
+			data := <-cac.Data
+			if len(data) > 0 {
+				req.Options.Add(message.Option{Kind: message.OptionKindAuthenticationData, Data: message.AuthenticationDataOptionData{
+					Method: c.AuthenticationMethodId,
+					Data:   data,
+				}})
+			}
+		}
+
+		// request session and token
+		if c.UseSession {
+			req.Options.Add(message.Option{Kind: message.OptionKindSessionRequest, Data: message.SessionRequestOptionData{}})
+			if c.UseToken != 0 {
+				req.Options.Add(message.Option{Kind: message.OptionKindTokenRequest, Data: message.TokenRequestOptionData{WindowSize: c.UseToken}})
+			}
+		}
+	}
+
+	_, err := sconn.Write(req.Marshal())
+	if err != nil {
+		return err
+	}
+	// todo auth
+	aurep1, err := message.ParseAuthenticationReplyFrom(sconn)
+	if err != nil {
+		return err
+	}
+	var finalRep *message.AuthenticationReply
+
+	// authn finished
+	if aurep1.Type == message.AuthenticationReplySuccess {
+		finalRep = aurep1
+	} else {
+		if d, s := aurep1.Options.GetData(message.OptionKindAuthenticationMethodSelection); !s {
+			finalRep = aurep1
+		} else if d.(message.AuthenticationMethodSelectionOptionData).Method != c.AuthenticationMethodId {
+			finalRep = aurep1
+		}
+	}
+
+	if finalRep == nil && cac == nil {
+		return errors.New("server wants 2 stage authn")
+	}
+	if cac != nil {
+		cac.FirstAuthReply <- finalRep
+		err := <-cac.Error
+		finalRep = <-cac.FinalAuthReply
+		if err != nil {
+			return err
+		}
+	}
+
+	if finalRep.Type != message.AuthenticationReplySuccess {
+		return errors.New("authn fail")
+	}
+	if _, f := finalRep.Options.GetData(message.OptionKindSessionInvalid); f {
+		c.session = []byte{}
+		return errors.New("session fail")
+	}
+	if _, f := finalRep.Options.GetData(message.OptionKindIdempotenceRejected); f {
+		c.maxToken = 0
+		return errors.New("token fail")
+	}
+	if c.UseSession {
+		if _, f := finalRep.Options.GetData(message.OptionKindSessionOK); !f {
+			return errors.New("session fail")
+		}
+
+		if c.UseToken > 0 {
+			if _, f := finalRep.Options.GetData(message.OptionKindIdempotenceAccepted); !f {
+				return errors.New("token fail")
+			}
+			if d, ok := finalRep.Options.GetData(message.OptionKindIdempotenceWindow); ok {
+				dd := d.(message.IdempotenceWindowOptionData)
+				c.token = dd.WindowBase
+				c.maxToken = dd.WindowSize
+			} else {
+				if c.maxToken == 0 {
+					return errors.New("token fail")
+				}
+			}
+		}
+	}
 	return nil
 }
 
-type UDPClient struct {
-	base    net.Conn
-	uot     bool
-	assocId uint64
-	uotAck  bool
-	rlock   sync.Mutex // needn't write lock, write message is finished in 1 write, but read message is in many read
-	assocOk bool
-}
-
-func (u *UDPClient) ReadFrom(p []byte) (n int, addr net.Addr, err error) {
-	if u.uot {
-		u.rlock.Lock()
-		defer u.rlock.Unlock()
-	}
-	if !u.uotAck && u.uot {
-		_, err := message.ParseUDPHeaderFrom(u.base)
-		if err != nil {
-			return 0, nil, err
-		}
-	}
-	h := message.UDPHeader{}
-	if u.uot {
-		_, err := message.ParseUDPHeaderFrom(u.base)
-		if err != nil {
-			return 0, nil, err
-		}
-	} else {
-		buf := make([]byte, 4096)
-		l, err := u.base.Read(buf)
-		if err != nil {
-			return 0, nil, err
-		}
-		_, err = message.ParseUDPHeaderFrom(bytes.NewReader(buf[:l]))
-		if err != nil {
-			return 0, nil, err
-		}
-	}
-	if h.AssociationID != u.assocId {
-		return 0, nil, message.ErrFormat
-	}
-	if h.Type != message.UDPMessageDatagram {
-		// todo icmp error
-		return 0, nil, message.ErrFormat
-	}
-	addr, err = net.ResolveUDPAddr("udp", h.Endpoint.String())
+func (c *Client) handshake(
+	ctx context.Context,
+	op message.CommandCode,
+	addr string,
+	initData []byte,
+	option *message.OptionSet,
+) (net.Conn, *message.OperationReply, error) {
+	sconn, err := c.makeStreamConn()
 	if err != nil {
-		return 0, nil, err
+		return nil, nil, err
 	}
-	ld := len(h.Data)
-	lp := len(p)
-	if ld > lp {
-		n = copy(p, h.Data[:lp])
-	} else {
-		n = copy(p[:ld], h.Data)
-	}
-	return
-}
+	cd := internal.NewCancellableDefer(func() {
+		sconn.Close()
+	})
+	defer cd.Defer()
 
-func (u *UDPClient) WriteTo(p []byte, addr net.Addr) (n int, err error) {
-	h := message.UDPHeader{
-		Type:          message.UDPMessageDatagram,
-		AssociationID: u.assocId,
-		Endpoint:      message.ParseAddr(addr.String()),
-		Data:          p,
+	if option == nil {
+		option = message.NewOptionSet()
+	}
+	req := message.Request{
+		CommandCode: op,
+		Endpoint:    message.ParseAddr(addr),
+		Options:     option,
 	}
 
-	n, err = u.base.Write(h.Marshal())
-	return
-}
+	if err := c.authn(req, sconn, initData); err != nil {
+		return nil, nil, err
+	}
 
-func (u *UDPClient) Close() error {
-	return u.base.Close()
-}
-
-func (u *UDPClient) LocalAddr() net.Addr {
-	return u.base.LocalAddr()
-}
-
-func (u *UDPClient) SetDeadline(t time.Time) error {
-	return u.base.SetDeadline(t)
-}
-func (u *UDPClient) SetReadDeadline(t time.Time) error {
-	return u.base.SetReadDeadline(t)
-}
-func (u *UDPClient) SetWriteDeadline(t time.Time) error {
-	return u.base.SetWriteDeadline(t)
-}
-
-type TCPBindClient struct {
-	base    net.Conn
-	backlog uint16
-	c       Client
-	lock    sync.Mutex
-}
-
-func (t *TCPBindClient) Accept() (net.Conn, error) {
-	t.lock.Lock()
-	oprep := message.OperationReply{}
-	// read oprep2
-	_, err := message.ParseOperationReplyFrom(t.base)
+	opr, err := message.ParseOperationReplyFrom(sconn)
 	if err != nil {
-		t.lock.Unlock()
-		return nil, err
+		return nil, nil, err
 	}
-	tbc := tcpBindConn{
-		remote: oprep.Endpoint,
+	if opr.ReplyCode != 0 {
+		return nil, nil, errors.New("operation reply fail")
 	}
-	if t.backlog == 0 {
-		tbc.base = t.base
-		t.lock.Unlock()
-		return &tbc, nil
-	} else {
-		t.lock.Unlock()
-		conn, err := t.c.makeStreamConn()
-		if err != nil {
-			return nil, err
-		}
-		tbc.base = conn
-		err = t.c.bind(conn, true)
-		if err != nil {
-			return nil, err
+	if c.UseSession {
+		if d, ok := opr.Options.GetData(message.OptionKindSessionID); ok {
+			c.session = d.(message.SessionIDOptionData).ID
+		} else {
+			if len(c.session) == 0 {
+				return nil, nil, errors.New("session fail")
+			}
 		}
 	}
-	return tbc, nil
-}
 
-func (t *TCPBindClient) Close() error {
-	return t.base.Close()
-}
-
-func (t *TCPBindClient) Addr() net.Addr {
-	return t.base.LocalAddr()
-}
-
-type tcpBindConn struct {
-	base   net.Conn
-	remote net.Addr
-}
-
-func (t tcpBindConn) Read(b []byte) (n int, err error) {
-	return t.base.Read(b)
-}
-
-func (t tcpBindConn) Write(b []byte) (n int, err error) {
-	return t.base.Write(b)
-}
-
-func (t tcpBindConn) Close() error {
-	return t.base.Close()
-}
-
-func (t tcpBindConn) LocalAddr() net.Addr {
-	return t.base.LocalAddr()
-}
-
-func (t tcpBindConn) RemoteAddr() net.Addr {
-	return t.remote
-}
-
-func (tc tcpBindConn) SetDeadline(t time.Time) error {
-	return tc.base.SetDeadline(t)
-}
-
-func (tc tcpBindConn) SetReadDeadline(t time.Time) error {
-	return tc.base.SetReadDeadline(t)
-}
-
-func (tc tcpBindConn) SetWriteDeadline(t time.Time) error {
-	return tc.base.SetWriteDeadline(t)
-}
-
-type TCPConnectClient struct {
-	base   net.Conn
-	remote net.Addr
-}
-
-func (t *TCPConnectClient) Read(b []byte) (n int, err error) {
-	return t.base.Read(b)
-}
-
-func (t *TCPConnectClient) Write(b []byte) (n int, err error) {
-	return t.base.Write(b)
-}
-
-func (t *TCPConnectClient) Close() error {
-	return t.base.Close()
-}
-
-func (t *TCPConnectClient) LocalAddr() net.Addr {
-	return t.base.LocalAddr()
-}
-
-func (t *TCPConnectClient) RemoteAddr() net.Addr {
-	return t.remote
-}
-
-func (tc *TCPConnectClient) SetDeadline(t time.Time) error {
-	return tc.base.SetDeadline(t)
-}
-
-// SetReadDeadline sets the deadline for future Read calls
-// and any currently-blocked Read call.
-// A zero value for t means Read will not time out.
-func (tc *TCPConnectClient) SetReadDeadline(t time.Time) error {
-	return tc.base.SetReadDeadline(t)
-}
-
-func (tc *TCPConnectClient) SetWriteDeadline(t time.Time) error {
-	return tc.base.SetWriteDeadline(t)
+	cd.Cancel()
+	return sconn, opr, nil
 }
