@@ -17,6 +17,7 @@ type UDPClient struct {
 	rlock   sync.Mutex // needn't write lock, write message is finished in 1 write, but read message is in many read
 	assocOk bool
 	rbind   net.Addr
+	icmp    bool
 }
 
 func (u *UDPClient) ReadFrom(p []byte) (n int, addr net.Addr, err error) {
@@ -50,8 +51,10 @@ func (u *UDPClient) ReadFrom(p []byte) (n int, addr net.Addr, err error) {
 	if h.AssociationID != u.assocId {
 		return 0, nil, message.ErrFormat
 	}
-	if h.Type != message.UDPMessageDatagram {
+	if h.Type == message.UDPMessageError && u.icmp {
 		// todo icmp error
+
+	} else if h.Type != message.UDPMessageDatagram {
 		return 0, nil, message.ErrFormat
 	}
 	addr, err = net.ResolveUDPAddr("udp", h.Endpoint.String())

@@ -11,9 +11,11 @@ import (
 type TCPBindClient struct {
 	base    net.Conn
 	backlog uint16
-	c       Client
+	remote  net.Addr
+	c       *Client
 	lock    sync.Mutex
 	used    bool
+	op      *message.OptionSet
 }
 
 func (t *TCPBindClient) Accept() (net.Conn, error) {
@@ -21,9 +23,8 @@ func (t *TCPBindClient) Accept() (net.Conn, error) {
 	if t.used {
 		return nil, &net.OpError{}
 	}
-	oprep := message.OperationReply{}
 	// read oprep2
-	_, err := message.ParseOperationReplyFrom(t.base)
+	oprep, err := message.ParseOperationReplyFrom(t.base)
 	if err != nil {
 		t.lock.Unlock()
 		return nil, err
@@ -37,18 +38,12 @@ func (t *TCPBindClient) Accept() (net.Conn, error) {
 		t.lock.Unlock()
 		return &tbc, nil
 	} else {
-		t.lock.Unlock()
-		conn, err := t.c.makeStreamConn()
+		tbc, err := t.c.listenWithOption("tcp", t.remote.String(), t.op)
 		if err != nil {
 			return nil, err
 		}
-		tbc.base = conn
-		err = t.c.bind(conn, true)
-		if err != nil {
-			return nil, err
-		}
+		return tbc.Accept()
 	}
-	return tbc, nil
 }
 
 func (t *TCPBindClient) Close() error {

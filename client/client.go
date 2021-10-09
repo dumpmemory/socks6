@@ -50,7 +50,33 @@ func (c *Client) DialWithOption(network string, addr string, initData []byte, op
 }
 
 func (c *Client) Listen(network string, addr string) (net.Listener, error) {
-	return nil, nil
+	return c.listenWithOption(network, addr, nil)
+}
+
+func (c *Client) ListenWithOption(network string, addr string, option *message.OptionSet) (net.Listener, error) {
+	return c.listenWithOption(network, addr, option)
+}
+
+func (c *Client) listenWithOption(network string, addr string, option *message.OptionSet) (*TCPBindClient, error) {
+	// todo backlog option
+	sconn, opr, err := c.handshake(context.TODO(), message.CommandBind, addr, []byte{}, option)
+	if err != nil {
+		return nil, err
+	}
+	rso := message.GetStackOptionInfo(opr.Options, false)
+	bl := uint16(0)
+	if ibl, ok := rso[message.StackOptionTCPBacklog]; ok {
+		bl = ibl.(uint16)
+	}
+
+	return &TCPBindClient{
+		base:    sconn,
+		backlog: bl,
+		remote:  opr.Endpoint,
+		c:       c,
+		used:    false,
+		op:      option,
+	}, nil
 }
 
 func (c *Client) ListenUDP(network string, addr string) (net.PacketConn, error) {
@@ -161,11 +187,6 @@ func (c *Client) makeDGramConn() (net.Conn, error) {
 		nc = pc
 	}
 	return nc, nil
-}
-
-func (c *Client) bind(conn net.Conn, isAccept bool) error {
-	//todo
-	return nil
 }
 
 func (c *Client) authn(req message.Request, sconn net.Conn, initData []byte) error {
