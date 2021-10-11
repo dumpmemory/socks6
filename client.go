@@ -1,4 +1,4 @@
-package client
+package socks6
 
 import (
 	"context"
@@ -50,14 +50,10 @@ func (c *Client) DialWithOption(network string, addr string, initData []byte, op
 }
 
 func (c *Client) Listen(network string, addr string) (net.Listener, error) {
-	return c.listenWithOption(network, addr, nil)
+	return c.ListenWithOption(network, addr, nil)
 }
 
-func (c *Client) ListenWithOption(network string, addr string, option *message.OptionSet) (net.Listener, error) {
-	return c.listenWithOption(network, addr, option)
-}
-
-func (c *Client) listenWithOption(network string, addr string, option *message.OptionSet) (*TCPBindClient, error) {
+func (c *Client) ListenWithOption(network string, addr string, option *message.OptionSet) (*TCPBindClient, error) {
 	// todo backlog option
 	sconn, opr, err := c.handshake(context.TODO(), message.CommandBind, addr, []byte{}, option)
 	if err != nil {
@@ -79,7 +75,7 @@ func (c *Client) listenWithOption(network string, addr string, option *message.O
 	}, nil
 }
 
-func (c *Client) ListenUDP(network string, addr string) (net.PacketConn, error) {
+func (c *Client) ListenUDP(network string, addr string) (*UDPClient, error) {
 	sconn, opr, err := c.handshake(
 		context.TODO(),
 		message.CommandUdpAssociate,
@@ -91,35 +87,20 @@ func (c *Client) ListenUDP(network string, addr string) (net.PacketConn, error) 
 		return nil, err
 	}
 	uc := UDPClient{
-		uot:   c.UDPOverTCP,
-		rbind: opr.Endpoint,
+		overTcp: c.UDPOverTCP,
+		base:    sconn,
+		rbind:   opr.Endpoint,
 	}
-
-	u1, err := message.ParseUDPHeaderFrom(sconn)
-	if err != nil {
-		return nil, err
-	}
-	uc.assocId = u1.AssociationID
-
-	if uc.uot {
-		uc.base = sconn
+	if uc.overTcp {
+		uc.conn = uc.base
 	} else {
-		uc.assocOk = true
-		go func() {
-			for {
-				rb := make([]byte, 256)
-				_, err := sconn.Read(rb)
-				if err != nil {
-					uc.assocOk = false
-				}
-			}
-		}()
-		uc.base, err = c.makeDGramConn()
+		dc, err := c.makeDGramConn()
 		if err != nil {
 			return nil, err
 		}
+		uc.conn = dc
 	}
-
+	uc.init()
 	return &uc, nil
 }
 

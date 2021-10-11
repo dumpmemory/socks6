@@ -35,6 +35,10 @@ type udpAssociation struct {
 
 func newUdpAssociation(cc ClientConn, udp net.PacketConn, pair net.Addr) *udpAssociation {
 	id := internal.RandUint64()
+	ps := ""
+	if pair != nil {
+		ps = message.AddrString(pair)
+	}
 	return &udpAssociation{
 		id:  id,
 		udp: udp,
@@ -43,7 +47,7 @@ func newUdpAssociation(cc ClientConn, udp net.PacketConn, pair net.Addr) *udpAss
 		acceptTcp:   false,
 		assocOk:     false,
 		acceptDgram: "......",
-		pair:        message.AddrString(pair),
+		pair:        ps,
 	}
 }
 
@@ -108,7 +112,9 @@ func (u *udpAssociation) handleUdpUp(ctx context.Context, cp ClientPacket) {
 		if msg.Type != message.UDPMessageDatagram {
 			return
 		}
-		u.send(msg)
+		if err := u.send(msg); err != nil {
+			lg.Warning(err)
+		}
 	}
 }
 
@@ -138,7 +144,11 @@ func (u *udpAssociation) handleUdpDown(ctx context.Context) {
 }
 
 func (u *udpAssociation) send(msg *message.UDPHeader) error {
-	_, err := u.udp.WriteTo(msg.Data, msg.Endpoint)
+	a, err := net.ResolveUDPAddr("udp", msg.Endpoint.String())
+	if err != nil {
+		return err
+	}
+	_, err = u.udp.WriteTo(msg.Data, a)
 	return err
 }
 

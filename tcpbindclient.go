@@ -1,4 +1,4 @@
-package client
+package socks6
 
 import (
 	"net"
@@ -38,7 +38,7 @@ func (t *TCPBindClient) Accept() (net.Conn, error) {
 		t.lock.Unlock()
 		return &tbc, nil
 	} else {
-		tbc, err := t.c.listenWithOption("tcp", t.remote.String(), t.op)
+		tbc, err := t.c.ListenWithOption("tcp", t.remote.String(), t.op)
 		if err != nil {
 			return nil, err
 		}

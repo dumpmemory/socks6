@@ -269,7 +269,8 @@ func (u *UDPHeader) Marshal() []byte {
 
 		b.WriteByte(byte(u.Endpoint.AddressType))
 		b.WriteByte(0)
-		binary.Write(&b, binary.BigEndian, uint16(len(addr)))
+		binary.Write(&b, binary.BigEndian, u.Endpoint.Port)
+
 		b.Write(addr)
 
 		b.Write(u.Data)
@@ -304,7 +305,7 @@ func ParseUDPHeaderFrom(b io.Reader) (*UDPHeader, error) {
 	u := &UDPHeader{}
 	buf := internal.BytesPool64k.Rent()
 	defer internal.BytesPool64k.Return(buf)
-	if _, err := io.ReadFull(b, buf[:8]); err != nil {
+	if _, err := io.ReadFull(b, buf[:12]); err != nil {
 		return nil, err
 	}
 	if buf[0] != 6 {
@@ -331,7 +332,7 @@ func ParseUDPHeaderFrom(b io.Reader) (*UDPHeader, error) {
 	}
 	addr.Port = binary.BigEndian.Uint16(buf[2:])
 	u.Endpoint = addr
-	remainLen := totalLen - uint16(addr.AddrLen())
+	remainLen := totalLen - uint16(addr.AddrLen()) - 16
 	if u.Type == UDPMessageDatagram {
 		if _, err := io.ReadFull(b, buf[:remainLen]); err != nil {
 			return nil, err

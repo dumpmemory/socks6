@@ -1,4 +1,4 @@
-package client
+package socks6
 
 import (
 	"net"

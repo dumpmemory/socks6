@@ -35,29 +35,57 @@ type ServerWorker struct {
 
 	Outbound ServerOutbound
 
-	backlogListener sync.Map // map[string]*bl
-	reservedUdpAddr sync.Map // map[string]uint64
-	udpAssociation  sync.Map // map[uint64]*ua
+	backlogListener *sync.Map // map[string]*bl
+	reservedUdpAddr *sync.Map // map[string]uint64
+	udpAssociation  *sync.Map // map[uint64]*ua
 }
 
 type ServerOutbound interface {
-	Dial(ctx context.Context, option message.StackOptionInfo, addr net.Addr) (net.Conn, message.StackOptionInfo, error)
-	Listen(ctx context.Context, option message.StackOptionInfo, addr net.Addr) (net.Listener, message.StackOptionInfo, error)
-	ListenPacket(ctx context.Context, option message.StackOptionInfo, addr net.Addr) (net.PacketConn, message.StackOptionInfo, error)
+	Dial(ctx context.Context, option message.StackOptionInfo, addr *message.Socks6Addr) (net.Conn, message.StackOptionInfo, error)
+	Listen(ctx context.Context, option message.StackOptionInfo, addr *message.Socks6Addr) (net.Listener, message.StackOptionInfo, error)
+	ListenPacket(ctx context.Context, option message.StackOptionInfo, addr *message.Socks6Addr) (net.PacketConn, message.StackOptionInfo, error)
 }
 
-type InternetServerOutbound struct{}
+type InternetServerOutbound struct {
+	DefaultIPv4        net.IP
+	DefaultIPv6        net.IP
+	MulticastInterface *net.Interface
+}
 
-func (i InternetServerOutbound) Dial(ctx context.Context, option message.StackOptionInfo, addr net.Addr) (net.Conn, message.StackOptionInfo, error) {
+func (i InternetServerOutbound) Dial(ctx context.Context, option message.StackOptionInfo, addr *message.Socks6Addr) (net.Conn, message.StackOptionInfo, error) {
 	a := message.ParseAddr(addr.String())
 	return socket.DialWithOption(ctx, *a, option)
 }
-func (i InternetServerOutbound) Listen(ctx context.Context, option message.StackOptionInfo, addr net.Addr) (net.Listener, message.StackOptionInfo, error) {
+func (i InternetServerOutbound) Listen(ctx context.Context, option message.StackOptionInfo, addr *message.Socks6Addr) (net.Listener, message.StackOptionInfo, error) {
 	a := message.ParseAddr(addr.String())
 	return socket.ListenerWithOption(ctx, *a, option)
 }
-func (i InternetServerOutbound) ListenPacket(ctx context.Context, option message.StackOptionInfo, addr net.Addr) (net.PacketConn, message.StackOptionInfo, error) {
-	p, err := net.ListenPacket("udp", addr.String())
+func (i InternetServerOutbound) ListenPacket(ctx context.Context, option message.StackOptionInfo, addr *message.Socks6Addr) (net.PacketConn, message.StackOptionInfo, error) {
+	mcast := false
+	if addr.AddressType != message.AddressTypeDomainName {
+		ip := net.IP(addr.Address)
+		if ip.IsMulticast() {
+			mcast = true
+		} else if ip.IsUnspecified() {
+			if addr.AddressType == message.AddressTypeIPv4 {
+				addr.Address = i.DefaultIPv4
+			} else {
+				addr.Address = i.DefaultIPv6
+			}
+		}
+	} else {
+		return nil, nil, message.ErrAddressTypeNotSupport
+	}
+	ua, err := net.ResolveUDPAddr("udp", addr.String())
+	if err != nil {
+		return nil, nil, err
+	}
+	if mcast {
+		p, err := net.ListenMulticastUDP("udp", i.MulticastInterface, ua)
+		return p, message.StackOptionInfo{}, err
+	}
+
+	p, err := net.ListenUDP("udp", ua)
 	return p, message.StackOptionInfo{}, err
 }
 
@@ -78,14 +106,20 @@ func NewServerWorker() *ServerWorker {
 	r := &ServerWorker{
 		VersionErrorHandler: ReplyVersionSpecificError,
 		Authenticator:       defaultAuth,
-		Outbound:            InternetServerOutbound{},
-		backlogListener:     sync.Map{},
+		Outbound: InternetServerOutbound{
+			DefaultIPv4: guessDefaultIP4(),
+			DefaultIPv6: guessDefaultIP6(),
+		},
+		backlogListener: &sync.Map{},
+		reservedUdpAddr: &sync.Map{},
+		udpAssociation:  &sync.Map{},
 	}
 
 	r.CommandHandlers = map[message.CommandCode]CommandHandler{
-		message.CommandNoop:    r.NoopHandler,
-		message.CommandConnect: r.ConnectHandler,
-		message.CommandBind:    r.BindHandler,
+		message.CommandNoop:         r.NoopHandler,
+		message.CommandConnect:      r.ConnectHandler,
+		message.CommandBind:         r.BindHandler,
+		message.CommandUdpAssociate: r.UdpAssociateHandler,
 	}
 
 	return r
@@ -440,6 +474,7 @@ func (s *ServerWorker) UdpAssociateHandler(
 		return
 	}
 	var reservedAddr net.Addr
+	// reserve port
 	if ippod, ok := remoteOpt[message.StackOptionUDPPortParity]; ok {
 		appliedPpod := message.PortParityOptionData{
 			Reserve: true,
@@ -469,9 +504,13 @@ func (s *ServerWorker) UdpAssociateHandler(
 			})
 		}
 	}
-
+	so := message.GetCombinedStackOptions(message.StackOptionInfo{}, remoteAppliedOpt)
+	opset := message.NewOptionSet()
+	opset.AddMany(so)
+	cc.WriteReply(message.OperationReplySuccess, pc.LocalAddr(), opset)
 	assoc := newUdpAssociation(cc, pc, reservedAddr)
 	s.udpAssociation.Store(assoc.id, assoc)
+	lg.Trace("start udp assoc", assoc.id)
 	if reservedAddr != nil {
 		s.reservedUdpAddr.Store(message.AddrString(reservedAddr), assoc.id)
 	}
@@ -495,12 +534,21 @@ func (s *ServerWorker) ClearUnusedResource(ctx context.Context) {
 
 		s.backlogListener.Range(func(key, value interface{}) bool {
 			bl := value.(*backlogListener)
-			if !bl.alive {
-				s.backlogListener.Delete(key)
+			if bl.alive {
+				return true
 			}
+			s.backlogListener.Delete(key)
 			return true
 		})
-
+		s.udpAssociation.Range(func(key, value interface{}) bool {
+			ua := value.(*udpAssociation)
+			if ua.alive {
+				return true
+			}
+			s.udpAssociation.Delete(key)
+			s.reservedUdpAddr.Delete(ua.pair)
+			return true
+		})
 	}
 }
 
