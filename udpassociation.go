@@ -2,6 +2,7 @@ package socks6
 
 import (
 	"context"
+	"errors"
 	"net"
 	"time"
 
@@ -70,31 +71,35 @@ func (u *udpAssociation) handleTcpUp(ctx context.Context) {
 	for {
 		msg, err := message.ParseUDPHeaderFrom(u.cc.Conn)
 		if err != nil {
-			lg.Warning(err)
+			u.reportErr(err)
 			return
+		}
+		if msg.AssociationID != u.id {
+			u.reportErr(errors.New("not same assoc"))
+			return
+		}
+		if msg.Type != message.UDPMessageDatagram {
+			continue
 		}
 
 		switch msg.Type {
-		case message.UDPMessageAssociationAck:
-			if !u.assocOk && msg.AssociationID == u.id {
+		case message.UDPMessageDatagram:
+			if !u.assocOk {
 				u.assocOk = true
 				u.acceptTcp = true
+				u.ack()
 				u.downlink = func(b []byte) error {
 					_, err := u.cc.Conn.Write(b)
 					return err
 				}
-			} else {
-				lg.Error(u.cc.ConnId(), "wrong association")
-				return
 			}
-		case message.UDPMessageDatagram:
 			if !u.acceptTcp {
 				lg.Error(u.cc.ConnId(), "should send association ack via tcp")
 				return
 			}
 			// todo report critical error
 			if err := u.send(msg); err != nil {
-				lg.Warning(err)
+				u.reportErr(err)
 			}
 		}
 	}
@@ -102,19 +107,22 @@ func (u *udpAssociation) handleTcpUp(ctx context.Context) {
 
 func (u *udpAssociation) handleUdpUp(ctx context.Context, cp ClientPacket) {
 	msg := cp.Message
+	if msg.Type != message.UDPMessageDatagram {
+		return
+	}
+	if msg.AssociationID != u.id {
+		u.reportErr(errors.New("not same assoc"))
+		return
+	}
+	// start assoc if necessary
 	if !u.assocOk {
-		if msg.Type == message.UDPMessageAssociationAck && msg.AssociationID == u.id {
-			u.assocOk = true
-			u.downlink = cp.Downlink
-			u.acceptDgram = message.AddrString(cp.Source)
-		}
-	} else {
-		if msg.Type != message.UDPMessageDatagram {
-			return
-		}
-		if err := u.send(msg); err != nil {
-			lg.Warning(err)
-		}
+		u.assocOk = true
+		u.acceptDgram = message.AddrString(cp.Source)
+		u.ack()
+		u.downlink = cp.Downlink
+	}
+	if err := u.send(msg); err != nil {
+		u.reportErr(err)
 	}
 }
 
@@ -152,8 +160,21 @@ func (u *udpAssociation) send(msg *message.UDPHeader) error {
 	return err
 }
 
+func (u *udpAssociation) ack() error {
+	h := message.UDPHeader{
+		Type:          message.UDPMessageAssociationAck,
+		AssociationID: u.id,
+	}
+	_, err := u.cc.Conn.Write(h.Marshal())
+	return err
+}
+
 func (u *udpAssociation) exit() {
 	u.alive = false
 	u.cc.Conn.Close()
 	u.udp.Close()
+}
+
+func (u *udpAssociation) reportErr(e error) {
+	lg.Warning("udp assoc err", e)
 }
