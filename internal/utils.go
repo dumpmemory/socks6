@@ -36,9 +36,14 @@ func SortByte(b []byte) {
 	sort.Slice(b, func(i, j int) bool { return b[i] < b[j] })
 }
 
+// Must2 passthrough first parameter, panic when second parameter is not nil
+//
+// Example:
+//
+// size:=Must2(conn.Write(data)).(int)
 func Must2(v interface{}, e error) interface{} {
 	if e != nil {
-		lg.Fatal(e)
+		lg.Panic(e)
 	}
 	return v
 }

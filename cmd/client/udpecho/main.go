@@ -1,22 +1,16 @@
 package main
 
 import (
-	"net"
-
 	"github.com/studentmain/socks6"
 	"github.com/studentmain/socks6/internal/lg"
 	"github.com/studentmain/socks6/message"
 )
 
-func t(u net.PacketConn) {
-
-}
 func main() {
 	c := socks6.Client{
-		ProxyHost:     "127.0.0.1",
-		CleartextPort: 10888,
+		Server: "127.0.0.1:10888",
 	}
-	pc, err := c.ListenUDP("udp", "127.0.0.1:0")
+	pc, err := c.ListenPacket("udp", "127.0.0.1:0")
 	if err != nil {
 		lg.Fatal(err)
 	}

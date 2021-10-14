@@ -12,16 +12,18 @@ import (
 	"github.com/studentmain/socks6/message"
 )
 
+// UDPClient represents a SOCKS 6 UDP client "connection", implements net.PacketConn, net.Conn
 type UDPClient struct {
-	base    net.Conn // original tcp conn
-	conn    net.Conn // data conn
-	overTcp bool
+	base       net.Conn // original tcp conn
+	conn       net.Conn // data conn
+	overTcp    bool
+	expectAddr net.Addr
 
 	assocId uint64
 
 	rlock sync.Mutex // needn't write lock, write message is finished in 1 write, but read message is in many read
-	rbind net.Addr
-	icmp  bool
+	rbind net.Addr   // remote bind addr
+	icmp  bool       // accept icmp error report
 }
 
 func (u *UDPClient) init() error {
@@ -36,7 +38,7 @@ func (u *UDPClient) init() error {
 	reply := message.UDPHeader{
 		Type:          message.UDPMessageDatagram,
 		AssociationID: u.assocId,
-		Endpoint:      message.ParseAddr("0.0.0.0:0"),
+		Endpoint:      message.DefaultAddr,
 	}
 
 	if _, err := u.conn.Write(reply.Marshal()); err != nil {
@@ -70,6 +72,21 @@ func (u *UDPClient) init() error {
 	}
 
 	return nil
+}
+
+func (u *UDPClient) Read(p []byte) (int, error) {
+	if u.expectAddr == nil {
+		return 0, errors.New("don't know read from where, use Dial to create connection")
+	}
+	for {
+		n, a, e := u.ReadFrom(p)
+		if e != nil {
+			return 0, e
+		}
+		if message.AddrString(a) == message.AddrString(u.expectAddr) {
+			return n, e
+		}
+	}
 }
 
 func (u *UDPClient) ReadFrom(p []byte) (int, net.Addr, error) {
@@ -131,11 +148,18 @@ func (u *UDPClient) ReadFrom(p []byte) (int, net.Addr, error) {
 	return n, addr, nil
 }
 
+func (u *UDPClient) Write(p []byte) (int, error) {
+	if u.expectAddr == nil {
+		return 0, errors.New("don't know write to where, use Dial to create connection")
+	}
+	return u.WriteTo(p, u.expectAddr)
+}
+
 func (u *UDPClient) WriteTo(p []byte, addr net.Addr) (int, error) {
 	h := message.UDPHeader{
 		Type:          message.UDPMessageDatagram,
 		AssociationID: u.assocId,
-		Endpoint:      message.ParseAddr(addr.String()),
+		Endpoint:      message.ConvertAddr(addr),
 		Data:          p,
 	}
 
@@ -158,6 +182,10 @@ func (u *UDPClient) Close() error {
 // LocalAddr return client-proxy connection's client side address
 func (u *UDPClient) LocalAddr() net.Addr {
 	return u.conn.LocalAddr()
+}
+
+func (u *UDPClient) RemoteAddr() net.Addr {
+	return u.expectAddr
 }
 
 // ProxyBindAddr return proxy's outbound address

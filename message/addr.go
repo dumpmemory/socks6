@@ -19,11 +19,38 @@ const (
 	AddressTypeIPv6       AddressType = 4
 )
 
+// Socks6Addr is address and port used in SOCKS6 protocol
 type Socks6Addr struct {
+	// address' type
 	AddressType AddressType
-	Address     []byte
-	Port        uint16
+	// actual address,
+	// if AddressType is IPv4/IPv6, contains IP address byte.
+	// If AddressType is DomainName, contains domain name without leading length byte and padding.
+	Address []byte
+	// tcp/udp/whateverp port
+	Port uint16
 }
+
+// AddrIPv4Zero is 0.0.0.0:0 in Socks6Addr format
+var AddrIPv4Zero *Socks6Addr = &Socks6Addr{
+	AddressType: AddressTypeIPv4,
+	Address:     []byte{0, 0, 0, 0},
+	Port:        0,
+}
+
+// AddrIPv6Zero is [::]:0 in Socks6Addr format
+var AddrIPv6Zero *Socks6Addr = &Socks6Addr{
+	AddressType: AddressTypeIPv6,
+	Address: []byte{
+		0, 0, 0, 0,
+		0, 0, 0, 0,
+		0, 0, 0, 0,
+		0, 0, 0, 0},
+	Port: 0,
+}
+
+// DefaultAddr is 0.0.0.0:0 in Socks6Addr format
+var DefaultAddr *Socks6Addr = AddrIPv4Zero
 
 func ParseAddr(addr string) *Socks6Addr {
 	r, err := NewAddr(addr)
@@ -33,9 +60,35 @@ func ParseAddr(addr string) *Socks6Addr {
 	return r
 }
 
-// AddrString create a stable string represtation for n
+// ConvertAddr try to convert net.Addr to Socks6Addr
+func ConvertAddr(addr net.Addr) *Socks6Addr {
+	var ip net.IP
+	var port int
+	switch a := addr.(type) {
+	case *net.TCPAddr:
+		ip = a.IP
+		port = a.Port
+	case *net.UDPAddr:
+		ip = a.IP
+		port = a.Port
+	default:
+		return ParseAddr(addr.String())
+	}
+	af := AddressTypeIPv6
+	if ip4 := ip.To4(); ip4 != nil {
+		af = AddressTypeIPv4
+		ip = ip4
+	}
+	return &Socks6Addr{
+		AddressType: af,
+		Address:     ip,
+		Port:        uint16(port),
+	}
+}
+
+// AddrString create a stable string represtation for input address for hashing purpose
 func AddrString(n net.Addr) string {
-	s6a := ParseAddr(n.String())
+	s6a := ConvertAddr(n)
 	return s6a.String()
 }
 
@@ -91,6 +144,8 @@ func (a *Socks6Addr) String() string {
 	}
 	return net.JoinHostPort(h, strconv.FormatInt(int64(a.Port), 10))
 }
+
+// MarshalAddress get host address' (without port) wireformat representation
 func (a *Socks6Addr) MarshalAddress() []byte {
 	if a.AddressType == AddressTypeDomainName {
 		r := append([]byte{byte(len(a.Address))}, a.Address...)
@@ -106,6 +161,8 @@ func (a *Socks6Addr) MarshalAddress() []byte {
 	}
 	return internal.Dup(a.Address[:l])
 }
+
+// ParseAddressFrom read address of given type from reader
 func ParseAddressFrom(b io.Reader, atyp AddressType) (*Socks6Addr, error) {
 	a := &Socks6Addr{}
 	a.AddressType = atyp
@@ -137,6 +194,8 @@ func ParseAddressFrom(b io.Reader, atyp AddressType) (*Socks6Addr, error) {
 		return a, nil
 	}
 }
+
+// AddrLen return host address' wireformat length without padding
 func (s *Socks6Addr) AddrLen() int {
 	switch s.AddressType {
 	case AddressTypeIPv4:

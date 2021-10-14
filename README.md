@@ -52,3 +52,4 @@ A fd based new network stack is needed in order to support them.
 - [SOCKS 6 draft GitHub repo](https://github.com/45G/socks6-draft)
 - [SOCKS 6 draft IETF tracker](https://datatracker.ietf.org/doc/draft-olteanu-intarea-socks-6/)
 - [go-shadowsocks2](https://github.com/shadowsocks/go-shadowsocks2)
+- [v2ray](https://github.com/v2fly/v2ray-core)

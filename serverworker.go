@@ -53,11 +53,11 @@ type InternetServerOutbound struct {
 }
 
 func (i InternetServerOutbound) Dial(ctx context.Context, option message.StackOptionInfo, addr *message.Socks6Addr) (net.Conn, message.StackOptionInfo, error) {
-	a := message.ParseAddr(addr.String())
+	a := message.ConvertAddr(addr)
 	return socket.DialWithOption(ctx, *a, option)
 }
 func (i InternetServerOutbound) Listen(ctx context.Context, option message.StackOptionInfo, addr *message.Socks6Addr) (net.Listener, message.StackOptionInfo, error) {
-	a := message.ParseAddr(addr.String())
+	a := message.ConvertAddr(addr)
 	return socket.ListenerWithOption(ctx, *a, option)
 }
 func (i InternetServerOutbound) ListenPacket(ctx context.Context, option message.StackOptionInfo, addr *message.Socks6Addr) (net.PacketConn, message.StackOptionInfo, error) {
@@ -94,14 +94,14 @@ func NewServerWorker() *ServerWorker {
 	defaultAuth := &auth.DefaultServerAuthenticator{
 		Methods: map[byte]auth.ServerAuthenticationMethod{},
 	}
-	defaultAuth.AddMethod(0, auth.NoneServerAuthenticationMethod{})
+	defaultAuth.AddMethod(auth.NoneServerAuthenticationMethod{})
 	// todo: remove them
-	defaultAuth.AddMethod(2, auth.PasswordServerAuthenticationMethod{
+	defaultAuth.AddMethod(auth.PasswordServerAuthenticationMethod{
 		Passwords: map[string]string{
 			"user": "pass",
 		},
 	})
-	defaultAuth.AddMethod(0xdd, auth.FakeEchoServerAuthenticationMethod{})
+	defaultAuth.AddMethod(auth.FakeEchoServerAuthenticationMethod{})
 
 	r := &ServerWorker{
 		VersionErrorHandler: ReplyVersionSpecificError,
@@ -482,7 +482,7 @@ func (s *ServerWorker) UdpAssociateHandler(
 		}
 		ppod := ippod.(message.PortParityOptionData)
 		if ppod.Reserve {
-			s6a := message.ParseAddr(pc.LocalAddr().String())
+			s6a := message.ConvertAddr(pc.LocalAddr())
 			if s6a.Port&1 == 0 {
 				s6a.Port += 1
 				appliedPpod.Parity = message.StackPortParityOptionParityEven
@@ -520,6 +520,8 @@ func (s *ServerWorker) UdpAssociateHandler(
 	go assoc.handleUdpDown(ctx)
 }
 
+// ClearUnusedResource clear no longer used resources (UDP associations, etc.)
+// only need to call it once for each ServerWorker
 func (s *ServerWorker) ClearUnusedResource(ctx context.Context) {
 	stop := false
 

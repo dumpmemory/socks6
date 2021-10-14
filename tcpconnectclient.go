@@ -5,6 +5,7 @@ import (
 	"time"
 )
 
+// TCPConnectClient represents a proxied TCP connection, implements net.Conn
 type TCPConnectClient struct {
 	base   net.Conn
 	remote net.Addr
@@ -43,9 +44,6 @@ func (tc *TCPConnectClient) SetDeadline(t time.Time) error {
 	return tc.base.SetDeadline(t)
 }
 
-// SetReadDeadline sets the deadline for future Read calls
-// and any currently-blocked Read call.
-// A zero value for t means Read will not time out.
 func (tc *TCPConnectClient) SetReadDeadline(t time.Time) error {
 	return tc.base.SetReadDeadline(t)
 }

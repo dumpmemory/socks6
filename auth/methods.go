@@ -14,6 +14,7 @@ type ServerAuthenticationMethod interface {
 		data []byte,
 		sac *ServerAuthenticationChannels,
 	)
+	ID() byte
 }
 
 // ServerAuthenticationChannels are three channels used to control auth step 2
@@ -56,4 +57,5 @@ type ClientAuthenticationMethod interface {
 		conn net.Conn,
 		cac ClientAuthenticationChannels,
 	) (*message.AuthenticationReply, error)
+	ID() byte
 }

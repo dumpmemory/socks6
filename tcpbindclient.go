@@ -38,7 +38,7 @@ func (t *TCPBindClient) Accept() (net.Conn, error) {
 		t.lock.Unlock()
 		return &tbc, nil
 	} else {
-		tbc, err := t.c.ListenWithOption("tcp", t.remote.String(), t.op)
+		tbc, err := t.c.BindRequest(t.remote.String(), t.op)
 		if err != nil {
 			return nil, err
 		}

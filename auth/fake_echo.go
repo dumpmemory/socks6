@@ -9,7 +9,7 @@ import (
 	"github.com/studentmain/socks6/message"
 )
 
-const AuthenticationMethodFakeEcho = 0xaa
+const authIdFakeEcho = 0xaa
 
 // FakeEchoServerAuthenticationMethod is a fake auth method to test interactive authentication phase
 type FakeEchoServerAuthenticationMethod struct{}
@@ -49,6 +49,9 @@ func (f FakeEchoServerAuthenticationMethod) Authenticate(
 	}
 	sac.Err <- nil
 }
+func (f FakeEchoServerAuthenticationMethod) ID() byte {
+	return authIdFakeEcho
+}
 
 type FakeEchoClientAuthenticationMethod struct{}
 
@@ -60,10 +63,13 @@ func (f FakeEchoClientAuthenticationMethod) Authenticate(
 	cac.Data <- []byte{}
 	rep1 := <-cac.FirstAuthReply
 	df, _ := rep1.Options.GetDataF(message.OptionKindAuthenticationData, func(o message.Option) bool {
-		return o.Data.(message.AuthenticationDataOptionData).Method == AuthenticationMethodFakeEcho
+		return o.Data.(message.AuthenticationDataOptionData).Method == authIdFakeEcho
 	})
 	if _, err := conn.Write(df.(message.AuthenticationDataOptionData).Data); err != nil {
 		return nil, err
 	}
 	return message.ParseAuthenticationReplyFrom(conn)
+}
+func (f FakeEchoClientAuthenticationMethod) ID() byte {
+	return authIdFakeEcho
 }

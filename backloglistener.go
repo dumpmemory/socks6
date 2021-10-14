@@ -48,9 +48,9 @@ func (b *backlogListener) handler(
 		cc.WriteReplyCode(message.OperationReplyServerFailure)
 	}
 	rep := message.NewOperationReplyWithCode(message.OperationReplySuccess)
-	rep.Endpoint = message.ParseAddr(b.listener.Addr().String())
+	rep.Endpoint = message.ConvertAddr(b.listener.Addr())
 	cc.WriteReplyAddr(message.OperationReplySuccess, b.listener.Addr())
-	rep.Endpoint = message.ParseAddr(c.RemoteAddr().String())
+	rep.Endpoint = message.ConvertAddr(c.RemoteAddr())
 	cc.WriteReplyAddr(message.OperationReplySuccess, c.RemoteAddr())
 
 	relay(ctx, cc.Conn, c, 10*time.Minute)

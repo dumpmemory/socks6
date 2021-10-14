@@ -5,7 +5,6 @@ import (
 	"crypto/tls"
 	"errors"
 	"net"
-	"strconv"
 
 	"github.com/pion/dtls/v2"
 	"github.com/studentmain/socks6/auth"
@@ -14,30 +13,54 @@ import (
 	"github.com/studentmain/socks6/message"
 )
 
+// Client is a SOCKS 6 client, implements net.Dialer, net.Listener
 type Client struct {
-	ProxyHost     string
-	EncryptedPort uint16
-	CleartextPort uint16
-
-	UDPOverTCP             bool
-	Dialer                 net.Dialer
-	AuthenticationMethod   auth.ClientAuthenticationMethod
-	AuthenticationMethodId byte
+	// server address
+	Server string
+	// use TLS and DTLS when connect to server
+	Encrypted bool
+	// send datagram over TCP
+	UDPOverTCP bool
+	// function to create underlying connection, net.Dial will used when it is nil
+	DialFunc             func(network string, addr string) (net.Conn, error)
+	AuthenticationMethod auth.ClientAuthenticationMethod
 
 	UseSession bool
-	UseToken   uint32
-	Backlog    int
+	// how much token will requested
+	UseToken uint32
+	// suggested bind backlog
+	Backlog int
 
 	session  []byte
 	token    uint32
 	maxToken uint32
 }
 
+// impl
+
 func (c *Client) Dial(network string, addr string) (net.Conn, error) {
-	return c.DialWithOption(network, addr, nil, nil)
+	if network[:3] == "udp" {
+		a, e := c.UDPAssociateRequest(":0", nil)
+		if e != nil {
+			return nil, e
+		}
+		a.expectAddr = message.ParseAddr(addr)
+		return a, nil
+	}
+	return c.ConnectRequest(addr, nil, nil)
 }
 
-func (c *Client) DialWithOption(network string, addr string, initData []byte, option *message.OptionSet) (net.Conn, error) {
+func (c *Client) Listen(network string, addr string) (net.Listener, error) {
+	return c.BindRequest(addr, nil)
+}
+
+func (c *Client) ListenPacket(network string, addr string) (net.PacketConn, error) {
+	return c.UDPAssociateRequest(addr, nil)
+}
+
+// raw requests
+
+func (c *Client) ConnectRequest(addr string, initData []byte, option *message.OptionSet) (net.Conn, error) {
 	sconn, opr, err := c.handshake(context.TODO(), message.CommandConnect, addr, initData, option)
 	if err != nil {
 		return nil, err
@@ -49,11 +72,7 @@ func (c *Client) DialWithOption(network string, addr string, initData []byte, op
 	}, nil
 }
 
-func (c *Client) Listen(network string, addr string) (net.Listener, error) {
-	return c.ListenWithOption(network, addr, nil)
-}
-
-func (c *Client) ListenWithOption(network string, addr string, option *message.OptionSet) (*TCPBindClient, error) {
+func (c *Client) BindRequest(addr string, option *message.OptionSet) (*TCPBindClient, error) {
 	// todo backlog option
 	sconn, opr, err := c.handshake(context.TODO(), message.CommandBind, addr, []byte{}, option)
 	if err != nil {
@@ -75,7 +94,7 @@ func (c *Client) ListenWithOption(network string, addr string, option *message.O
 	}, nil
 }
 
-func (c *Client) ListenUDP(network string, addr string) (*UDPClient, error) {
+func (c *Client) UDPAssociateRequest(addr string, option *message.OptionSet) (*UDPClient, error) {
 	sconn, opr, err := c.handshake(
 		context.TODO(),
 		message.CommandUdpAssociate,
@@ -104,7 +123,8 @@ func (c *Client) ListenUDP(network string, addr string) (*UDPClient, error) {
 	return &uc, nil
 }
 
-func (c *Client) Test() error {
+// NoopRequest send a NOOP request
+func (c *Client) NoopRequest() error {
 	sconn, _, err := c.handshake(context.TODO(), message.CommandNoop, ":0", []byte{}, nil)
 	if err != nil {
 		return err
@@ -113,12 +133,17 @@ func (c *Client) Test() error {
 	return nil
 }
 
+// common
+
 func (c *Client) makeStreamConn() (net.Conn, error) {
 	var nc net.Conn
-	if c.EncryptedPort != 0 {
+	df := net.Dial
+	if c.DialFunc != nil {
+		df = c.DialFunc
+	}
+	if c.Encrypted {
 		lg.Debug("connect via tls")
-		addr := net.JoinHostPort(c.ProxyHost, strconv.FormatInt(int64(c.EncryptedPort), 10))
-		conn, err := c.Dialer.Dial("tcp", addr)
+		conn, err := net.Dial("tcp", c.Server)
 		if err != nil {
 			return nil, err
 		}
@@ -131,8 +156,7 @@ func (c *Client) makeStreamConn() (net.Conn, error) {
 		nc = pc
 	} else {
 		lg.Debug("connect via tcp")
-		addr := net.JoinHostPort(c.ProxyHost, strconv.FormatInt(int64(c.CleartextPort), 10))
-		pc, err := c.Dialer.Dial("tcp", addr)
+		pc, err := df("tcp", c.Server)
 		if err != nil {
 			return nil, err
 		}
@@ -144,10 +168,13 @@ func (c *Client) makeStreamConn() (net.Conn, error) {
 
 func (c *Client) makeDGramConn() (net.Conn, error) {
 	var nc net.Conn
-	if c.EncryptedPort != 0 {
+	df := net.Dial
+	if c.DialFunc != nil {
+		df = c.DialFunc
+	}
+	if c.Encrypted {
 		lg.Debug("connect via dtls")
-		addr := net.JoinHostPort(c.ProxyHost, strconv.FormatInt(int64(c.EncryptedPort), 10))
-		conn, err := c.Dialer.Dial("udp", addr)
+		conn, err := net.Dial("udp", c.Server)
 		if err != nil {
 			return nil, err
 		}
@@ -160,8 +187,7 @@ func (c *Client) makeDGramConn() (net.Conn, error) {
 		nc = pc
 	} else {
 		lg.Debug("connect via udp")
-		addr := net.JoinHostPort(c.ProxyHost, strconv.FormatInt(int64(c.CleartextPort), 10))
-		pc, err := c.Dialer.Dial("udp", addr)
+		pc, err := df("udp", c.Server)
 		if err != nil {
 			return nil, err
 		}
@@ -170,8 +196,13 @@ func (c *Client) makeDGramConn() (net.Conn, error) {
 	return nc, nil
 }
 
+// authn running authentication in handshake
 func (c *Client) authn(req message.Request, sconn net.Conn, initData []byte) error {
 	var cac *auth.ClientAuthenticationChannels
+	if c.AuthenticationMethod == nil {
+		c.AuthenticationMethod = auth.NoneClientAuthenticationMethod{}
+	}
+	id := c.AuthenticationMethod.ID()
 	if len(c.session) > 0 {
 		// use session
 		req.Options.Add(message.Option{Kind: message.OptionKindSessionID, Data: message.SessionIDOptionData{ID: c.session}})
@@ -186,22 +217,22 @@ func (c *Client) authn(req message.Request, sconn net.Conn, initData []byte) err
 		}
 	} else {
 		ld := len(initData)
-		if ld > 0 || c.AuthenticationMethodId != 0 {
+		if ld > 0 || id != 0 {
 			req.Options.Add(message.Option{
 				Kind: message.OptionKindAuthenticationMethodAdvertisement,
 				Data: message.AuthenticationMethodAdvertisementOptionData{
 					InitialDataLength: uint16(ld),
-					Methods:           []byte{c.AuthenticationMethodId},
+					Methods:           []byte{id},
 				},
 			})
 		}
-		if c.AuthenticationMethodId != 0 {
+		if id != 0 {
 			cac = auth.NewClientAuthenticationChannels()
 			go c.AuthenticationMethod.Authenticate(context.TODO(), sconn, *cac)
 			data := <-cac.Data
 			if len(data) > 0 {
 				req.Options.Add(message.Option{Kind: message.OptionKindAuthenticationData, Data: message.AuthenticationDataOptionData{
-					Method: c.AuthenticationMethodId,
+					Method: id,
 					Data:   data,
 				}})
 			}
@@ -233,7 +264,7 @@ func (c *Client) authn(req message.Request, sconn net.Conn, initData []byte) err
 	} else {
 		if d, s := aurep1.Options.GetData(message.OptionKindAuthenticationMethodSelection); !s {
 			finalRep = aurep1
-		} else if d.(message.AuthenticationMethodSelectionOptionData).Method != c.AuthenticationMethodId {
+		} else if d.(message.AuthenticationMethodSelectionOptionData).Method != id {
 			finalRep = aurep1
 		}
 	}
@@ -284,6 +315,7 @@ func (c *Client) authn(req message.Request, sconn net.Conn, initData []byte) err
 	return nil
 }
 
+// handshake handle the common handshake part of protocol
 func (c *Client) handshake(
 	ctx context.Context,
 	op message.CommandCode,

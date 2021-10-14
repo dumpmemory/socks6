@@ -2,6 +2,7 @@ package internal
 
 import "math/bits"
 
+// BoolArr is boolean bit array over []byte (just like Vector<bool> in C++)
 type BoolArr []byte
 
 func NewBoolArr(size int) BoolArr {

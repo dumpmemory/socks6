@@ -140,8 +140,8 @@ func (d DefaultServerAuthenticator) pickMethod(
 	}, nil
 }
 
-func (d *DefaultServerAuthenticator) AddMethod(id byte, method ServerAuthenticationMethod) {
-	d.Methods[id] = method
+func (d *DefaultServerAuthenticator) AddMethod(method ServerAuthenticationMethod) {
+	d.Methods[method.ID()] = method
 }
 
 func (d *DefaultServerAuthenticator) sessionCheck(

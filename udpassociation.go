@@ -11,8 +11,10 @@ import (
 	"github.com/studentmain/socks6/message"
 )
 
+// UDPDownlink is a function used to write datagram to specific UDP endpoint
 type UDPDownlink func(b []byte) error
 
+// ClientPacket represent a single UDPHeader recieved from client
 type ClientPacket struct {
 	Message  *message.UDPHeader
 	Source   net.Addr
@@ -24,11 +26,11 @@ type udpAssociation struct {
 	udp net.PacketConn
 
 	cc          ClientConn
-	acceptTcp   bool
-	acceptDgram string
-	assocOk     bool
+	acceptTcp   bool   // whether to accept datagram over tcp
+	acceptDgram string // which client address is accepted
+	assocOk     bool   // first datagram recieved
 
-	pair     string
+	pair     string // reserved port
 	downlink func(b []byte) error
 
 	alive bool
@@ -139,7 +141,7 @@ func (u *udpAssociation) handleUdpDown(ctx context.Context) {
 			Type:          message.UDPMessageDatagram,
 			AssociationID: u.id,
 
-			Endpoint: message.ParseAddr(a.String()),
+			Endpoint: message.ConvertAddr(a),
 			Data:     internal.Dup(buf[:l]),
 		}
 		if !u.assocOk || u.downlink == nil {

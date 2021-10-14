@@ -1,4 +1,4 @@
-// l is a log package
+// lg is a wrapper of builtin log package
 package lg
 
 import (
