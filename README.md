@@ -14,18 +14,18 @@ wtf: want to do, but has technical problem
 
 - Message parse and serialize (done)
 - Handshake (#3, done)
-    - Initial data (#3, server done, client how)
+    - Initial data (#3, done)
     - Authenticate (server done, client todo)
     - Authenticate protocol (#3, server done, client todo)
     - Version mismatch (#5, server done, client n/a)
 - Commands (#7)
-    - NOOP (#7, server done, client how)
+    - NOOP (#7, done)
     - CONNECT (#7.1, done)
     - BIND (#7.2, server done, client todo)
-    - UDP ASSOCIATE (#7.3, todo)
+    - UDP ASSOCIATE (#7.3, done)
         - Over TCP
         - Over UDP/DTLS
-        - Proxy UDP server (#7.3.1, server n/a, client todo)
+        - Proxy UDP server (#7.3.1, done)
         - Proxy multicast (#7.3.2, todo)
         - ICMP Error (#7.3.3, todo)
 - Options (#8)

@@ -2,7 +2,7 @@
 package socks6
 
 const (
-	CleartextPort = 1080
+	SocksCleartextPort = 1080
 	// TODO: waiting for IANA consideration
-	EncryptedPort = 8389
+	SocksEncryptedPort = 8389
 )

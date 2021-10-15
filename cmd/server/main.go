@@ -70,8 +70,8 @@ func main() {
 		CleartextPort: 10888,
 		EncryptedPort: 10889,
 		Address:       "0.0.0.0",
-		Cert:          kp,
+		Cert:          &kp,
 	}
-	s.Start(context.Background(), nil)
+	s.Start(context.Background())
 	time.Sleep(8 * time.Hour)
 }

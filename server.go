@@ -16,9 +16,9 @@ type Server struct {
 	CleartextPort uint16
 	EncryptedPort uint16
 
-	Cert tls.Certificate
+	Cert *tls.Certificate
 
-	worker ServerWorker
+	Worker *ServerWorker
 
 	// listeners
 
@@ -28,11 +28,14 @@ type Server struct {
 	dtls net.Listener
 }
 
-func (s *Server) Start(ctx context.Context, worker *ServerWorker) {
-	if worker == nil {
-		s.worker = *NewServerWorker()
-	} else {
-		s.worker = *worker
+func (s *Server) Start(ctx context.Context) {
+	if s.Worker == nil {
+		s.Worker = NewServerWorker()
+	}
+
+	if s.CleartextPort == 0 && s.EncryptedPort == 0 {
+		s.CleartextPort = SocksCleartextPort
+		s.EncryptedPort = SocksEncryptedPort
 	}
 
 	if s.CleartextPort != 0 {
@@ -41,12 +44,12 @@ func (s *Server) Start(ctx context.Context, worker *ServerWorker) {
 		s.startUDP(ctx, cleartextEndpoint)
 	}
 
-	if s.EncryptedPort != 0 {
+	if s.EncryptedPort != 0 && s.Cert != nil {
 		encryptedEndpoint := net.JoinHostPort(s.Address, fmt.Sprintf("%d", s.EncryptedPort))
 		s.startTLS(ctx, encryptedEndpoint)
 		s.startDTLS(ctx, encryptedEndpoint)
 	}
-	go s.worker.ClearUnusedResource(ctx)
+	go s.Worker.ClearUnusedResource(ctx)
 	go func() {
 		<-ctx.Done()
 		s.tcp.Close()
@@ -69,14 +72,14 @@ func (s *Server) startTCP(ctx context.Context, addr string) {
 				lg.Warning("stop TCP server")
 				return
 			}
-			go s.worker.ServeStream(ctx, conn)
+			go s.Worker.ServeStream(ctx, conn)
 		}
 	}()
 }
 
 func (s *Server) startTLS(ctx context.Context, addr string) {
 	s.tls = internal.Must2(tls.Listen("tcp", addr, &tls.Config{
-		Certificates: []tls.Certificate{s.Cert},
+		Certificates: []tls.Certificate{*s.Cert},
 	})).(net.Listener)
 	lg.Infof("start TLS server at %s", s.tls.Addr())
 
@@ -88,7 +91,7 @@ func (s *Server) startTLS(ctx context.Context, addr string) {
 				lg.Warning("stop TLS server")
 				return
 			}
-			go s.worker.ServeStream(ctx, conn)
+			go s.Worker.ServeStream(ctx, conn)
 		}
 	}()
 }
@@ -106,7 +109,7 @@ func (s *Server) startUDP(ctx context.Context, addr string) {
 				lg.Error(err)
 			}
 
-			go s.worker.ServeDatagram(
+			go s.Worker.ServeDatagram(
 				ctx,
 				rAddr,
 				buf[:nRead],
@@ -122,7 +125,7 @@ func (s *Server) startUDP(ctx context.Context, addr string) {
 func (s *Server) startDTLS(ctx context.Context, addr string) {
 	addr2 := internal.Must2(net.ResolveUDPAddr("udp", addr)).(*net.UDPAddr)
 	s.dtls = internal.Must2(dtls.Listen("udp", addr2, &dtls.Config{
-		Certificates: []tls.Certificate{s.Cert},
+		Certificates: []tls.Certificate{*s.Cert},
 	})).(net.Listener)
 	lg.Infof("start DTLS server at %s", s.dtls.Addr())
 
@@ -144,7 +147,7 @@ func (s *Server) startDTLS(ctx context.Context, addr string) {
 						lg.Warningf("DTLS conn %s read error %s", conn.RemoteAddr(), err)
 						return
 					}
-					go s.worker.ServeDatagram(
+					go s.Worker.ServeDatagram(
 						ctx,
 						conn.RemoteAddr(),
 						buf[:nRead],

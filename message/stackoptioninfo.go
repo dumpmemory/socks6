@@ -30,6 +30,20 @@ func (s *StackOptionInfo) Combine(s2 StackOptionInfo) {
 	}
 }
 
+func (s StackOptionInfo) Filter(s2 StackOptionInfo) StackOptionInfo {
+	if len(s2) == 0 {
+		return s
+	}
+	ret := StackOptionInfo{}
+	for k, op := range s {
+		_, ok := s2[k]
+		if ok {
+			ret[k] = op
+		}
+	}
+	return ret
+}
+
 func getOptionFromData(id int, data interface{}, clientLeg bool, remoteLeg bool) Option {
 	var sod StackOptionData
 	switch id {

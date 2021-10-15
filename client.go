@@ -292,16 +292,20 @@ func (c *Client) authn(req message.Request, sconn net.Conn, initData []byte) err
 	}
 
 	// check final reply
+	fail := false
 	if finalRep.Type != message.AuthenticationReplySuccess {
-		return errors.New("authn fail")
+		fail = true
 	}
 	if _, f := finalRep.Options.GetData(message.OptionKindSessionInvalid); f {
 		c.session = []byte{}
-		return errors.New("session fail")
+		fail = true
 	}
 	if _, f := finalRep.Options.GetData(message.OptionKindIdempotenceRejected); f {
 		c.maxToken = 0
-		return errors.New("token fail")
+		fail = true
+	}
+	if fail {
+		return errors.New("authn fail")
 	}
 	if c.UseSession {
 		if _, f := finalRep.Options.GetData(message.OptionKindSessionOK); !f {

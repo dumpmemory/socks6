@@ -52,7 +52,9 @@ func (n *NullServerAuthenticator) Authenticate(
 type DefaultServerAuthenticator struct {
 	Methods map[byte]ServerAuthenticationMethod
 
-	sessions sync.Map // map[base64_rawstd(id)]*session
+	DisableSession bool
+	DisableToken   bool
+	sessions       sync.Map // map[base64_rawstd(id)]*session
 }
 
 func (d DefaultServerAuthenticator) Authenticate(
@@ -148,33 +150,30 @@ func (d *DefaultServerAuthenticator) sessionCheck(
 	req message.Request,
 	sid []byte,
 ) *ServerAuthenticationResult {
+	sessionInvalid := ServerAuthenticationResult{
+		Success:  false,
+		Continue: false,
+
+		AdditionalOptions: []message.Option{
+			{Kind: message.OptionKindSessionInvalid, Data: message.SessionInvalidOptionData{}},
+		},
+	}
+	if d.DisableSession {
+		return &sessionInvalid
+	}
 	sk := base64.RawStdEncoding.EncodeToString(sid)
 	var session *serverSession
 	if isession, ok := d.sessions.Load(sk); ok {
 		session = isession.(*serverSession)
 	} else {
 		// mismatch session
-		return &ServerAuthenticationResult{
-			Success:  false,
-			Continue: false,
-
-			AdditionalOptions: []message.Option{
-				{Kind: message.OptionKindSessionInvalid, Data: message.SessionInvalidOptionData{}},
-			},
-		}
+		return &sessionInvalid
 	}
 
 	// requested teardown
 	if _, teardown := req.Options.GetData(message.OptionKindSessionTeardown); teardown {
 		d.sessions.Delete(sk)
-		return &ServerAuthenticationResult{
-			Success:  false,
-			Continue: false,
-
-			AdditionalOptions: []message.Option{
-				{Kind: message.OptionKindSessionInvalid, Data: message.SessionInvalidOptionData{}},
-			},
-		}
+		return &sessionInvalid
 	}
 	// session success
 	sar := ServerAuthenticationResult{
@@ -186,10 +185,10 @@ func (d *DefaultServerAuthenticator) sessionCheck(
 		},
 	}
 	// token request
-	windowRequestData, ok := req.Options.GetData(message.OptionKindTokenRequest)
+	windowRequestData, requested := req.Options.GetData(message.OptionKindTokenRequest)
 	windowRequest := uint32(0)
 	// requested window
-	if ok {
+	if requested && !d.DisableToken {
 		windowRequest = windowRequestData.(message.TokenRequestOptionData).WindowSize
 		// allocate when no window
 		if session.window.Length() == 0 {
@@ -210,12 +209,22 @@ func (d *DefaultServerAuthenticator) sessionCheck(
 	}
 
 	// token check
-	tokenData, ok := req.Options.GetData(message.OptionKindIdempotenceExpenditure)
-	if !ok {
+	tokenData, spend := req.Options.GetData(message.OptionKindIdempotenceExpenditure)
+	if !spend {
 		// not used
 		sar.Success = true
 		return &sar
 	}
+	// spending token
+	if d.DisableToken {
+		sar.Success = false
+		sar.AdditionalOptions = append(sar.AdditionalOptions, message.Option{
+			Kind: message.OptionKindIdempotenceRejected,
+			Data: message.IdempotenceRejectedOptionData{},
+		})
+		return &sar
+	}
+
 	token := tokenData.(message.IdempotenceExpenditureOptionData).Token
 	if !session.checkToken(token) {
 		// token fail
