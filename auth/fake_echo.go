@@ -59,16 +59,20 @@ func (f FakeEchoClientAuthenticationMethod) Authenticate(
 	ctx context.Context,
 	conn net.Conn,
 	cac ClientAuthenticationChannels,
-) (*message.AuthenticationReply, error) {
+) {
 	cac.Data <- []byte{}
 	rep1 := <-cac.FirstAuthReply
 	df, _ := rep1.Options.GetDataF(message.OptionKindAuthenticationData, func(o message.Option) bool {
 		return o.Data.(message.AuthenticationDataOptionData).Method == authIdFakeEcho
 	})
 	if _, err := conn.Write(df.(message.AuthenticationDataOptionData).Data); err != nil {
-		return nil, err
+		cac.FinalAuthReply <- nil
+		cac.Error <- err
+		return
 	}
-	return message.ParseAuthenticationReplyFrom(conn)
+	r, e := message.ParseAuthenticationReplyFrom(conn)
+	cac.FinalAuthReply <- r
+	cac.Error <- e
 }
 func (f FakeEchoClientAuthenticationMethod) ID() byte {
 	return authIdFakeEcho

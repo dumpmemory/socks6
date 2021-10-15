@@ -1,6 +1,6 @@
 # SOCKS 6 Golang implementation
 
-Not production ready.
+Maybe production ready, if someone have a production, please let me know.
 
 ## Progress
 

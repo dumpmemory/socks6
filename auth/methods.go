@@ -56,6 +56,6 @@ type ClientAuthenticationMethod interface {
 		ctx context.Context,
 		conn net.Conn,
 		cac ClientAuthenticationChannels,
-	) (*message.AuthenticationReply, error)
+	)
 	ID() byte
 }

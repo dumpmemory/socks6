@@ -22,9 +22,11 @@ type Client struct {
 	// send datagram over TCP
 	UDPOverTCP bool
 	// function to create underlying connection, net.Dial will used when it is nil
-	DialFunc             func(network string, addr string) (net.Conn, error)
+	DialFunc func(network string, addr string) (net.Conn, error)
+	// authentication method to be used, can be nil
 	AuthenticationMethod auth.ClientAuthenticationMethod
 
+	// should client request session
 	UseSession bool
 	// how much token will requested
 	UseToken uint32
@@ -40,7 +42,7 @@ type Client struct {
 
 func (c *Client) Dial(network string, addr string) (net.Conn, error) {
 	if network[:3] == "udp" {
-		a, e := c.UDPAssociateRequest(":0", nil)
+		a, e := c.UDPAssociateRequest(message.ParseAddr(addr), nil)
 		if e != nil {
 			return nil, e
 		}
@@ -51,29 +53,31 @@ func (c *Client) Dial(network string, addr string) (net.Conn, error) {
 }
 
 func (c *Client) Listen(network string, addr string) (net.Listener, error) {
-	return c.BindRequest(addr, nil)
+	return c.BindRequest(message.ParseAddr(addr), nil)
 }
 
 func (c *Client) ListenPacket(network string, addr string) (net.PacketConn, error) {
-	return c.UDPAssociateRequest(addr, nil)
+	return c.UDPAssociateRequest(message.ParseAddr(addr), nil)
 }
 
 // raw requests
 
 func (c *Client) ConnectRequest(addr string, initData []byte, option *message.OptionSet) (net.Conn, error) {
-	sconn, opr, err := c.handshake(context.TODO(), message.CommandConnect, addr, initData, option)
+	addr2 := message.ParseAddr(addr)
+	sconn, opr, err := c.handshake(context.TODO(), message.CommandConnect, addr2, initData, option)
 	if err != nil {
 		return nil, err
 	}
-	return &TCPConnectClient{
-		base:   sconn,
-		remote: message.ParseAddr(addr),
-		rbind:  opr.Endpoint,
+	return &ProxyTCPConn{
+		netConn: sconn,
+		addrPair: addrPair{
+			local:  opr.Endpoint,
+			remote: addr2,
+		},
 	}, nil
 }
 
-func (c *Client) BindRequest(addr string, option *message.OptionSet) (*TCPBindClient, error) {
-	// todo backlog option
+func (c *Client) BindRequest(addr net.Addr, option *message.OptionSet) (*ProxyTCPListener, error) {
 	sconn, opr, err := c.handshake(context.TODO(), message.CommandBind, addr, []byte{}, option)
 	if err != nil {
 		return nil, err
@@ -84,17 +88,17 @@ func (c *Client) BindRequest(addr string, option *message.OptionSet) (*TCPBindCl
 		bl = ibl.(uint16)
 	}
 
-	return &TCPBindClient{
-		base:    sconn,
+	return &ProxyTCPListener{
+		netConn: sconn,
 		backlog: bl,
-		remote:  opr.Endpoint,
-		c:       c,
+		bind:    opr.Endpoint,
+		client:  c,
 		used:    false,
 		op:      option,
 	}, nil
 }
 
-func (c *Client) UDPAssociateRequest(addr string, option *message.OptionSet) (*UDPClient, error) {
+func (c *Client) UDPAssociateRequest(addr net.Addr, option *message.OptionSet) (*ProxyUDPConn, error) {
 	sconn, opr, err := c.handshake(
 		context.TODO(),
 		message.CommandUdpAssociate,
@@ -105,7 +109,7 @@ func (c *Client) UDPAssociateRequest(addr string, option *message.OptionSet) (*U
 	if err != nil {
 		return nil, err
 	}
-	uc := UDPClient{
+	uc := ProxyUDPConn{
 		overTcp: c.UDPOverTCP,
 		base:    sconn,
 		rbind:   opr.Endpoint,
@@ -125,7 +129,7 @@ func (c *Client) UDPAssociateRequest(addr string, option *message.OptionSet) (*U
 
 // NoopRequest send a NOOP request
 func (c *Client) NoopRequest() error {
-	sconn, _, err := c.handshake(context.TODO(), message.CommandNoop, ":0", []byte{}, nil)
+	sconn, _, err := c.handshake(context.TODO(), message.CommandNoop, message.DefaultAddr, []byte{}, nil)
 	if err != nil {
 		return err
 	}
@@ -202,6 +206,7 @@ func (c *Client) authn(req message.Request, sconn net.Conn, initData []byte) err
 	if c.AuthenticationMethod == nil {
 		c.AuthenticationMethod = auth.NoneClientAuthenticationMethod{}
 	}
+	// add authn options
 	id := c.AuthenticationMethod.ID()
 	if len(c.session) > 0 {
 		// use session
@@ -216,6 +221,7 @@ func (c *Client) authn(req message.Request, sconn net.Conn, initData []byte) err
 			}
 		}
 	} else {
+		// use original authn method
 		ld := len(initData)
 		if ld > 0 || id != 0 {
 			req.Options.Add(message.Option{
@@ -247,33 +253,37 @@ func (c *Client) authn(req message.Request, sconn net.Conn, initData []byte) err
 		}
 	}
 
-	_, err := sconn.Write(req.Marshal())
-	if err != nil {
+	// io
+	if _, err := sconn.Write(req.Marshal()); err != nil {
 		return err
 	}
-	// todo auth
 	aurep1, err := message.ParseAuthenticationReplyFrom(sconn)
 	if err != nil {
 		return err
 	}
 	var finalRep *message.AuthenticationReply
 
-	// authn finished
 	if aurep1.Type == message.AuthenticationReplySuccess {
+		// success at stage 1
 		finalRep = aurep1
 	} else {
 		if d, s := aurep1.Options.GetData(message.OptionKindAuthenticationMethodSelection); !s {
+			// can't continue
 			finalRep = aurep1
 		} else if d.(message.AuthenticationMethodSelectionOptionData).Method != id {
+			// continue with different method, unsupported
 			finalRep = aurep1
 		}
 	}
 
 	if finalRep == nil && cac == nil {
+		// need stage 2, but authn channel not exist
 		return errors.New("server wants 2 stage authn")
 	}
 	if cac != nil {
+		// write 1st reply
 		cac.FirstAuthReply <- finalRep
+		// read error and reply
 		err := <-cac.Error
 		finalRep = <-cac.FinalAuthReply
 		if err != nil {
@@ -281,6 +291,7 @@ func (c *Client) authn(req message.Request, sconn net.Conn, initData []byte) err
 		}
 	}
 
+	// check final reply
 	if finalRep.Type != message.AuthenticationReplySuccess {
 		return errors.New("authn fail")
 	}
@@ -294,12 +305,13 @@ func (c *Client) authn(req message.Request, sconn net.Conn, initData []byte) err
 	}
 	if c.UseSession {
 		if _, f := finalRep.Options.GetData(message.OptionKindSessionOK); !f {
-			return errors.New("session fail")
+			// no session is not really a problem
+			return nil
 		}
 
 		if c.UseToken > 0 {
 			if _, f := finalRep.Options.GetData(message.OptionKindIdempotenceAccepted); !f {
-				return errors.New("token fail")
+				return nil
 			}
 			if d, ok := finalRep.Options.GetData(message.OptionKindIdempotenceWindow); ok {
 				dd := d.(message.IdempotenceWindowOptionData)
@@ -319,7 +331,7 @@ func (c *Client) authn(req message.Request, sconn net.Conn, initData []byte) err
 func (c *Client) handshake(
 	ctx context.Context,
 	op message.CommandCode,
-	addr string,
+	addr net.Addr,
 	initData []byte,
 	option *message.OptionSet,
 ) (net.Conn, *message.OperationReply, error) {
@@ -337,7 +349,7 @@ func (c *Client) handshake(
 	}
 	req := message.Request{
 		CommandCode: op,
-		Endpoint:    message.ParseAddr(addr),
+		Endpoint:    message.ConvertAddr(addr),
 		Options:     option,
 	}
 

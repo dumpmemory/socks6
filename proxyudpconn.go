@@ -12,12 +12,12 @@ import (
 	"github.com/studentmain/socks6/message"
 )
 
-// UDPClient represents a SOCKS 6 UDP client "connection", implements net.PacketConn, net.Conn
-type UDPClient struct {
+// ProxyUDPConn represents a SOCKS 6 UDP client "connection", implements net.PacketConn, net.Conn
+type ProxyUDPConn struct {
 	base       net.Conn // original tcp conn
 	conn       net.Conn // data conn
 	overTcp    bool
-	expectAddr net.Addr
+	expectAddr net.Addr // expected remote addr
 
 	assocId uint64
 
@@ -26,7 +26,7 @@ type UDPClient struct {
 	icmp  bool       // accept icmp error report
 }
 
-func (u *UDPClient) init() error {
+func (u *ProxyUDPConn) init() error {
 	a, err := message.ParseUDPHeaderFrom(u.base)
 	if err != nil {
 		return err
@@ -74,7 +74,7 @@ func (u *UDPClient) init() error {
 	return nil
 }
 
-func (u *UDPClient) Read(p []byte) (int, error) {
+func (u *ProxyUDPConn) Read(p []byte) (int, error) {
 	if u.expectAddr == nil {
 		return 0, errors.New("don't know read from where, use Dial to create connection")
 	}
@@ -89,7 +89,7 @@ func (u *UDPClient) Read(p []byte) (int, error) {
 	}
 }
 
-func (u *UDPClient) ReadFrom(p []byte) (int, net.Addr, error) {
+func (u *ProxyUDPConn) ReadFrom(p []byte) (int, net.Addr, error) {
 	cd := internal.NewCancellableDefer(func() { u.Close() })
 
 	// read message
@@ -148,14 +148,14 @@ func (u *UDPClient) ReadFrom(p []byte) (int, net.Addr, error) {
 	return n, addr, nil
 }
 
-func (u *UDPClient) Write(p []byte) (int, error) {
+func (u *ProxyUDPConn) Write(p []byte) (int, error) {
 	if u.expectAddr == nil {
 		return 0, errors.New("don't know write to where, use Dial to create connection")
 	}
 	return u.WriteTo(p, u.expectAddr)
 }
 
-func (u *UDPClient) WriteTo(p []byte, addr net.Addr) (int, error) {
+func (u *ProxyUDPConn) WriteTo(p []byte, addr net.Addr) (int, error) {
 	h := message.UDPHeader{
 		Type:          message.UDPMessageDatagram,
 		AssociationID: u.assocId,
@@ -170,7 +170,7 @@ func (u *UDPClient) WriteTo(p []byte, addr net.Addr) (int, error) {
 	return n, err
 }
 
-func (u *UDPClient) Close() error {
+func (u *ProxyUDPConn) Close() error {
 	e1 := u.base.Close()
 	e2 := u.conn.Close()
 	if e1 != nil {
@@ -180,30 +180,30 @@ func (u *UDPClient) Close() error {
 }
 
 // LocalAddr return client-proxy connection's client side address
-func (u *UDPClient) LocalAddr() net.Addr {
+func (u *ProxyUDPConn) LocalAddr() net.Addr {
 	return u.conn.LocalAddr()
 }
 
-func (u *UDPClient) RemoteAddr() net.Addr {
+func (u *ProxyUDPConn) RemoteAddr() net.Addr {
 	return u.expectAddr
 }
 
 // ProxyBindAddr return proxy's outbound address
-func (u *UDPClient) ProxyBindAddr() net.Addr {
+func (u *ProxyUDPConn) ProxyBindAddr() net.Addr {
 	return u.rbind
 }
 
 // ProxyRemoteAddr return client-proxy connection's proxy side address
-func (u *UDPClient) ProxyRemoteAddr() net.Addr {
+func (u *ProxyUDPConn) ProxyRemoteAddr() net.Addr {
 	return u.conn.RemoteAddr()
 }
 
-func (u *UDPClient) SetDeadline(t time.Time) error {
+func (u *ProxyUDPConn) SetDeadline(t time.Time) error {
 	return u.conn.SetDeadline(t)
 }
-func (u *UDPClient) SetReadDeadline(t time.Time) error {
+func (u *ProxyUDPConn) SetReadDeadline(t time.Time) error {
 	return u.conn.SetReadDeadline(t)
 }
-func (u *UDPClient) SetWriteDeadline(t time.Time) error {
+func (u *ProxyUDPConn) SetWriteDeadline(t time.Time) error {
 	return u.conn.SetWriteDeadline(t)
 }

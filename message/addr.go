@@ -64,6 +64,9 @@ func ParseAddr(addr string) *Socks6Addr {
 func ConvertAddr(addr net.Addr) *Socks6Addr {
 	var ip net.IP
 	var port int
+	if addr == nil {
+		return DefaultAddr
+	}
 	switch a := addr.(type) {
 	case *net.TCPAddr:
 		ip = a.IP
@@ -71,6 +74,8 @@ func ConvertAddr(addr net.Addr) *Socks6Addr {
 	case *net.UDPAddr:
 		ip = a.IP
 		port = a.Port
+	case *Socks6Addr:
+		return a
 	default:
 		return ParseAddr(addr.String())
 	}

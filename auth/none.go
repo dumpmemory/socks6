@@ -3,8 +3,6 @@ package auth
 import (
 	"context"
 	"net"
-
-	"github.com/studentmain/socks6/message"
 )
 
 const authIdNone byte = 2
@@ -33,10 +31,11 @@ func (f NoneClientAuthenticationMethod) Authenticate(
 	ctx context.Context,
 	conn net.Conn,
 	cac ClientAuthenticationChannels,
-) (*message.AuthenticationReply, error) {
+) {
 	cac.Data <- []byte{}
 	rep1 := <-cac.FirstAuthReply
-	return rep1, nil
+	cac.FinalAuthReply <- rep1
+	cac.Error <- nil
 }
 func (f NoneClientAuthenticationMethod) ID() byte {
 	return authIdNone

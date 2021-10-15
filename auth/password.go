@@ -103,7 +103,7 @@ func (p PasswordClientAuthenticationMethod) Authenticate(
 	ctx context.Context,
 	conn net.Conn,
 	cac ClientAuthenticationChannels,
-) (*message.AuthenticationReply, error) {
+) {
 	b := bytes.Buffer{}
 	b.WriteByte(1)
 	b.WriteByte(byte(len(p.Username)))
@@ -114,7 +114,8 @@ func (p PasswordClientAuthenticationMethod) Authenticate(
 
 	// data is ignored
 	rep1 := <-cac.FirstAuthReply
-	return rep1, nil
+	cac.FinalAuthReply <- rep1
+	cac.Error <- nil
 }
 func (p PasswordClientAuthenticationMethod) ID() byte {
 	return authIdPassword
