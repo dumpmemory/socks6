@@ -62,7 +62,7 @@ func (b *backlogListener) accept(ctx context.Context) {
 	c, err := b.listener.Accept()
 	if err != nil {
 		lg.Debug(b.cc.ConnId(), "backlog accept fail", err)
-		c.Close()
+		b.close(err)
 		return
 	}
 	b.queue <- c
@@ -71,8 +71,7 @@ func (b *backlogListener) accept(ctx context.Context) {
 	lg.Info(b.cc.ConnId(), "backlog accepted from", conn3Tuple(c))
 	if err := b.cc.WriteReplyAddr(message.OperationReplySuccess, c.RemoteAddr()); err != nil {
 		lg.Warning(b.cc.ConnId(), "backlog write reply fail", err)
-		b.cc.Conn.Close()
-		b.alive = false
+		b.close(err)
 	}
 }
 
@@ -84,14 +83,23 @@ func (b *backlogListener) worker(ctx context.Context) {
 		for b.alive {
 			if _, err := b.cc.Conn.Read(buf); err != nil {
 				lg.Trace(b.cc.ConnId(), "read fail, closing backlog listener")
-				b.listener.Close()
-				b.cc.Conn.Close()
-				b.alive = false
+				b.close(err)
 				return
 			}
 		}
 	}()
+	go func() {
+		<-ctx.Done()
+		b.close(ctx.Err())
+	}()
 	for b.alive {
 		b.accept(ctx)
 	}
+}
+
+func (b *backlogListener) close(err error) {
+	lg.Warning("close backlog listener", err)
+	b.listener.Close()
+	b.cc.Conn.Close()
+	b.alive = false
 }

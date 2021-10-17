@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"net"
 	"sync"
+	"time"
 
 	"github.com/studentmain/socks6/message"
 )
@@ -19,6 +20,7 @@ type ServerAuthenticator interface {
 		*ServerAuthenticationChannels,
 	)
 	ContinueAuthenticate(sac *ServerAuthenticationChannels, req message.Request) (*ServerAuthenticationResult, error)
+	SessionConnClose(id []byte)
 }
 
 type ServerAuthenticationResult struct {
@@ -33,31 +35,16 @@ type ServerAuthenticationResult struct {
 	ClientName string
 }
 
-type NullServerAuthenticator struct{}
-
-func (n *NullServerAuthenticator) Authenticate(
-	ctx context.Context,
-	conn net.Conn,
-	req message.Request,
-) (
-	*ServerAuthenticationResult,
-	chan ServerAuthenticationResult,
-	chan bool,
-) {
-	return &ServerAuthenticationResult{
-		Success: true,
-	}, nil, nil
-}
-
 type DefaultServerAuthenticator struct {
 	Methods map[byte]ServerAuthenticationMethod
 
 	DisableSession bool
 	DisableToken   bool
-	sessions       sync.Map // map[base64_rawstd(id)]*session
+
+	sessions sync.Map // map[base64_rawstd(id)]*session
 }
 
-func (d DefaultServerAuthenticator) Authenticate(
+func (d *DefaultServerAuthenticator) Authenticate(
 	ctx context.Context,
 	conn net.Conn,
 	req message.Request,
@@ -83,7 +70,7 @@ func (d DefaultServerAuthenticator) Authenticate(
 	return d.tryStartSesstion(r, req), c
 }
 
-func (d DefaultServerAuthenticator) ContinueAuthenticate(sac *ServerAuthenticationChannels, req message.Request) (*ServerAuthenticationResult, error) {
+func (d *DefaultServerAuthenticator) ContinueAuthenticate(sac *ServerAuthenticationChannels, req message.Request) (*ServerAuthenticationResult, error) {
 	sac.Continue <- true
 	err := <-sac.Err
 	if err != nil {
@@ -93,7 +80,7 @@ func (d DefaultServerAuthenticator) ContinueAuthenticate(sac *ServerAuthenticati
 	return d.tryStartSesstion(&result, req), nil
 }
 
-func (d DefaultServerAuthenticator) pickMethod(
+func (d *DefaultServerAuthenticator) pickMethod(
 	ctx context.Context,
 	conn net.Conn,
 	authData map[byte][]byte,
@@ -294,4 +281,23 @@ func (d *DefaultServerAuthenticator) tryStartSesstion(
 		}
 	}
 	return result
+}
+
+func (d *DefaultServerAuthenticator) SessionConnClose(id []byte) {
+	sk := base64.RawStdEncoding.EncodeToString(id)
+	var session *serverSession
+	if isession, ok := d.sessions.Load(sk); ok {
+		session = isession.(*serverSession)
+	} else {
+		return
+	}
+	session.connCount--
+	if session.connCount <= 0 {
+		go func() {
+			<-time.After(5 * time.Minute)
+			if session.connCount <= 0 {
+				d.sessions.Delete(sk)
+			}
+		}()
+	}
 }

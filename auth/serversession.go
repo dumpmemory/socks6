@@ -11,6 +11,7 @@ type serverSession struct {
 	windowBase uint32
 	window     internal.BoolArr
 	popcnt     int
+	connCount  int
 }
 
 func newServerSession(idSize int) *serverSession {

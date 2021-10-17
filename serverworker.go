@@ -266,6 +266,7 @@ func (s *ServerWorker) ServeStream(
 
 		InitialData: initData,
 	}
+	defer s.Authenticator.SessionConnClose(auth.SessionID)
 	// it's handler's job to close conn
 	closeConn.Cancel()
 	h(ctx, cc)
@@ -415,7 +416,10 @@ func (s *ServerWorker) BindHandler(
 	defer listener.Close()
 	// timeout
 	go func() {
-		<-time.After(60 * time.Second)
+		select {
+		case <-time.After(60 * time.Second):
+		case <-ctx.Done():
+		}
 		listener.Close()
 	}()
 
