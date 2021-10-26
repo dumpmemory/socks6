@@ -8,18 +8,6 @@ import (
 	"github.com/studentmain/socks6/internal/lg"
 )
 
-func ByteArrayEqual(a, b []byte) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := 0; i < len(a); i++ {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
-}
-
 // Dup create a duplicate of input byte array
 func Dup(i []byte) []byte {
 	o := make([]byte, len(i))
@@ -56,13 +44,13 @@ func AssertRead(t assert.TestingT, r io.Reader, b []byte) {
 }
 
 type CancellableDefer struct {
-	f      func()
+	f      []func()
 	cancel bool
 }
 
 func NewCancellableDefer(f func()) *CancellableDefer {
 	return &CancellableDefer{
-		f:      f,
+		f:      []func(){f},
 		cancel: false,
 	}
 }
@@ -72,10 +60,16 @@ func (c *CancellableDefer) Defer() {
 		return
 	}
 	if c.f != nil {
-		c.f()
+		for _, v := range c.f {
+			v()
+		}
 	}
 }
 
 func (c *CancellableDefer) Cancel() {
 	c.cancel = true
+}
+
+func (c *CancellableDefer) Add(f func()) {
+	c.f = append(c.f, f)
 }

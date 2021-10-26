@@ -462,7 +462,7 @@ func (s *ServerWorker) UdpAssociateHandler(
 		} else {
 			rua := irua.(*udpAssociation)
 			// not same session, fail
-			if !internal.ByteArrayEqual(rua.cc.Session, cc.Session) {
+			if !bytes.Equal(rua.cc.Session, cc.Session) {
 				cc.WriteReplyCode(message.OperationReplyConnectionRefused)
 				return
 			}

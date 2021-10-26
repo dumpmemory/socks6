@@ -1,6 +1,7 @@
 package socks6
 
 import (
+	"bytes"
 	"context"
 	"net"
 	"time"
@@ -36,7 +37,7 @@ func (b *backlogListener) handler(
 	ctx context.Context,
 	cc ClientConn,
 ) {
-	if !internal.ByteArrayEqual(cc.Session, b.cc.Session) {
+	if !bytes.Equal(cc.Session, b.cc.Session) {
 		lg.Warning(cc.ConnId(), "session mismatch")
 		cc.WriteReplyCode(message.OperationReplyConnectionRefused)
 		return
