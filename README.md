@@ -2,7 +2,24 @@
 
 Maybe production ready, if someone have a production, please let me know.
 
+## Usage
+
+Use socks6.Server to create a SOCKS 6 over TCP/IP server.
+
+If you need process SOCKS 6 connection in other protocol, named pipe, etc., use socks6.ServerWorker to process connection.
+
+You can modify socks6.ServerWorker 's fields to customize it's behavior.
+
+Use socks6.Client to create a SOCKS 6 over TCP/IP client.
+
+Change socks6.Client.DialFunc to dial over other protocol.
+
+SOCKS 6 wireformat parser and serializer is located in message package.
+
+
 ## Progress
+
+Stand-alone server and SOCKS 5 to SOCKS 6 converter client is planned.
 
 currently based on draft 11
 
@@ -53,3 +70,4 @@ A fd based new network stack is needed in order to support them.
 - [SOCKS 6 draft IETF tracker](https://datatracker.ietf.org/doc/draft-olteanu-intarea-socks-6/)
 - [go-shadowsocks2](https://github.com/shadowsocks/go-shadowsocks2)
 - [v2ray](https://github.com/v2fly/v2ray-core)
+- [txthinking/socks5](https://github.com/txthinking/socks5)

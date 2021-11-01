@@ -25,9 +25,9 @@ type Socks6Addr struct {
 	AddressType AddressType
 	// actual address,
 	// if AddressType is IPv4/IPv6, contains IP address byte.
-	// If AddressType is DomainName, contains domain name without leading length byte and padding.
+	// If AddressType is DomainName, contains domain name in punycode encoded format without leading length byte and padding.
 	Address []byte
-	// tcp/udp/whateverp port
+	// port used by transport layer protocol
 	Port uint16
 }
 
@@ -52,6 +52,8 @@ var AddrIPv6Zero *Socks6Addr = &Socks6Addr{
 // DefaultAddr is 0.0.0.0:0 in Socks6Addr format
 var DefaultAddr *Socks6Addr = AddrIPv4Zero
 
+// ParseAddr parse address string to Socks6Addr
+// panic when error
 func ParseAddr(addr string) *Socks6Addr {
 	r, err := NewAddr(addr)
 	if err != nil {
@@ -79,6 +81,8 @@ func ConvertAddr(addr net.Addr) *Socks6Addr {
 	default:
 		return ParseAddr(addr.String())
 	}
+	// only TCP/UDPAddr can reach here
+	// convert IP address to avoid unnecessary use of IPv6
 	af := AddressTypeIPv6
 	if ip4 := ip.To4(); ip4 != nil {
 		af = AddressTypeIPv4
@@ -97,6 +101,7 @@ func AddrString(n net.Addr) string {
 	return s6a.String()
 }
 
+// NewAddr parse address string to Socks6Addr
 func NewAddr(address string) (*Socks6Addr, error) {
 	h, p, err := net.SplitHostPort(address)
 	if err != nil {
@@ -108,18 +113,24 @@ func NewAddr(address string) (*Socks6Addr, error) {
 	}
 	var atyp AddressType
 	var addr []byte
+	// no host part, assume ipv4
 	if len(h) == 0 {
 		atyp = AddressTypeIPv4
 		addr = []byte{0, 0, 0, 0}
 	} else if ip := net.ParseIP(h); ip != nil {
+		// is ip address
 		if ip4 := ip.To4(); ip4 != nil {
+			// is ipv4, use 4 byte IP
 			atyp = AddressTypeIPv4
 			addr = ip4
 		} else {
+			// ipv6
 			atyp = AddressTypeIPv6
 			addr = ip
 		}
 	} else {
+		// is domain name
+		// convert to punycode encoded format
 		asc, err := idna.ToASCII(h)
 		if err != nil {
 			return nil, err
@@ -136,9 +147,13 @@ func NewAddr(address string) (*Socks6Addr, error) {
 		Port:        uint16(port),
 	}, nil
 }
+
+// Network implements net.Conn, always return "socks6"
 func (a *Socks6Addr) Network() string {
 	return "socks6"
 }
+
+// String implements net.Conn
 func (a *Socks6Addr) String() string {
 	var h string
 	switch a.AddressType {
@@ -173,25 +188,34 @@ func ParseAddressFrom(b io.Reader, atyp AddressType) (*Socks6Addr, error) {
 	a.AddressType = atyp
 	buf := internal.BytesPool256.Rent()
 	defer internal.BytesPool256.Return(buf)
+
 	if a.AddressType == AddressTypeDomainName {
+		// domain name
+		// read length
 		if _, err := io.ReadFull(b, buf[:1]); err != nil {
 			return nil, err
 		}
 		l := buf[0]
+		// read addr
 		if _, err := io.ReadFull(b, buf[:l]); err != nil {
 			return nil, err
 		}
+		// remove padding
 		a.Address = bytes.Trim(buf[:l], "\x00")
 		return a, nil
 	} else {
+		// ip
 		l := 4
+		// determine reading length
 		if a.AddressType == AddressTypeIPv6 {
 			l = 16
 		} else if a.AddressType == AddressTypeIPv4 {
 			l = 4
 		} else {
+			// unknown address type
 			return nil, ErrAddressTypeNotSupport
 		}
+		// read addr
 		if _, err := io.ReadFull(b, buf[:l]); err != nil {
 			return nil, err
 		}
@@ -210,7 +234,7 @@ func (s *Socks6Addr) AddrLen() int {
 	case AddressTypeDomainName:
 		return len(s.Address) + 1
 	default:
-		lg.Error("address type not set")
+		lg.Panic("address type not set")
 		return 0
 	}
 }

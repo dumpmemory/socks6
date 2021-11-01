@@ -26,7 +26,7 @@ type CommandHandler func(
 // ServerWorker is a customizeable SOCKS 6 server
 type ServerWorker struct {
 	Authenticator auth.ServerAuthenticator
-	Rule          func(op message.CommandCode, dst, src net.Addr, cid string) bool
+	Rule          func(cc ClientConn) bool
 
 	CommandHandlers map[message.CommandCode]CommandHandler
 	// VersionErrorHandler will handle non-SOCKS6 protocol request.
@@ -95,13 +95,6 @@ func NewServerWorker() *ServerWorker {
 		Methods: map[byte]auth.ServerAuthenticationMethod{},
 	}
 	defaultAuth.AddMethod(auth.NoneServerAuthenticationMethod{})
-	// todo: remove them
-	defaultAuth.AddMethod(auth.PasswordServerAuthenticationMethod{
-		Passwords: map[string]string{
-			"user": "pass",
-		},
-	})
-	defaultAuth.AddMethod(auth.FakeEchoServerAuthenticationMethod{})
 
 	r := &ServerWorker{
 		VersionErrorHandler: ReplyVersionSpecificError,
@@ -240,9 +233,18 @@ func (s *ServerWorker) ServeStream(
 	}
 
 	lg.Trace(ccid, "authenticate success")
+	cc := ClientConn{
+		Conn:    conn,
+		Request: req,
+
+		ClientId: auth.ClientName,
+		Session:  auth.SessionID,
+
+		InitialData: initData,
+	}
 
 	if s.Rule != nil {
-		if !s.Rule(req.CommandCode, req.Endpoint, conn.RemoteAddr(), auth.ClientName) {
+		if !s.Rule(cc) {
 			lg.Info(ccid, "not allowed by rule")
 			conn.Write(message.NewOperationReplyWithCode(message.OperationReplyNotAllowedByRule).Marshal())
 			return
@@ -257,15 +259,6 @@ func (s *ServerWorker) ServeStream(
 	}
 	lg.Trace(ccid, "start command specific process", req.CommandCode)
 
-	cc := ClientConn{
-		Conn:    conn,
-		Request: req,
-
-		ClientId: auth.ClientName,
-		Session:  auth.SessionID,
-
-		InitialData: initData,
-	}
 	defer s.Authenticator.SessionConnClose(auth.SessionID)
 	// it's handler's job to close conn
 	closeConn.Cancel()
@@ -414,7 +407,7 @@ func (s *ServerWorker) BindHandler(
 	}
 	// non backlogged path
 	defer listener.Close()
-	// timeout
+	// timeout or cancelled
 	go func() {
 		select {
 		case <-time.After(60 * time.Second):
@@ -484,6 +477,7 @@ func (s *ServerWorker) UdpAssociateHandler(
 			Reserve: true,
 			Parity:  message.StackPortParityOptionParityNo,
 		}
+		// calculate port to reserve
 		ppod := ippod.(message.PortParityOptionData)
 		if ppod.Reserve {
 			s6a := message.ConvertAddr(pc.LocalAddr())
@@ -496,6 +490,7 @@ func (s *ServerWorker) UdpAssociateHandler(
 			}
 			reservedAddr = s6a
 		}
+		// check and create reply option
 		if !udpPortAvaliable(reservedAddr) {
 			reservedAddr = nil
 			appliedPpod.Reserve = false
@@ -512,6 +507,7 @@ func (s *ServerWorker) UdpAssociateHandler(
 	opset := message.NewOptionSet()
 	opset.AddMany(so)
 	cc.WriteReply(message.OperationReplySuccess, pc.LocalAddr(), opset)
+	// start association
 	assoc := newUdpAssociation(cc, pc, reservedAddr)
 	s.udpAssociation.Store(assoc.id, assoc)
 	lg.Trace("start udp assoc", assoc.id)
@@ -621,7 +617,7 @@ func relay(ctx context.Context, c, r net.Conn, timeout time.Duration) error {
 	go func() {
 		defer wg.Done()
 		e := relayOneDirection(ctx, c, r, timeout)
-		// if already recorded an err, that means another direction already closed
+		// if already recorded an err, then another direction is already closed
 		if e != nil && err == nil {
 			err = e
 			c.Close()

@@ -1,3 +1,4 @@
+// message contains SOCKS 6 wireformat parser and serializer
 package message
 
 import (
@@ -8,6 +9,7 @@ import (
 	"github.com/studentmain/socks6/internal"
 )
 
+// CommandCode is SOCKS 6 request command code
 type CommandCode byte
 
 const (

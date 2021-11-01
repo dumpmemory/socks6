@@ -11,12 +11,13 @@ type ClientConn struct {
 	Conn    net.Conn         // base connection
 	Request *message.Request // request sent by client
 
-	ClientId string // client identifier provided by authn
+	ClientId string // client identifier provided by authenticator
 	Session  []byte // the session this connection belongs to
 
 	InitialData []byte // client's initial data
 }
 
+// Destination is endpoint included in client's request
 func (c ClientConn) Destination() *message.Socks6Addr {
 	return c.Request.Endpoint
 }

@@ -11,6 +11,8 @@ import (
 	"github.com/studentmain/socks6/internal/lg"
 )
 
+// Server is a SOCKS 6 over TCP/TLS/UDP/DTLS server
+// zero value is a cleartext only server with default server worker
 type Server struct {
 	Address       string
 	CleartextPort uint16
