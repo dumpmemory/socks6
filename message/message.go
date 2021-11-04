@@ -43,7 +43,7 @@ func ParseRequestFrom(b io.Reader) (*Request, error) {
 		return nil, err
 	}
 	if buf[0] != ProtocolVersion {
-		return r, ErrVersion{Version: int(buf[0]), ConsumedBytes: buf[:1]}
+		return r, ErrVersionMismatch{Version: int(buf[0]), ConsumedBytes: buf[:1]}
 	}
 	// ver cc opLen2 port2 0 aTyp
 	if _, err := io.ReadFull(b, buf[1:8]); err != nil {
@@ -134,7 +134,7 @@ func ParseAuthenticationReplyFrom(b io.Reader) (*AuthenticationReply, error) {
 		return nil, err
 	}
 	if buf[0] != ProtocolVersion {
-		return nil, ErrProtocolPolice
+		return nil, NewErrVersionMismatch(int(buf[0]), nil)
 	}
 	a.Type = AuthenticationReplyType(buf[1])
 	opsLen := int(binary.BigEndian.Uint16(buf[2:]))
@@ -209,7 +209,7 @@ func ParseOperationReplyFrom(b io.Reader) (*OperationReply, error) {
 		return nil, err
 	}
 	if buf[0] != ProtocolVersion {
-		return r, ErrProtocolPolice
+		return r, NewErrVersionMismatch(int(buf[0]), nil)
 	}
 	r.ReplyCode = ReplyCode(buf[1])
 	optLen := binary.BigEndian.Uint16(buf[2:])
@@ -311,7 +311,7 @@ func ParseUDPHeaderFrom(b io.Reader) (*UDPHeader, error) {
 		return nil, err
 	}
 	if buf[0] != ProtocolVersion {
-		return nil, ErrVersion{Version: int(buf[0])}
+		return nil, NewErrVersionMismatch(int(buf[0]), nil)
 	}
 
 	totalLen := binary.BigEndian.Uint16(buf[2:])

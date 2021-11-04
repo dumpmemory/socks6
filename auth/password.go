@@ -29,7 +29,7 @@ func ParsePasswordAuthenticationData(buf []byte) (*passwordAuthenticationData, e
 		return nil, err
 	}
 	if v != 1 {
-		return nil, message.ErrVersion{Version: int(v)}
+		return nil, message.NewErrVersionMismatch(int(v), nil)
 	}
 	ulen, err := r.ReadByte()
 	if err != nil {

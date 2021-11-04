@@ -38,7 +38,7 @@ func optionDataTestProtocolPolice(t *testing.T, bin []byte, obj message.Option) 
 		buf[i] = byte(rand.Uint32())
 	}
 	// maybe we just want warning
-	assert.ErrorIs(t, err, message.ErrProtocolPolice)
+	assert.ErrorIs(t, err, message.ErrBufferSize)
 	if obj.Data != nil {
 		obj.Length = uint16(len(bin))
 		assert.Equal(t, obj, op)

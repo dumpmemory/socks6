@@ -31,7 +31,7 @@ type ServerWorker struct {
 	CommandHandlers map[message.CommandCode]CommandHandler
 	// VersionErrorHandler will handle non-SOCKS6 protocol request.
 	// VersionErrorHandler should close connection by itself
-	VersionErrorHandler func(ctx context.Context, ver message.ErrVersion, conn net.Conn)
+	VersionErrorHandler func(ctx context.Context, ver message.ErrVersionMismatch, conn net.Conn)
 
 	Outbound ServerOutbound
 
@@ -119,7 +119,7 @@ func NewServerWorker() *ServerWorker {
 }
 
 // ReplyVersionSpecificError guess which protocol client is using, reply corresponding "version error", then close conn
-func ReplyVersionSpecificError(ctx context.Context, ver message.ErrVersion, conn net.Conn) {
+func ReplyVersionSpecificError(ctx context.Context, ver message.ErrVersionMismatch, conn net.Conn) {
 	defer conn.Close()
 	switch ver.Version {
 	// socks4
@@ -152,9 +152,10 @@ func (s *ServerWorker) ServeStream(
 	req, err := message.ParseRequestFrom(conn)
 	if err != nil {
 		// not socks6
-		if errors.Is(err, message.ErrVersion{}) {
+		evm := message.ErrVersionMismatch{}
+		if errors.As(err, &evm) {
 			closeConn.Cancel()
-			s.VersionErrorHandler(ctx, err.(message.ErrVersion), conn)
+			s.VersionErrorHandler(ctx, evm, conn)
 			return
 		}
 		// detect and reply addr not support early, as auth can't continue

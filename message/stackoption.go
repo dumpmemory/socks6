@@ -126,7 +126,7 @@ func parseStackOptionData(d []byte) (OptionData, error) {
 	sod.RemoteLeg = legLevel&0b1000_0000 > 0
 	sod.ClientLeg = legLevel&0b0100_0000 > 0
 	if !(sod.RemoteLeg || sod.ClientLeg) {
-		return nil, newProtocolPoliceError("stack option should have at least one leg")
+		return nil, ErrStackOptionNoLeg
 	}
 	sod.Level = StackOptionLevel(legLevel & 0b00_111111)
 	sod.Code = StackOptionCode(d[1])
@@ -167,7 +167,7 @@ const (
 func parseBoolStackOption(d []byte, o boolStackOption) (StackOptionData, error) {
 	val := d[0] == stackOptionTrue
 	if !val && d[0] != stackOptionFalse {
-		return nil, newProtocolPoliceError("unexpected boolean stack option value")
+		return nil, ErrEnumValue.WithVerbose("expect 1-2, actual %d", d[0])
 	}
 	o.SetBool(val)
 	return o, nil
@@ -403,12 +403,12 @@ func parsePortParityOptionData(d []byte) (StackOptionData, error) {
 	o := PortParityOptionData{}
 	val := d[1] == stackOptionTrue
 	if !val && d[1] != stackOptionFalse {
-		return nil, newProtocolPoliceError("unexpected boolean stack option value")
+		return nil, ErrEnumValue.WithVerbose("port parity reserve expect 1-2, actual %d", d[1])
 	}
 	o.Reserve = val
 	o.Parity = d[0]
 	if o.Parity > 2 {
-		return nil, newProtocolPoliceError("unexpected port parity stack option value")
+		return nil, ErrEnumValue.WithVerbose("port parity expect 0-2, actual %d", d[0])
 	}
 	return &o, nil
 }

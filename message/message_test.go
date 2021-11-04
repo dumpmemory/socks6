@@ -32,7 +32,7 @@ func TestRequest(t *testing.T) {
 		{
 			in:     []byte{5, 1, 0, 1, 127, 0, 0, 1, 0, 0},
 			expect: nil,
-			e:      message.ErrVersion{Version: 5, ConsumedBytes: []byte{5}},
+			e:      message.ErrVersionMismatch{Version: 5, ConsumedBytes: []byte{5}},
 		},
 		{
 			in: []byte{
@@ -57,7 +57,7 @@ func TestRequest(t *testing.T) {
 	for _, tt := range tests {
 		actual, err := message.ParseRequestFrom(bytes.NewReader(tt.in))
 		if tt.e != nil {
-			assert.Equal(t, err, tt.e)
+			assert.ErrorAs(t, err, tt.e)
 		} else {
 			assert.Nil(t, err)
 			assert.Equal(t, tt.expect, actual)

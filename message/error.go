@@ -3,65 +3,65 @@ package message
 import (
 	"errors"
 	"fmt"
+
+	"github.com/studentmain/socks6/common"
+	"github.com/studentmain/socks6/internal/lg"
 )
 
 var ErrMessageProcess = errors.New("message error")
 
-type baseMessageError struct {
-	msg string
+var ErrEnumValue = common.LeveledError{
+	Message: "invalid enum value",
+	Base:    ErrMessageProcess,
+	Level:   lg.LvError,
+}
+var ErrFormat = common.LeveledError{
+	Message: "format error",
+	Base:    ErrMessageProcess,
+	Level:   lg.LvError,
+}
+var ErrAddressTypeNotSupport = common.LeveledError{
+	Message: "unsupported address type",
+	Base:    ErrMessageProcess,
+	Level:   lg.LvError,
+}
+var ErrBufferSize = common.LeveledError{
+	Message: "invalid buffer size",
+	Base:    ErrMessageProcess,
+	Level:   lg.LvWarning,
 }
 
-func (e baseMessageError) Error() string {
-	return e.msg
+var ErrStackOptionNoLeg = common.LeveledError{
+	Message: "stack option should have at least one leg",
+	Base:    ErrMessageProcess,
+	Level:   lg.LvWarning,
 }
-func (e baseMessageError) Unwrap() error {
-	return ErrMessageProcess
+var errVersionMismatch = common.LeveledError{
+	Message: "version mismatch",
+	Level:   lg.LvInfo,
 }
 
-func NewMessageError(msg string) error {
-	return baseMessageError{
-		msg: msg,
+func NewErrVersionMismatch(v int, b []byte) error {
+	cp := errVersionMismatch.WithVerbose("")
+	cp.Base = ErrVersionMismatch{
+		Version:       v,
+		ConsumedBytes: b,
 	}
+	return cp
 }
 
-var ErrEnumValue = NewMessageError("unexpected enum value")
-var ErrFormat = NewMessageError("wrong message format")
-var ErrAddressTypeNotSupport = NewMessageError("unknown address type")
-
-type baseProtocolPoliceError struct {
-	msg string
-}
-
-// ErrProtocolPolice is the error used to report non-standard behaviour
-var ErrProtocolPolice = NewMessageError("consistency check fail")
-
-func (e baseProtocolPoliceError) Error() string {
-	return e.msg
-}
-func (e baseProtocolPoliceError) Unwrap() error {
-	return ErrProtocolPolice
-}
-
-func newProtocolPoliceError(msg string) error {
-	return baseProtocolPoliceError{
-		msg: msg,
-	}
-}
-
-var errProtocolPoliceBufferSize = newProtocolPoliceError("buffer size not allowed")
-
-type ErrVersion struct {
+type ErrVersionMismatch struct {
 	Version       int
 	ConsumedBytes []byte
 }
 
-func (e ErrVersion) Error() string {
+func (e ErrVersionMismatch) Error() string {
 	return fmt.Sprintf("version %d not supported", e.Version)
 }
-func (e ErrVersion) Unwrap() error {
+func (e ErrVersionMismatch) Unwrap() error {
 	return ErrMessageProcess
 }
-func (e ErrVersion) Is(e2 error) bool {
-	_, ok := e2.(ErrVersion)
+func (e ErrVersionMismatch) Is(e2 error) bool {
+	_, ok := e2.(ErrVersionMismatch)
 	return ok
 }

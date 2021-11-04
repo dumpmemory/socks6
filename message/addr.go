@@ -136,7 +136,7 @@ func NewAddr(address string) (*Socks6Addr, error) {
 			return nil, err
 		}
 		if len(asc) > 255 {
-			return nil, ErrFormat
+			return nil, ErrFormat.WithVerbose("domain name shouldn't longer than 255")
 		}
 		atyp = AddressTypeDomainName
 		addr = internal.Dup([]byte(asc))

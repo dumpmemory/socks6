@@ -38,17 +38,17 @@ var optionDataParseFn = map[OptionKind]func([]byte) (OptionData, error){
 	OptionKindAuthenticationMethodSelection:     parseAuthenticationMethodSelectionOptionData,
 	OptionKindAuthenticationData:                parseAuthenticationDataOptionData,
 
-	OptionKindSessionRequest:  func(b []byte) (OptionData, error) { return SessionRequestOptionData{}, bufferLengthPolice(b) },
+	OptionKindSessionRequest:  func(b []byte) (OptionData, error) { return SessionRequestOptionData{}, assertZeroBuffer(b) },
 	OptionKindSessionID:       parseSessionIDOptionData,
-	OptionKindSessionOK:       func(b []byte) (OptionData, error) { return SessionOKOptionData{}, bufferLengthPolice(b) },
-	OptionKindSessionInvalid:  func(b []byte) (OptionData, error) { return SessionInvalidOptionData{}, bufferLengthPolice(b) },
-	OptionKindSessionTeardown: func(b []byte) (OptionData, error) { return SessionTeardownOptionData{}, bufferLengthPolice(b) },
+	OptionKindSessionOK:       func(b []byte) (OptionData, error) { return SessionOKOptionData{}, assertZeroBuffer(b) },
+	OptionKindSessionInvalid:  func(b []byte) (OptionData, error) { return SessionInvalidOptionData{}, assertZeroBuffer(b) },
+	OptionKindSessionTeardown: func(b []byte) (OptionData, error) { return SessionTeardownOptionData{}, assertZeroBuffer(b) },
 
 	OptionKindTokenRequest:           parseTokenRequestOptionData,
 	OptionKindIdempotenceWindow:      parseIdempotenceWindowOptionData,
 	OptionKindIdempotenceExpenditure: parseIdempotenceExpenditureOptionData,
-	OptionKindIdempotenceAccepted:    func(b []byte) (OptionData, error) { return IdempotenceAcceptedOptionData{}, bufferLengthPolice(b) },
-	OptionKindIdempotenceRejected:    func(b []byte) (OptionData, error) { return IdempotenceRejectedOptionData{}, bufferLengthPolice(b) },
+	OptionKindIdempotenceAccepted:    func(b []byte) (OptionData, error) { return IdempotenceAcceptedOptionData{}, assertZeroBuffer(b) },
+	OptionKindIdempotenceRejected:    func(b []byte) (OptionData, error) { return IdempotenceRejectedOptionData{}, assertZeroBuffer(b) },
 }
 
 // SetOptionDataParser set the option data parse function for given kind to fn
@@ -57,9 +57,9 @@ func SetOptionDataParser(kind OptionKind, fn func([]byte) (OptionData, error)) {
 	optionDataParseFn[kind] = fn
 }
 
-func bufferLengthPolice(b []byte) error {
+func assertZeroBuffer(b []byte) error {
 	if len(b) != 0 {
-		return errProtocolPoliceBufferSize
+		return ErrBufferSize.WithVerbose("expect no buffer, actual %d bytes", len(b))
 	}
 	return nil
 }
@@ -194,7 +194,7 @@ type AuthenticationMethodSelectionOptionData struct {
 
 func parseAuthenticationMethodSelectionOptionData(d []byte) (OptionData, error) {
 	if len(d) != 4 {
-		return nil, errProtocolPoliceBufferSize
+		return nil, ErrBufferSize.WithVerbose("expect 4 bytes buffer, actual %d bytes", len(d))
 	}
 	return AuthenticationMethodSelectionOptionData{
 		Method: d[0],
@@ -267,7 +267,7 @@ type TokenRequestOptionData struct {
 
 func parseTokenRequestOptionData(d []byte) (OptionData, error) {
 	if len(d) != 4 {
-		return nil, errProtocolPoliceBufferSize
+		return nil, ErrBufferSize.WithVerbose("expect 4 bytes buffer, actual %d bytes", len(d))
 	}
 	return TokenRequestOptionData{WindowSize: binary.BigEndian.Uint32(d)}, nil
 }
@@ -284,7 +284,7 @@ type IdempotenceWindowOptionData struct {
 
 func parseIdempotenceWindowOptionData(d []byte) (OptionData, error) {
 	if len(d) != 8 {
-		return nil, errProtocolPoliceBufferSize
+		return nil, ErrBufferSize.WithVerbose("expect 8 bytes buffer, actual %d bytes", len(d))
 	}
 	return IdempotenceWindowOptionData{
 		WindowBase: binary.BigEndian.Uint32(d),
@@ -304,7 +304,7 @@ type IdempotenceExpenditureOptionData struct {
 
 func parseIdempotenceExpenditureOptionData(d []byte) (OptionData, error) {
 	if len(d) != 4 {
-		return nil, errProtocolPoliceBufferSize
+		return nil, ErrBufferSize.WithVerbose("expect 4 bytes buffer, actual %d bytes", len(d))
 	}
 	return IdempotenceExpenditureOptionData{Token: binary.BigEndian.Uint32(d)}, nil
 }

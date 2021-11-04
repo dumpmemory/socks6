@@ -31,12 +31,16 @@ var levelPrefix = map[Level]string{
 
 var MinimalLevel Level = LvInfo
 
+func PrependLevel(lv Level, s string) string {
+	return fmt.Sprintf("[%s] ", levelPrefix[lv]) + s
+}
+
 func lgprintf(lv Level, format string, v ...interface{}) {
 	if lv > MinimalLevel {
 		return
 	}
-	f := fmt.Sprintf("[%s] %s", levelPrefix[lv], format)
-	msg := fmt.Sprintf(f, v...)
+	pf := fmt.Sprintf(format, v...)
+	msg := PrependLevel(lv, pf)
 	log.Output(3, msg)
 }
 
@@ -44,8 +48,8 @@ func lgprint(lv Level, v ...interface{}) {
 	if lv > MinimalLevel {
 		return
 	}
-	f := fmt.Sprintf("[%s]", levelPrefix[lv])
-	msg := fmt.Sprintln(append([]interface{}{f}, v...)...)
+	ln := fmt.Sprintln(v...)
+	msg := PrependLevel(lv, ln)
 	log.Output(3, msg)
 }
 
