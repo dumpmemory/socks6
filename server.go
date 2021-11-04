@@ -7,8 +7,8 @@ import (
 	"net"
 
 	"github.com/pion/dtls/v2"
+	"github.com/studentmain/socks6/common/lg"
 	"github.com/studentmain/socks6/internal"
-	"github.com/studentmain/socks6/internal/lg"
 )
 
 // Server is a SOCKS 6 over TCP/TLS/UDP/DTLS server

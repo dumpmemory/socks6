@@ -5,7 +5,7 @@ import (
 	"sort"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/studentmain/socks6/internal/lg"
+	"github.com/studentmain/socks6/common/lg"
 )
 
 // Dup create a duplicate of input byte array

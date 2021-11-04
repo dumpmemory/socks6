@@ -1,6 +1,6 @@
 package internal
 
-import "github.com/studentmain/socks6/internal/lg"
+import "github.com/studentmain/socks6/common/lg"
 
 // BytesPool is a fixed size byte array pool
 // byte array is fized size, but byte array count is increased automatically

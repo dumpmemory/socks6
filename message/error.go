@@ -5,7 +5,7 @@ import (
 	"fmt"
 
 	"github.com/studentmain/socks6/common"
-	"github.com/studentmain/socks6/internal/lg"
+	"github.com/studentmain/socks6/common/lg"
 )
 
 var ErrMessageProcess = errors.New("message error")

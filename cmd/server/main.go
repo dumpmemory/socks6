@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/studentmain/socks6"
-	"github.com/studentmain/socks6/internal/lg"
+	"github.com/studentmain/socks6/common/lg"
 )
 
 const (

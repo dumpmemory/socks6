@@ -3,7 +3,7 @@ package common
 import (
 	"fmt"
 
-	"github.com/studentmain/socks6/internal/lg"
+	"github.com/studentmain/socks6/common/lg"
 )
 
 type LeveledError struct {

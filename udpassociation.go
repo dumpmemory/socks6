@@ -6,8 +6,8 @@ import (
 	"net"
 	"time"
 
+	"github.com/studentmain/socks6/common/lg"
 	"github.com/studentmain/socks6/internal"
-	"github.com/studentmain/socks6/internal/lg"
 	"github.com/studentmain/socks6/message"
 )
 

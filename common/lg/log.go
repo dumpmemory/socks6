@@ -29,6 +29,13 @@ var levelPrefix = map[Level]string{
 	LvDebug:   "Debug",
 }
 
+type Logger func(lv Level, str string)
+
+var Backend Logger = func(lv Level, str string) {
+	msg := PrependLevel(lv, str)
+	log.Output(4, msg)
+}
+
 var MinimalLevel Level = LvInfo
 
 func PrependLevel(lv Level, s string) string {
@@ -40,8 +47,7 @@ func lgprintf(lv Level, format string, v ...interface{}) {
 		return
 	}
 	pf := fmt.Sprintf(format, v...)
-	msg := PrependLevel(lv, pf)
-	log.Output(3, msg)
+	Backend(lv, pf)
 }
 
 func lgprint(lv Level, v ...interface{}) {
@@ -49,8 +55,8 @@ func lgprint(lv Level, v ...interface{}) {
 		return
 	}
 	ln := fmt.Sprintln(v...)
-	msg := PrependLevel(lv, ln)
-	log.Output(3, msg)
+	Backend(lv, ln)
+
 }
 
 func Fatalf(format string, v ...interface{}) {
