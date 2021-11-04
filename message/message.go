@@ -42,7 +42,7 @@ func ParseRequestFrom(b io.Reader) (*Request, error) {
 	if _, err := io.ReadFull(b, buf[:1]); err != nil {
 		return nil, err
 	}
-	if buf[0] != 6 {
+	if buf[0] != ProtocolVersion {
 		return r, ErrVersion{Version: int(buf[0]), ConsumedBytes: buf[:1]}
 	}
 	// ver cc opLen2 port2 0 aTyp
@@ -77,7 +77,7 @@ func (r *Request) Marshal() (buf []byte) {
 
 	b := bytes.NewBuffer(buf)
 
-	b.WriteByte(6)
+	b.WriteByte(ProtocolVersion)
 	b.WriteByte(byte(r.CommandCode))
 	binary.Write(b, binary.BigEndian, uint16(len(ops)))
 
@@ -117,7 +117,7 @@ func (a *AuthenticationReply) Marshal() []byte {
 	ops := a.Options.Marshal()
 	b := bytes.Buffer{}
 
-	b.WriteByte(6)
+	b.WriteByte(ProtocolVersion)
 	b.WriteByte(byte(a.Type))
 	binary.Write(&b, binary.BigEndian, uint16(len(ops)))
 
@@ -133,7 +133,7 @@ func ParseAuthenticationReplyFrom(b io.Reader) (*AuthenticationReply, error) {
 	if _, err := io.ReadFull(b, buf[:4]); err != nil {
 		return nil, err
 	}
-	if buf[0] != 6 {
+	if buf[0] != ProtocolVersion {
 		return nil, ErrProtocolPolice
 	}
 	a.Type = AuthenticationReplyType(buf[1])
@@ -187,7 +187,7 @@ func (o *OperationReply) Marshal() []byte {
 
 	b := bytes.Buffer{}
 
-	b.WriteByte(6)
+	b.WriteByte(ProtocolVersion)
 	b.WriteByte(byte(o.ReplyCode))
 	binary.Write(&b, binary.BigEndian, uint16(len(ops)))
 
@@ -208,7 +208,7 @@ func ParseOperationReplyFrom(b io.Reader) (*OperationReply, error) {
 	if _, err := io.ReadFull(b, buf[:8]); err != nil {
 		return nil, err
 	}
-	if buf[0] != 6 {
+	if buf[0] != ProtocolVersion {
 		return r, ErrProtocolPolice
 	}
 	r.ReplyCode = ReplyCode(buf[1])
@@ -257,14 +257,14 @@ func (u *UDPHeader) Marshal() []byte {
 
 	switch u.Type {
 	case UDPMessageAssociationInit, UDPMessageAssociationAck:
-		b.WriteByte(6)
+		b.WriteByte(ProtocolVersion)
 		b.WriteByte(byte(u.Type))
 		binary.Write(&b, binary.BigEndian, uint16(12))
 		binary.Write(&b, binary.BigEndian, u.AssociationID)
 	case UDPMessageDatagram:
 		addr := u.Endpoint.MarshalAddress()
 		totalLen := 16 + len(addr) + len(u.Data)
-		b.WriteByte(6)
+		b.WriteByte(ProtocolVersion)
 		b.WriteByte(byte(u.Type))
 		binary.Write(&b, binary.BigEndian, uint16(totalLen))
 		binary.Write(&b, binary.BigEndian, u.AssociationID)
@@ -281,7 +281,7 @@ func (u *UDPHeader) Marshal() []byte {
 		eaddr := u.ErrorEndpoint.MarshalAddress()
 		totalLen := 20 + len(addr) + len(eaddr)
 
-		b.WriteByte(6)
+		b.WriteByte(ProtocolVersion)
 		b.WriteByte(byte(u.Type))
 		binary.Write(&b, binary.BigEndian, uint16(totalLen))
 
@@ -310,7 +310,7 @@ func ParseUDPHeaderFrom(b io.Reader) (*UDPHeader, error) {
 	if _, err := io.ReadFull(b, buf[:12]); err != nil {
 		return nil, err
 	}
-	if buf[0] != 6 {
+	if buf[0] != ProtocolVersion {
 		return nil, ErrVersion{Version: int(buf[0])}
 	}
 

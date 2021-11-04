@@ -18,7 +18,7 @@ func TestRequest(t *testing.T) {
 	}{
 		{
 			in: []byte{
-				6, 1, 0, 0,
+				message.ProtocolVersion, 1, 0, 0,
 				0, 1, 0, 1,
 				127, 0, 0, 1,
 			}, expect: &message.Request{
@@ -27,8 +27,8 @@ func TestRequest(t *testing.T) {
 				Options:     message.NewOptionSet(),
 			}, e: nil,
 		},
-		{in: []byte{6, 1, 0, 0}, expect: nil, e: io.ErrUnexpectedEOF},
-		{in: []byte{6, 1, 0, 0, 0, 0, 0, 1}, expect: nil, e: io.EOF},
+		{in: []byte{message.ProtocolVersion, 1, 0, 0}, expect: nil, e: io.ErrUnexpectedEOF},
+		{in: []byte{message.ProtocolVersion, 1, 0, 0, 0, 0, 0, 1}, expect: nil, e: io.EOF},
 		{
 			in:     []byte{5, 1, 0, 1, 127, 0, 0, 1, 0, 0},
 			expect: nil,
@@ -36,7 +36,7 @@ func TestRequest(t *testing.T) {
 		},
 		{
 			in: []byte{
-				6, 1, 0, 4,
+				message.ProtocolVersion, 1, 0, 4,
 				0, 1, 0, 1,
 				127, 0, 0, 1,
 				1, 0, 0, 4,
@@ -47,7 +47,7 @@ func TestRequest(t *testing.T) {
 			}, e: nil,
 		}, {
 			in: []byte{
-				6, 1, 0, 4,
+				message.ProtocolVersion, 1, 0, 4,
 				0, 1, 0, 1,
 				127, 0, 0, 1,
 			}, expect: nil, e: io.EOF,

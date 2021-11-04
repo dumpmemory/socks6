@@ -5,7 +5,7 @@ import (
 	"net"
 )
 
-const authIdNone byte = 2
+const authIdNone byte = 0
 
 // NoneServerAuthenticationMethod is IANA method 0, require no authn at all
 type NoneServerAuthenticationMethod struct{}
