@@ -41,7 +41,7 @@ func (u *ProxyUDPConn) init() error {
 		Endpoint:      message.DefaultAddr,
 	}
 
-	if _, err := u.conn.Write(reply.Marshal()); err != nil {
+	if _, err = u.conn.Write(reply.Marshal()); err != nil {
 		return err
 	}
 

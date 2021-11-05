@@ -207,11 +207,12 @@ func ParseAddressFrom(b io.Reader, atyp AddressType) (*Socks6Addr, error) {
 		// ip
 		l := 4
 		// determine reading length
-		if a.AddressType == AddressTypeIPv6 {
+		switch a.AddressType {
+		case AddressTypeIPv6:
 			l = 16
-		} else if a.AddressType == AddressTypeIPv4 {
+		case AddressTypeIPv4:
 			l = 4
-		} else {
+		default:
 			// unknown address type
 			return nil, ErrAddressTypeNotSupport
 		}

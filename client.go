@@ -154,9 +154,6 @@ func (c *Client) makeStreamConn() (net.Conn, error) {
 		pc := tls.Client(conn, &tls.Config{
 			InsecureSkipVerify: true,
 		})
-		if err != nil {
-			return nil, err
-		}
 		nc = pc
 	} else {
 		lg.Debug("connect via tcp")
@@ -357,7 +354,7 @@ func (c *Client) handshake(
 		Options:     option,
 	}
 
-	if err := c.authn(req, sconn, initData); err != nil {
+	if err = c.authn(req, sconn, initData); err != nil {
 		return nil, nil, err
 	}
 

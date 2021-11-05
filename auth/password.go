@@ -36,7 +36,7 @@ func ParsePasswordAuthenticationData(buf []byte) (*passwordAuthenticationData, e
 		return nil, err
 	}
 	u := make([]byte, ulen)
-	if _, err := io.ReadFull(r, u); err != nil {
+	if _, err = io.ReadFull(r, u); err != nil {
 		return nil, err
 	}
 

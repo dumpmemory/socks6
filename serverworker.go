@@ -81,8 +81,8 @@ func (i InternetServerOutbound) ListenPacket(ctx context.Context, option message
 		return nil, nil, err
 	}
 	if mcast {
-		p, err := net.ListenMulticastUDP("udp", i.MulticastInterface, ua)
-		return p, message.StackOptionInfo{}, err
+		p, err2 := net.ListenMulticastUDP("udp", i.MulticastInterface, ua)
+		return p, message.StackOptionInfo{}, err2
 	}
 
 	p, err := net.ListenUDP("udp", ua)
@@ -386,7 +386,7 @@ func (s *ServerWorker) BindHandler(
 	options := message.NewOptionSet()
 	options.AddMany(appliedOpt)
 
-	if err := cc.WriteReply(code, listener.Addr(), options); err != nil {
+	if err = cc.WriteReply(code, listener.Addr(), options); err != nil {
 		lg.Error(cc.ConnId(), "can't write reply", err)
 		return
 	}

@@ -7,6 +7,7 @@ import (
 	"net"
 
 	"github.com/pion/dtls/v2"
+	"github.com/studentmain/socks6/common"
 	"github.com/studentmain/socks6/common/lg"
 	"github.com/studentmain/socks6/internal"
 )
@@ -36,8 +37,8 @@ func (s *Server) Start(ctx context.Context) {
 	}
 
 	if s.CleartextPort == 0 && s.EncryptedPort == 0 {
-		s.CleartextPort = SocksCleartextPort
-		s.EncryptedPort = SocksEncryptedPort
+		s.CleartextPort = common.CleartextPort
+		s.EncryptedPort = common.EncryptedPort
 	}
 
 	if s.CleartextPort != 0 {
