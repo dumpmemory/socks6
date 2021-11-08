@@ -35,6 +35,12 @@ type ServerWorker struct {
 
 	Outbound ServerOutbound
 
+	// control UDP NAT filtering behavior
+	// mapping is always Endpoint Independent
+	// when false, use Endpoint Independent filtering (Full Cone)
+	// when true, use Address Dependent filtering (Restricted Cone)
+	AddressDependentFiltering bool
+
 	backlogListener *sync.Map // map[string]*bl
 	reservedUdpAddr *sync.Map // map[string]uint64
 	udpAssociation  *sync.Map // map[uint64]*ua
@@ -509,7 +515,7 @@ func (s *ServerWorker) UdpAssociateHandler(
 	opset.AddMany(so)
 	cc.WriteReply(message.OperationReplySuccess, pc.LocalAddr(), opset)
 	// start association
-	assoc := newUdpAssociation(cc, pc, reservedAddr)
+	assoc := newUdpAssociation(cc, pc, reservedAddr, s.AddressDependentFiltering)
 	s.udpAssociation.Store(assoc.id, assoc)
 	lg.Trace("start udp assoc", assoc.id)
 	if reservedAddr != nil {

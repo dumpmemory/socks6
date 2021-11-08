@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net"
+	"sync"
 	"time"
 
 	"github.com/studentmain/socks6/common/lg"
@@ -33,10 +34,18 @@ type udpAssociation struct {
 	pair     string // reserved port
 	downlink func(b []byte) error
 
+	allowedRemote sync.Map
+	addrFilter    bool
+
 	alive bool
 }
 
-func newUdpAssociation(cc ClientConn, udp net.PacketConn, pair net.Addr) *udpAssociation {
+func newUdpAssociation(
+	cc ClientConn,
+	udp net.PacketConn,
+	pair net.Addr,
+	addrFilter bool,
+) *udpAssociation {
 	id := internal.RandUint64()
 	ps := ""
 	if pair != nil {
@@ -51,6 +60,9 @@ func newUdpAssociation(cc ClientConn, udp net.PacketConn, pair net.Addr) *udpAss
 		assocOk:     false,
 		acceptDgram: "......",
 		pair:        ps,
+
+		addrFilter:    addrFilter,
+		allowedRemote: sync.Map{},
 	}
 }
 
@@ -133,6 +145,16 @@ func (u *udpAssociation) handleUdpDown(ctx context.Context) {
 	defer internal.BytesPool4k.Return(buf)
 	for {
 		l, a, err := u.udp.ReadFrom(buf)
+		if u.addrFilter {
+			sa := message.ConvertAddr(a)
+			if sa.AddressType == message.AddressTypeDomainName {
+				lg.Info("Can't filter remote UDP packet by domain name")
+				continue
+			}
+			if _, ok := u.allowedRemote.Load(net.IP(sa.Address).String()); !ok {
+				continue
+			}
+		}
 		if err != nil {
 			lg.Error("udp read", err)
 			return
@@ -155,6 +177,11 @@ func (u *udpAssociation) handleUdpDown(ctx context.Context) {
 
 func (u *udpAssociation) send(msg *message.UDPHeader) error {
 	a, err := net.ResolveUDPAddr("udp", msg.Endpoint.String())
+
+	if u.addrFilter {
+		u.allowedRemote.Store(a.IP.String(), nil)
+	}
+
 	if err != nil {
 		return err
 	}
