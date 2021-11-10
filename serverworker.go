@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/studentmain/socks6/auth"
+	"github.com/studentmain/socks6/common"
 	"github.com/studentmain/socks6/common/lg"
 	"github.com/studentmain/socks6/internal"
 	"github.com/studentmain/socks6/internal/socket"
@@ -35,27 +36,40 @@ type ServerWorker struct {
 
 	Outbound ServerOutbound
 
-	// control UDP NAT filtering behavior
-	// mapping is always Endpoint Independent
+	// control UDP NAT filtering behavior,
+	// mapping behavior is always Endpoint Independent.
+	//
 	// when false, use Endpoint Independent filtering (Full Cone)
+	//
 	// when true, use Address Dependent filtering (Restricted Cone)
 	AddressDependentFiltering bool
+
+	// require request message fully received in first packet
+	//
+	// Yes, TCP has no "packet" -- but that's only makes sense for people
+	// who never need to touch the dark side of Internet.
+	// Packet are everywhere in a packet switched network,
+	// you can create a stream on it and hide it behind API,
+	// but it's still a packet sequence on wire.
+	IgnoreFragmentedRequest bool
 
 	backlogListener *sync.Map // map[string]*bl
 	reservedUdpAddr *sync.Map // map[string]uint64
 	udpAssociation  *sync.Map // map[uint64]*ua
 }
 
+// ServerOutbound is a group of function called by ServerWorker when a connection or listener is needed to fullfill client request
 type ServerOutbound interface {
 	Dial(ctx context.Context, option message.StackOptionInfo, addr *message.Socks6Addr) (net.Conn, message.StackOptionInfo, error)
 	Listen(ctx context.Context, option message.StackOptionInfo, addr *message.Socks6Addr) (net.Listener, message.StackOptionInfo, error)
 	ListenPacket(ctx context.Context, option message.StackOptionInfo, addr *message.Socks6Addr) (net.PacketConn, message.StackOptionInfo, error)
 }
 
+// InternetServerOutbound implements ServerOutbound, create a internet connection/listener
 type InternetServerOutbound struct {
-	DefaultIPv4        net.IP
-	DefaultIPv6        net.IP
-	MulticastInterface *net.Interface
+	DefaultIPv4        net.IP         // address used when udp association request didn't provide an address
+	DefaultIPv6        net.IP         // address used when udp association request didn't provide an address
+	MulticastInterface *net.Interface // address
 }
 
 func (i InternetServerOutbound) Dial(ctx context.Context, option message.StackOptionInfo, addr *message.Socks6Addr) (net.Conn, message.StackOptionInfo, error) {
@@ -90,7 +104,7 @@ func (i InternetServerOutbound) ListenPacket(ctx context.Context, option message
 		p, err2 := net.ListenMulticastUDP("udp", i.MulticastInterface, ua)
 		return p, message.StackOptionInfo{}, err2
 	}
-
+	// todo what's going on? why 0.0.0.0 not work?
 	p, err := net.ListenUDP("udp", ua)
 	return p, message.StackOptionInfo{}, err
 }
@@ -106,8 +120,8 @@ func NewServerWorker() *ServerWorker {
 		VersionErrorHandler: ReplyVersionSpecificError,
 		Authenticator:       defaultAuth,
 		Outbound: InternetServerOutbound{
-			DefaultIPv4: guessDefaultIP4(),
-			DefaultIPv6: guessDefaultIP6(),
+			DefaultIPv4: common.GuessDefaultIPv4(),
+			DefaultIPv6: common.GuessDefaultIPv6(),
 		},
 		backlogListener: &sync.Map{},
 		reservedUdpAddr: &sync.Map{},
@@ -135,6 +149,9 @@ func ReplyVersionSpecificError(ctx context.Context, ver message.ErrVersionMismat
 	case 5:
 		// no method allowed
 		conn.Write([]byte{5, 0xff})
+	case 6:
+		// in case this function is used with a socks5 server
+		conn.Write([]byte{6})
 	case 'c', 'C', 'd', 'D', 'g', 'G', 'h', 'H', 'o', 'O', 'p', 'P', 't', 'T':
 		conn.Write([]byte("HTTP/1.0 400 Bad Request\r\n\r\nThis is a SOCKS 6 proxy, not HTTP proxy\r\n"))
 	default:
@@ -155,7 +172,13 @@ func (s *ServerWorker) ServeStream(
 
 	ccid := conn3Tuple(conn)
 
-	req, err := message.ParseRequestFrom(conn)
+	// create a wrapper reader if necessary
+	var conn1 io.Reader = conn
+	if s.IgnoreFragmentedRequest {
+		conn1 = &common.NetBufferOnlyReader{Conn: conn}
+	}
+
+	req, err := message.ParseRequestFrom(conn1)
 	if err != nil {
 		// not socks6
 		evm := message.ErrVersionMismatch{}
@@ -498,7 +521,7 @@ func (s *ServerWorker) UdpAssociateHandler(
 			reservedAddr = s6a
 		}
 		// check and create reply option
-		if !udpPortAvaliable(reservedAddr) {
+		if !common.UdpPortAvaliable(reservedAddr) {
 			reservedAddr = nil
 			appliedPpod.Reserve = false
 		} else {

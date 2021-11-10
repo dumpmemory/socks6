@@ -6,7 +6,6 @@ import (
 	"net"
 
 	"github.com/pion/dtls/v2"
-	"github.com/studentmain/socks6/internal"
 )
 
 func relayConnTuple(c, r net.Conn) string {
@@ -40,20 +39,4 @@ func connNet(c net.Conn) string {
 		n = "dtls"
 	}
 	return n
-}
-
-func udpPortAvaliable(a net.Addr) bool {
-	p, err := net.ListenPacket("udp", a.String())
-	p.Close()
-	return err == nil
-}
-
-func guessDefaultIP4() net.IP {
-	conn := internal.Must2(net.Dial("udp", "114.51.4.191:9810")).(*net.UDPConn)
-	return conn.LocalAddr().(*net.UDPAddr).IP.To4()
-}
-
-func guessDefaultIP6() net.IP {
-	conn := internal.Must2(net.Dial("udp", "[114:514:1919::]:810")).(*net.UDPConn)
-	return conn.LocalAddr().(*net.UDPAddr).IP
 }
