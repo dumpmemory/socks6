@@ -29,7 +29,7 @@ type ProxyUDPConn struct {
 // init setup association
 func (u *ProxyUDPConn) init() error {
 	// read assoc init
-	a, err := message.ParseUDPHeaderFrom(u.base)
+	a, err := message.ParseUDPMessageFrom(u.base)
 	if err != nil {
 		return err
 	}
@@ -40,7 +40,7 @@ func (u *ProxyUDPConn) init() error {
 
 	// todo don't explictly write it, to save rtt
 	// write empty datagram (?)
-	reply := message.UDPHeader{
+	reply := message.UDPMessage{
 		Type:          message.UDPMessageDatagram,
 		AssociationID: u.assocId,
 		Endpoint:      message.DefaultAddr,
@@ -50,7 +50,7 @@ func (u *ProxyUDPConn) init() error {
 	}
 
 	// read assoc ack
-	ack, err := message.ParseUDPHeaderFrom(u.base)
+	ack, err := message.ParseUDPMessageFrom(u.base)
 	if err != nil {
 		return err
 	}
@@ -100,12 +100,12 @@ func (u *ProxyUDPConn) ReadFrom(p []byte) (int, net.Addr, error) {
 	cd := internal.NewCancellableDefer(func() { u.Close() })
 
 	// read message
-	h := message.UDPHeader{}
+	h := message.UDPMessage{}
 	if u.overTcp {
 		u.rlock.Lock()
 		defer u.rlock.Unlock()
 
-		h2, err := message.ParseUDPHeaderFrom(u.conn)
+		h2, err := message.ParseUDPMessageFrom(u.conn)
 		h = *h2
 		if err != nil {
 			return 0, nil, err
@@ -118,7 +118,7 @@ func (u *ProxyUDPConn) ReadFrom(p []byte) (int, net.Addr, error) {
 		if err != nil {
 			return 0, nil, err
 		}
-		h2, err := message.ParseUDPHeaderFrom(bytes.NewReader(buf[:l]))
+		h2, err := message.ParseUDPMessageFrom(bytes.NewReader(buf[:l]))
 		h = *h2
 		if err != nil {
 			return 0, nil, err
@@ -165,7 +165,7 @@ func (u *ProxyUDPConn) Write(p []byte) (int, error) {
 
 // WriteTo implements net.PacketConn
 func (u *ProxyUDPConn) WriteTo(p []byte, addr net.Addr) (int, error) {
-	h := message.UDPHeader{
+	h := message.UDPMessage{
 		Type:          message.UDPMessageDatagram,
 		AssociationID: u.assocId,
 		Endpoint:      message.ConvertAddr(addr),

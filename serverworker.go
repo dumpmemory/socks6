@@ -306,7 +306,7 @@ func (s *ServerWorker) ServeDatagram(
 	data []byte,
 	downlink func([]byte) error,
 ) {
-	h, err := message.ParseUDPHeaderFrom(bytes.NewReader(data))
+	h, err := message.ParseUDPMessageFrom(bytes.NewReader(data))
 	if err != nil {
 		return
 	}

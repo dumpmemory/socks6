@@ -240,7 +240,7 @@ const (
 	UDPMessageError
 )
 
-type UDPHeader struct {
+type UDPMessage struct {
 	Type          UDPHeaderType
 	AssociationID uint64
 	// dgram & icmp
@@ -252,7 +252,7 @@ type UDPHeader struct {
 	Data []byte
 }
 
-func (u *UDPHeader) Marshal() []byte {
+func (u *UDPMessage) Marshal() []byte {
 	b := bytes.Buffer{}
 
 	switch u.Type {
@@ -303,8 +303,8 @@ func (u *UDPHeader) Marshal() []byte {
 	return b.Bytes()
 }
 
-func ParseUDPHeaderFrom(b io.Reader) (*UDPHeader, error) {
-	u := &UDPHeader{}
+func ParseUDPMessageFrom(b io.Reader) (*UDPMessage, error) {
+	u := &UDPMessage{}
 	buf := internal.BytesPool64k.Rent()
 	defer internal.BytesPool64k.Return(buf)
 	if _, err := io.ReadFull(b, buf[:12]); err != nil {

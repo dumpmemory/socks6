@@ -17,7 +17,7 @@ type UDPDownlink func(b []byte) error
 
 // ClientPacket represent a single UDPHeader recieved from client
 type ClientPacket struct {
-	Message  *message.UDPHeader
+	Message  *message.UDPMessage
 	Source   net.Addr
 	Downlink UDPDownlink
 }
@@ -74,7 +74,7 @@ func newUdpAssociation(
 func (u *udpAssociation) handleTcpUp(ctx context.Context) {
 	defer u.exit()
 	// send assoc init message
-	assocInit := message.UDPHeader{
+	assocInit := message.UDPMessage{
 		Type:          message.UDPMessageAssociationInit,
 		AssociationID: u.id,
 	}
@@ -92,7 +92,7 @@ func (u *udpAssociation) handleTcpUp(ctx context.Context) {
 	}()
 	// read loop
 	for {
-		msg, err := message.ParseUDPHeaderFrom(u.cc.Conn)
+		msg, err := message.ParseUDPMessageFrom(u.cc.Conn)
 		if err != nil {
 			u.reportErr(err)
 			return
@@ -175,7 +175,7 @@ func (u *udpAssociation) handleUdpDown(ctx context.Context) {
 			lg.Error("udp read", err)
 			return
 		}
-		msg := &message.UDPHeader{
+		msg := &message.UDPMessage{
 			Type:          message.UDPMessageDatagram,
 			AssociationID: u.id,
 
@@ -193,7 +193,7 @@ func (u *udpAssociation) handleUdpDown(ctx context.Context) {
 
 // handleIcmpDown send an socks 6 icmp message to client
 func (u *udpAssociation) handleIcmpDown(ctx context.Context, code byte, src, dst, reporter *message.Socks6Addr) {
-	uh := message.UDPHeader{
+	uh := message.UDPMessage{
 		Type:          message.UDPMessageError,
 		AssociationID: u.id,
 		Endpoint:      dst,
@@ -206,7 +206,7 @@ func (u *udpAssociation) handleIcmpDown(ctx context.Context, code byte, src, dst
 }
 
 // send write client udp message to remote
-func (u *udpAssociation) send(msg *message.UDPHeader) error {
+func (u *udpAssociation) send(msg *message.UDPMessage) error {
 	a, err := net.ResolveUDPAddr("udp", msg.Endpoint.String())
 
 	if u.addrFilter {
@@ -222,7 +222,7 @@ func (u *udpAssociation) send(msg *message.UDPHeader) error {
 
 // ack send assoc ack message
 func (u *udpAssociation) ack() error {
-	h := message.UDPHeader{
+	h := message.UDPMessage{
 		Type:          message.UDPMessageAssociationAck,
 		AssociationID: u.id,
 	}
