@@ -22,6 +22,7 @@ type ClientPacket struct {
 	Downlink UDPDownlink
 }
 
+// udpAssociation contain UDP association state
 type udpAssociation struct {
 	id  uint64
 	udp net.PacketConn
@@ -34,8 +35,8 @@ type udpAssociation struct {
 	pair     string // reserved port
 	downlink func(b []byte) error
 
-	allowedRemote sync.Map
-	addrFilter    bool
+	allowedRemote sync.Map // allowed remote host
+	addrFilter    bool     // when true, only datagram from allowedRemote will send to client
 
 	alive bool
 }
@@ -66,8 +67,10 @@ func newUdpAssociation(
 	}
 }
 
+// handleTcpUp process UDP association setup and read messages from initial TCP connection
 func (u *udpAssociation) handleTcpUp(ctx context.Context) {
 	defer u.exit()
+	// send assoc init message
 	assocInit := message.UDPHeader{
 		Type:          message.UDPMessageAssociationInit,
 		AssociationID: u.id,
@@ -76,12 +79,15 @@ func (u *udpAssociation) handleTcpUp(ctx context.Context) {
 		lg.Warning(err)
 		return
 	}
+	// check for assoc established in ??? seconds
+	// and close assoc if not established
 	go func() {
 		<-time.After(120 * time.Second)
 		if !u.assocOk {
 			u.exit()
 		}
 	}()
+	// read loop
 	for {
 		msg, err := message.ParseUDPHeaderFrom(u.cc.Conn)
 		if err != nil {
@@ -92,12 +98,11 @@ func (u *udpAssociation) handleTcpUp(ctx context.Context) {
 			u.reportErr(errors.New("not same assoc"))
 			return
 		}
-		if msg.Type != message.UDPMessageDatagram {
-			continue
-		}
 
 		switch msg.Type {
+		// switch-case, in case client can send other message in the future
 		case message.UDPMessageDatagram:
+			// assoc is not established yet
 			if !u.assocOk {
 				u.assocOk = true
 				u.acceptTcp = true
@@ -107,8 +112,9 @@ func (u *udpAssociation) handleTcpUp(ctx context.Context) {
 					return err
 				}
 			}
+			// assoc is not on tcp
 			if !u.acceptTcp {
-				lg.Error(u.cc.ConnId(), "should send association ack via tcp")
+				lg.Error(u.cc.ConnId(), "should send association ack via tcp first")
 				return
 			}
 			// todo report critical error
@@ -119,6 +125,7 @@ func (u *udpAssociation) handleTcpUp(ctx context.Context) {
 	}
 }
 
+// handleUdpUp process a messages from UDP
 func (u *udpAssociation) handleUdpUp(ctx context.Context, cp ClientPacket) {
 	msg := cp.Message
 	if msg.Type != message.UDPMessageDatagram {
@@ -135,20 +142,26 @@ func (u *udpAssociation) handleUdpUp(ctx context.Context, cp ClientPacket) {
 		u.ack()
 		u.downlink = cp.Downlink
 	}
+	if u.acceptDgram != message.AddrString(cp.Source) {
+		lg.Error(u.cc.ConnId(), "should send association ack via udp first")
+		return
+	}
 	if err := u.send(msg); err != nil {
 		u.reportErr(err)
 	}
 }
 
+// handleUdpDown read UDP packet from remote
 func (u *udpAssociation) handleUdpDown(ctx context.Context) {
 	buf := internal.BytesPool4k.Rent()
 	defer internal.BytesPool4k.Return(buf)
 	for {
 		l, a, err := u.udp.ReadFrom(buf)
+		// restricted cone nat
 		if u.addrFilter {
 			sa := message.ConvertAddr(a)
 			if sa.AddressType == message.AddressTypeDomainName {
-				lg.Info("Can't filter remote UDP packet by domain name")
+				lg.Info("can't filter remote UDP packet by domain name")
 				continue
 			}
 			if _, ok := u.allowedRemote.Load(net.IP(sa.Address).String()); !ok {
@@ -175,6 +188,11 @@ func (u *udpAssociation) handleUdpDown(ctx context.Context) {
 	}
 }
 
+func (u *udpAssociation) handleIcmpDown(ctx context.Context) {
+	// todo
+}
+
+// send write client udp message to remote
 func (u *udpAssociation) send(msg *message.UDPHeader) error {
 	a, err := net.ResolveUDPAddr("udp", msg.Endpoint.String())
 
@@ -189,6 +207,7 @@ func (u *udpAssociation) send(msg *message.UDPHeader) error {
 	return err
 }
 
+// ack send assoc ack message
 func (u *udpAssociation) ack() error {
 	h := message.UDPHeader{
 		Type:          message.UDPMessageAssociationAck,

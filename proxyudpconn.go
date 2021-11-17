@@ -26,7 +26,9 @@ type ProxyUDPConn struct {
 	icmp  bool       // accept icmp error report
 }
 
+// init setup association
 func (u *ProxyUDPConn) init() error {
+	// read assoc init
 	a, err := message.ParseUDPHeaderFrom(u.base)
 	if err != nil {
 		return err
@@ -35,16 +37,19 @@ func (u *ProxyUDPConn) init() error {
 		return errors.New("not assoc init")
 	}
 	u.assocId = a.AssociationID
+
+	// todo don't explictly write it, to save rtt
+	// write empty datagram (?)
 	reply := message.UDPHeader{
 		Type:          message.UDPMessageDatagram,
 		AssociationID: u.assocId,
 		Endpoint:      message.DefaultAddr,
 	}
-
 	if _, err = u.conn.Write(reply.Marshal()); err != nil {
 		return err
 	}
 
+	// read assoc ack
 	ack, err := message.ParseUDPHeaderFrom(u.base)
 	if err != nil {
 		return err
@@ -57,6 +62,7 @@ func (u *ProxyUDPConn) init() error {
 	}
 
 	if !u.overTcp {
+		// tcp conn health checkers
 		go func() {
 			buf := internal.BytesPool256.Rent()
 			defer internal.BytesPool256.Return(buf)
@@ -70,10 +76,10 @@ func (u *ProxyUDPConn) init() error {
 			}
 		}()
 	}
-
 	return nil
 }
 
+// Read implements net.Conn
 func (u *ProxyUDPConn) Read(p []byte) (int, error) {
 	if u.expectAddr == nil {
 		return 0, errors.New("don't know read from where, use Dial to create connection")
@@ -89,6 +95,7 @@ func (u *ProxyUDPConn) Read(p []byte) (int, error) {
 	}
 }
 
+// ReadFrom implements net.PacketConn
 func (u *ProxyUDPConn) ReadFrom(p []byte) (int, net.Addr, error) {
 	cd := internal.NewCancellableDefer(func() { u.Close() })
 
@@ -148,6 +155,7 @@ func (u *ProxyUDPConn) ReadFrom(p []byte) (int, net.Addr, error) {
 	return n, addr, nil
 }
 
+// Write implements net.Conn
 func (u *ProxyUDPConn) Write(p []byte) (int, error) {
 	if u.expectAddr == nil {
 		return 0, errors.New("don't know write to where, use Dial to create connection")
@@ -155,6 +163,7 @@ func (u *ProxyUDPConn) Write(p []byte) (int, error) {
 	return u.WriteTo(p, u.expectAddr)
 }
 
+// WriteTo implements net.PacketConn
 func (u *ProxyUDPConn) WriteTo(p []byte, addr net.Addr) (int, error) {
 	h := message.UDPHeader{
 		Type:          message.UDPMessageDatagram,

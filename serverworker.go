@@ -52,6 +52,7 @@ type ServerWorker struct {
 	// you can create a stream on it and hide it behind API,
 	// but it's still a packet sequence on wire.
 	IgnoreFragmentedRequest bool
+	DisableICMP             bool
 
 	backlogListener *sync.Map // map[string]*bl
 	reservedUdpAddr *sync.Map // map[string]uint64
@@ -338,7 +339,6 @@ func (s *ServerWorker) ConnectHandler(
 
 	lg.Trace(cc.ConnId(), "dial to", cc.Destination())
 
-	// todo custom dialer
 	rconn, remoteAppliedOpt, err := s.Outbound.Dial(ctx, remoteOpt, cc.Destination())
 	code := getReplyCode(err)
 

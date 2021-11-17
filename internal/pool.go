@@ -29,7 +29,7 @@ func (p *BytesPool) Rent() []byte {
 // always return what exactly you rented.
 func (p *BytesPool) Return(b []byte) {
 	if len(b) != p.l {
-		panic("please return all bytes you rented!")
+		lg.Panic("please return all bytes you rented!")
 	}
 	capacity := cap(p.ch)
 
