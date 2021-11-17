@@ -18,12 +18,15 @@ type ProxyUDPConn struct {
 	conn       net.Conn // data conn
 	overTcp    bool
 	expectAddr net.Addr // expected remote addr
+	icmp       bool     // accept icmp error report
 
 	assocId uint64
 
-	rlock sync.Mutex // needn't write lock, write message is finished in 1 write, but read message is in many read
-	rbind net.Addr   // remote bind addr
-	icmp  bool       // accept icmp error report
+	parseLock sync.Mutex // needn't write lock, write message is finished in 1 write, but read message is in many read
+	rbind     net.Addr   // remote bind addr
+
+	ackDone sync.WaitGroup
+	runAck  sync.Once
 }
 
 // init setup association
@@ -37,33 +40,12 @@ func (u *ProxyUDPConn) init() error {
 		return errors.New("not assoc init")
 	}
 	u.assocId = a.AssociationID
-
-	// todo don't explictly write it, to save rtt
-	// write empty datagram (?)
-	reply := message.UDPMessage{
-		Type:          message.UDPMessageDatagram,
-		AssociationID: u.assocId,
-		Endpoint:      message.DefaultAddr,
-	}
-	if _, err = u.conn.Write(reply.Marshal()); err != nil {
-		return err
-	}
-
-	// read assoc ack
-	ack, err := message.ParseUDPMessageFrom(u.base)
-	if err != nil {
-		return err
-	}
-	if ack.AssociationID != u.assocId {
-		return errors.New("not same association")
-	}
-	if ack.Type != message.UDPMessageAssociationAck {
-		return errors.New("not assoc ack message")
-	}
+	u.ackDone.Add(1)
 
 	if !u.overTcp {
 		// tcp conn health checkers
 		go func() {
+			u.ackDone.Wait()
 			buf := internal.BytesPool256.Rent()
 			defer internal.BytesPool256.Return(buf)
 			for {
@@ -76,6 +58,21 @@ func (u *ProxyUDPConn) init() error {
 			}
 		}()
 	}
+	return nil
+}
+
+func (u *ProxyUDPConn) readAck() error {
+	ack, err := message.ParseUDPMessageFrom(u.base)
+	if err != nil {
+		return err
+	}
+	if ack.AssociationID != u.assocId {
+		return errors.New("not same association")
+	}
+	if ack.Type != message.UDPMessageAssociationAck {
+		return errors.New("not assoc ack message")
+	}
+	u.ackDone.Done()
 	return nil
 }
 
@@ -97,13 +94,14 @@ func (u *ProxyUDPConn) Read(p []byte) (int, error) {
 
 // ReadFrom implements net.PacketConn
 func (u *ProxyUDPConn) ReadFrom(p []byte) (int, net.Addr, error) {
+	u.ackDone.Wait()
 	cd := internal.NewCancellableDefer(func() { u.Close() })
 
 	// read message
 	h := message.UDPMessage{}
 	if u.overTcp {
-		u.rlock.Lock()
-		defer u.rlock.Unlock()
+		u.parseLock.Lock()
+		defer u.parseLock.Unlock()
 
 		h2, err := message.ParseUDPMessageFrom(u.conn)
 		h = *h2
@@ -165,6 +163,15 @@ func (u *ProxyUDPConn) Write(p []byte) (int, error) {
 
 // WriteTo implements net.PacketConn
 func (u *ProxyUDPConn) WriteTo(p []byte, addr net.Addr) (int, error) {
+	var err error = nil
+	u.runAck.Do(func() {
+		err = u.readAck()
+	})
+	if err != nil {
+		u.Close()
+		return 0, err
+	}
+
 	h := message.UDPMessage{
 		Type:          message.UDPMessageDatagram,
 		AssociationID: u.assocId,
