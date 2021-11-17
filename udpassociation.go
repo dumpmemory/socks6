@@ -31,6 +31,7 @@ type udpAssociation struct {
 	acceptTcp   bool   // whether to accept datagram over tcp
 	acceptDgram string // which client address is accepted
 	assocOk     bool   // first datagram recieved
+	icmpOn      bool
 
 	pair     string // reserved port
 	downlink func(b []byte) error
@@ -46,6 +47,7 @@ func newUdpAssociation(
 	udp net.PacketConn,
 	pair net.Addr,
 	addrFilter bool,
+	icmpOn bool,
 ) *udpAssociation {
 	id := internal.RandUint64()
 	ps := ""
@@ -61,6 +63,7 @@ func newUdpAssociation(
 		assocOk:     false,
 		acceptDgram: "......",
 		pair:        ps,
+		icmpOn:      icmpOn,
 
 		addrFilter:    addrFilter,
 		allowedRemote: sync.Map{},
@@ -188,8 +191,18 @@ func (u *udpAssociation) handleUdpDown(ctx context.Context) {
 	}
 }
 
-func (u *udpAssociation) handleIcmpDown(ctx context.Context) {
-	// todo
+// handleIcmpDown send an socks 6 icmp message to client
+func (u *udpAssociation) handleIcmpDown(ctx context.Context, code byte, src, dst, reporter *message.Socks6Addr) {
+	uh := message.UDPHeader{
+		Type:          message.UDPMessageError,
+		AssociationID: u.id,
+		Endpoint:      dst,
+		ErrorEndpoint: reporter,
+		ErrorCode:     code,
+	}
+	if err := u.send(&uh); err != nil {
+		u.reportErr(err)
+	}
 }
 
 // send write client udp message to remote

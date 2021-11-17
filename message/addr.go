@@ -96,6 +96,7 @@ func ConvertAddr(addr net.Addr) *Socks6Addr {
 }
 
 // AddrString create a stable string represtation for input address for hashing purpose
+// todo needn't
 func AddrString(n net.Addr) string {
 	s6a := ConvertAddr(n)
 	return s6a.String()

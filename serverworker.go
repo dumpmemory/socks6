@@ -3,6 +3,7 @@ package socks6
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"errors"
 	"io"
 	"net"
@@ -17,6 +18,9 @@ import (
 	"github.com/studentmain/socks6/internal"
 	"github.com/studentmain/socks6/internal/socket"
 	"github.com/studentmain/socks6/message"
+	"golang.org/x/net/icmp"
+	"golang.org/x/net/ipv4"
+	"golang.org/x/net/ipv6"
 )
 
 type CommandHandler func(
@@ -52,7 +56,7 @@ type ServerWorker struct {
 	// you can create a stream on it and hide it behind API,
 	// but it's still a packet sequence on wire.
 	IgnoreFragmentedRequest bool
-	DisableICMP             bool
+	EnableICMP              bool
 
 	backlogListener *sync.Map // map[string]*bl
 	reservedUdpAddr *sync.Map // map[string]uint64
@@ -533,12 +537,31 @@ func (s *ServerWorker) UdpAssociateHandler(
 			})
 		}
 	}
+	// check icmp option
+	icmpOn := false
+	if s.EnableICMP {
+		if iicmp, ok := remoteOpt[message.StackOptionUDPUDPError]; ok {
+			i := iicmp.(message.UDPErrorOptionData)
+			if i.Availability {
+				icmpOn = true
+				remoteAppliedOpt.Add(message.BaseStackOptionData{
+					RemoteLeg: true,
+					Level:     message.StackOptionLevelUDP,
+					Code:      message.StackOptionCodeUDPError,
+					Data: &message.UDPErrorOptionData{
+						Availability: true,
+					},
+				})
+			}
+		}
+	}
+
 	so := message.GetCombinedStackOptions(message.StackOptionInfo{}, remoteAppliedOpt)
 	opset := message.NewOptionSet()
 	opset.AddMany(so)
 	cc.WriteReply(message.OperationReplySuccess, pc.LocalAddr(), opset)
 	// start association
-	assoc := newUdpAssociation(cc, pc, reservedAddr, s.AddressDependentFiltering)
+	assoc := newUdpAssociation(cc, pc, reservedAddr, s.AddressDependentFiltering, icmpOn)
 	s.udpAssociation.Store(assoc.id, assoc)
 	lg.Trace("start udp assoc", assoc.id)
 	if reservedAddr != nil {
@@ -548,6 +571,102 @@ func (s *ServerWorker) UdpAssociateHandler(
 
 	go assoc.handleTcpUp(ctx)
 	go assoc.handleUdpDown(ctx)
+}
+
+func (s *ServerWorker) ForwardICMP(ctx context.Context, msg *icmp.Message, ip *net.IPAddr, ver int) {
+	var code byte
+	var reporter *message.Socks6Addr
+	// map icmp message to socks6 addresses and code
+	hdr := []byte{}
+
+	switch ver {
+	case 4:
+		code = byte(0)
+		reporter = &message.Socks6Addr{
+			AddressType: message.AddressTypeIPv4,
+			Address:     ip.IP.To4(),
+		}
+
+		switch msg.Type {
+		case ipv4.ICMPTypeDestinationUnreachable:
+			switch msg.Code {
+			case 0:
+				code = 1
+			case 1:
+				code = 2
+			default:
+				return
+			}
+			m2 := msg.Body.(*icmp.DstUnreach)
+			hdr = m2.Data
+		case ipv4.ICMPTypeTimeExceeded:
+			switch msg.Code {
+			case 0:
+				code = 3
+			default:
+				return
+			}
+			m2 := msg.Body.(*icmp.TimeExceeded)
+			hdr = m2.Data
+		}
+	case 6:
+		code = byte(0)
+		reporter = &message.Socks6Addr{
+			AddressType: message.AddressTypeIPv6,
+			Address:     ip.IP.To16(),
+		}
+
+		switch msg.Type {
+		case ipv6.ICMPTypeDestinationUnreachable:
+			switch msg.Code {
+			case 0:
+				code = 1
+			case 3:
+				code = 2
+			default:
+				return
+			}
+			m2 := msg.Body.(*icmp.DstUnreach)
+			hdr = m2.Data
+		case ipv6.ICMPTypeTimeExceeded:
+			switch msg.Code {
+			case 0:
+				code = 3
+			default:
+				return
+			}
+			m2 := msg.Body.(*icmp.TimeExceeded)
+			hdr = m2.Data
+		case ipv6.ICMPTypePacketTooBig:
+			code = 4
+
+			m2 := msg.Body.(*icmp.TimeExceeded)
+			hdr = m2.Data
+		}
+
+	}
+	ipSrc, ipDst, proto, err := parseSrcDstAddrFromIPHeader(hdr, ver)
+	if err != nil {
+		lg.Info("ICMP IP header parse fail", err)
+		return
+	}
+	if proto != 17 {
+		return
+	}
+	// todo faster way to find corresponding assoc
+	s.udpAssociation.Range(func(key, value interface{}) bool {
+		ua := value.(*udpAssociation)
+		// icmp disabled
+		if !ua.icmpOn {
+			return true
+		}
+		// not same origin
+		if message.AddrString(ua.udp.LocalAddr()) != message.AddrString(ipSrc) {
+			return true
+		}
+		ua.handleIcmpDown(ctx, code, ipSrc, ipDst, reporter)
+		return true
+	})
 }
 
 // ClearUnusedResource clear no longer used resources (UDP associations, etc.)
@@ -732,4 +851,64 @@ func setAuthMethodInfo(arep *message.AuthenticationReply, result auth.ServerAuth
 		})
 	}
 	return arep
+}
+
+var protocolWithPort = map[int]bool{
+	6:   true, // tcp
+	17:  true, // udp
+	33:  true, // dccp
+	132: true, // sctp
+}
+
+func parseSrcDstAddrFromIPHeader(b []byte, v int) (*message.Socks6Addr, *message.Socks6Addr, int, error) {
+	switch v {
+	case 4:
+		hd, err := icmp.ParseIPv4Header(b)
+		if err != nil {
+			return nil, nil, 0, err
+		}
+		if _, ok := protocolWithPort[hd.Protocol]; !ok {
+			return nil, nil, 0, errors.New("protocol not supported")
+		}
+		if len(b) < hd.Len+4 {
+			return nil, nil, 0, errors.New("port field not exist")
+		}
+		data := b[hd.Len:]
+		s := message.Socks6Addr{
+			AddressType: message.AddressTypeIPv4,
+			Address:     hd.Src.To4(),
+			Port:        binary.BigEndian.Uint16(data),
+		}
+		d := message.Socks6Addr{
+			AddressType: message.AddressTypeIPv4,
+			Address:     hd.Dst.To4(),
+			Port:        binary.BigEndian.Uint16(data[2:]),
+		}
+		return &s, &d, hd.Protocol, nil
+	case 6:
+		hd, err := ipv6.ParseHeader(b)
+		if err != nil {
+			return nil, nil, 0, err
+		}
+		if _, ok := protocolWithPort[hd.NextHeader]; !ok {
+			return nil, nil, 0, errors.New("protocol not supported")
+		}
+		if len(b) < ipv6.HeaderLen+4 {
+			return nil, nil, 0, errors.New("port field not exist")
+		}
+		data := b[ipv6.HeaderLen:]
+		s := message.Socks6Addr{
+			AddressType: message.AddressTypeIPv6,
+			Address:     hd.Src,
+			Port:        binary.BigEndian.Uint16(data),
+		}
+		d := message.Socks6Addr{
+			AddressType: message.AddressTypeIPv6,
+			Address:     hd.Dst,
+			Port:        binary.BigEndian.Uint16(data[2:]),
+		}
+		return &s, &d, hd.NextHeader, nil
+	default:
+		return nil, nil, 0, errors.New("what ip version?")
+	}
 }

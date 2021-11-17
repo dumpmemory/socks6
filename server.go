@@ -10,6 +10,7 @@ import (
 	"github.com/studentmain/socks6/common"
 	"github.com/studentmain/socks6/common/lg"
 	"github.com/studentmain/socks6/internal"
+	"golang.org/x/net/icmp"
 )
 
 // Server is a SOCKS 6 over TCP/TLS/UDP/DTLS server
@@ -25,10 +26,12 @@ type Server struct {
 
 	// listeners
 
-	tcp  net.Listener
-	udp  net.PacketConn
-	tls  net.Listener
-	dtls net.Listener
+	tcp   net.Listener
+	udp   net.PacketConn
+	tls   net.Listener
+	dtls  net.Listener
+	icmp4 net.PacketConn
+	icmp6 net.PacketConn
 }
 
 func (s *Server) Start(ctx context.Context) {
@@ -52,6 +55,10 @@ func (s *Server) Start(ctx context.Context) {
 		s.startTLS(ctx, encryptedEndpoint)
 		s.startDTLS(ctx, encryptedEndpoint)
 	}
+
+	if s.Worker.EnableICMP {
+		s.startICMP(ctx)
+	}
 	go s.Worker.ClearUnusedResource(ctx)
 	go func() {
 		<-ctx.Done()
@@ -59,6 +66,7 @@ func (s *Server) Start(ctx context.Context) {
 		s.udp.Close()
 		s.tls.Close()
 		s.dtls.Close()
+		s.icmp4.Close()
 	}()
 }
 
@@ -163,4 +171,55 @@ func (s *Server) startDTLS(ctx context.Context, addr string) {
 			}()
 		}
 	}()
+}
+
+func (s *Server) startICMP(ctx context.Context) {
+	i4, err := icmp.ListenPacket("ip4:icmp", "0.0.0.0")
+	if err != nil {
+		s.Worker.EnableICMP = false
+		lg.Warning("can't listen ICMPv4 packet", err)
+		return
+	}
+	i6, err := icmp.ListenPacket("ip6:ipv6-icmp", "::")
+	if err != nil {
+		i4.Close()
+		s.Worker.EnableICMP = false
+		lg.Warning("can't listen ICMPv6 packet", err)
+		return
+	}
+	s.icmp4 = i4
+	s.icmp6 = i6
+
+	fn := func(c net.PacketConn, ipv int) {
+		b := internal.BytesPool4k.Rent()
+		defer internal.BytesPool4k.Return(b)
+		protov := 1
+		switch ipv {
+		case 4:
+			protov = 1
+		case 6:
+			protov = 58
+		}
+
+		for {
+			n, addr, err := c.ReadFrom(b)
+			if err != nil {
+				lg.Error(err)
+				return
+			}
+			msg, err := icmp.ParseMessage(protov, b[:n])
+			if err != nil {
+				lg.Warning(err)
+				continue
+			}
+			ip, ok := addr.(*net.IPAddr)
+			if !ok {
+				lg.Warning("ICMP ReadFrom returned a non IP address")
+				continue
+			}
+			go s.Worker.ForwardICMP(ctx, msg, ip, ipv)
+		}
+	}
+	go fn(s.icmp4, 4)
+	go fn(s.icmp6, 6)
 }
