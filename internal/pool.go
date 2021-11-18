@@ -49,9 +49,3 @@ var BytesPool64k = NewBytesPool(65536, 16)
 
 // BytesPool4k is a BytesPool with array size 4096, used as message forwarding buffer
 var BytesPool4k = NewBytesPool(4096, 128)
-
-// BytesPool256 is a BytesPool with array size 256, used as header deserialize buffer
-var BytesPool256 = NewBytesPool(256, 128)
-
-// BytesPool256 is a BytesPool with array size 16
-var BytesPool16 = NewBytesPool(16, 128)

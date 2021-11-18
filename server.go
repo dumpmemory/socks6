@@ -79,8 +79,7 @@ func (s *Server) startTCP(ctx context.Context, addr string) {
 		for {
 			conn, err := s.tcp.Accept()
 			if err != nil {
-				lg.Error(err)
-				lg.Warning("stop TCP server")
+				lg.Error("stop TCP server", err)
 				return
 			}
 			go s.Worker.ServeStream(ctx, conn)
@@ -98,8 +97,7 @@ func (s *Server) startTLS(ctx context.Context, addr string) {
 		for {
 			conn, err := s.tls.Accept()
 			if err != nil {
-				lg.Error(err)
-				lg.Warning("stop TLS server")
+				lg.Error("stop TLS server", err)
 				return
 			}
 			go s.Worker.ServeStream(ctx, conn)
@@ -113,11 +111,15 @@ func (s *Server) startUDP(ctx context.Context, addr string) {
 	lg.Infof("start UDP server at %s", s.udp.LocalAddr())
 
 	go func() {
-		buf := make([]byte, 4096)
+		defer s.udp.Close()
+		buf := internal.BytesPool4k.Rent()
+		defer internal.BytesPool4k.Return(buf)
+
 		for {
 			nRead, rAddr, err := s.udp.ReadFrom(buf)
 			if err != nil {
-				lg.Error(err)
+				lg.Error("stop UDP server", err)
+				return
 			}
 
 			go s.Worker.ServeDatagram(
@@ -144,13 +146,14 @@ func (s *Server) startDTLS(ctx context.Context, addr string) {
 		for {
 			conn, err := s.dtls.Accept()
 			if err != nil {
-				lg.Error(err)
-				lg.Warning("stop DTLS server")
+				lg.Error("stop DTLS server", err)
 				return
 			}
 			go func() {
 				defer conn.Close()
-				buf := make([]byte, 4096)
+
+				buf := internal.BytesPool4k.Rent()
+				defer internal.BytesPool4k.Return(buf)
 
 				for {
 					nRead, err := conn.Read(buf)

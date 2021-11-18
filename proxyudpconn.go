@@ -46,8 +46,7 @@ func (u *ProxyUDPConn) init() error {
 		// tcp conn health checkers
 		go func() {
 			u.ackDone.Wait()
-			buf := internal.BytesPool256.Rent()
-			defer internal.BytesPool256.Return(buf)
+			buf := make([]byte, 256)
 			for {
 				_, err := u.base.Read(buf)
 				// todo improve error report

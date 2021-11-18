@@ -187,8 +187,7 @@ func (a *Socks6Addr) MarshalAddress() []byte {
 func ParseAddressFrom(b io.Reader, atyp AddressType) (*Socks6Addr, error) {
 	a := &Socks6Addr{}
 	a.AddressType = atyp
-	buf := internal.BytesPool256.Rent()
-	defer internal.BytesPool256.Return(buf)
+	buf := make([]byte, 256)
 
 	if a.AddressType == AddressTypeDomainName {
 		// domain name

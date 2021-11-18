@@ -1,4 +1,4 @@
-package socket
+package common
 
 import (
 	"log"
@@ -8,8 +8,7 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-
-func ConvertErrno(e syscall.Errno) syscall.Errno {
+func ConvertSocketErrno(e syscall.Errno) syscall.Errno {
 	switch e {
 	case windows.WSAENOPROTOOPT:
 		return syscall.ENOPROTOOPT

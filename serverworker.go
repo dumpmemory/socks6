@@ -639,11 +639,9 @@ func (s *ServerWorker) ForwardICMP(ctx context.Context, msg *icmp.Message, ip *n
 			hdr = m2.Data
 		case ipv6.ICMPTypePacketTooBig:
 			code = 4
-
 			m2 := msg.Body.(*icmp.TimeExceeded)
 			hdr = m2.Data
 		}
-
 	}
 	ipSrc, ipDst, proto, err := parseSrcDstAddrFromIPHeader(hdr, ver)
 	if err != nil {
@@ -742,7 +740,7 @@ func getReplyCode(err error) message.ReplyCode {
 			return message.OperationReplyServerFailure
 		}
 		// windows use windows.WSAExxxx error code, so this is necessary
-		switch socket.ConvertErrno(errno) {
+		switch common.ConvertSocketErrno(errno) {
 		case syscall.ENETUNREACH:
 			return message.OperationReplyNetworkUnreachable
 		case syscall.EHOSTUNREACH:
@@ -756,80 +754,6 @@ func getReplyCode(err error) message.ReplyCode {
 		}
 	}
 	return message.OperationReplyServerFailure
-}
-
-func relay(ctx context.Context, c, r net.Conn, timeout time.Duration) error {
-	var wg sync.WaitGroup
-	wg.Add(2)
-	var err error = nil
-	lg.Debugf("relay %s start", relayConnTuple(c, r))
-	go func() {
-		defer wg.Done()
-		e := relayOneDirection(ctx, c, r, timeout)
-		// if already recorded an err, then another direction is already closed
-		if e != nil && err == nil {
-			err = e
-			c.Close()
-			r.Close()
-		}
-	}()
-	go func() {
-		defer wg.Done()
-		e := relayOneDirection(ctx, r, c, timeout)
-		if e != nil && err == nil {
-			err = e
-			c.Close()
-			r.Close()
-		}
-	}()
-	wg.Wait()
-
-	lg.Debugf("relay %s done %s", relayConnTuple(c, r), err)
-	if err == io.EOF {
-		return nil
-	}
-	return err
-}
-
-func relayOneDirection(ctx context.Context, c1, c2 net.Conn, timeout time.Duration) error {
-	var done error = nil
-	buf := internal.BytesPool4k.Rent()
-	defer internal.BytesPool4k.Return(buf)
-	id := relayConnTuple(c1, c2)
-	lg.Debugf("relayOneDirection %s start", id)
-	go func() {
-		<-ctx.Done()
-		done = ctx.Err()
-	}()
-	defer lg.Debugf("relayOneDirection %s exit", id)
-	// copy pasted from io.Copy with some modify
-	for {
-		c1.SetReadDeadline(time.Now().Add(timeout))
-		nRead, eRead := c1.Read(buf)
-		if done != nil {
-			return done
-		}
-
-		if nRead > 0 {
-			c2.SetWriteDeadline(time.Now().Add(timeout))
-			nWrite, eWrite := c2.Write(buf[:nRead])
-			if done != nil {
-				return done
-			}
-
-			if eWrite != nil {
-				lg.Debugf("relayOneDirection %s write error %s", id, eWrite)
-				return eWrite
-			}
-			if nRead != nWrite {
-				return io.ErrShortWrite
-			}
-		}
-		if eRead != nil {
-			lg.Debugf("relayOneDirection %s read error %s", id, eRead)
-			return eRead
-		}
-	}
 }
 
 func setAuthMethodInfo(arep *message.AuthenticationReply, result auth.ServerAuthenticationResult) *message.AuthenticationReply {

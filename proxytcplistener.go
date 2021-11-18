@@ -1,6 +1,7 @@
 package socks6
 
 import (
+	"context"
 	"net"
 	"sync"
 
@@ -8,7 +9,7 @@ import (
 )
 
 type ProxyTCPListener struct {
-	netConn
+	netConn netConn
 	bind    net.Addr
 	backlog uint16
 	// socks6 client, used for accept backlog connection
@@ -22,6 +23,10 @@ type ProxyTCPListener struct {
 }
 
 func (t *ProxyTCPListener) Accept() (net.Conn, error) {
+	return t.AcceptContext(context.Background())
+}
+
+func (t *ProxyTCPListener) AcceptContext(ctx context.Context) (net.Conn, error) {
 	t.lock.Lock()
 	if t.used {
 		return nil, &net.OpError{}
@@ -46,11 +51,11 @@ func (t *ProxyTCPListener) Accept() (net.Conn, error) {
 	} else {
 		// unlock asap, BindRequest is time consuming
 		t.lock.Unlock()
-		tbc, err := t.client.BindRequest(t.bind, t.op)
+		tbc, err := t.client.BindRequest(ctx, t.bind, t.op)
 		if err != nil {
 			return nil, err
 		}
-		return tbc.Accept()
+		return tbc.AcceptContext(ctx)
 	}
 }
 
@@ -66,4 +71,8 @@ func (t *ProxyTCPListener) LocalAddr() net.Addr {
 
 func (t *ProxyTCPListener) ProxyRemoteAddr() net.Addr {
 	return t.netConn.RemoteAddr()
+}
+
+func (t *ProxyTCPListener) Close() error {
+	return t.netConn.Close()
 }

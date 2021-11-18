@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/studentmain/socks6/common/lg"
-	"github.com/studentmain/socks6/internal"
 	"github.com/studentmain/socks6/message"
 	"golang.org/x/sync/semaphore"
 )
@@ -92,8 +91,7 @@ func (b *backlogListener) accept(ctx context.Context) {
 func (b *backlogListener) worker(ctx context.Context) {
 	// check conn ok by reading forever
 	go func() {
-		buf := internal.BytesPool16.Rent()
-		defer internal.BytesPool16.Return(buf)
+		buf := make([]byte, 16)
 		b.cc.Conn.SetReadDeadline(time.Time{})
 		for b.alive {
 			if _, err := b.cc.Conn.Read(buf); err != nil {

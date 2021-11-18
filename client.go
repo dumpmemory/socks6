@@ -40,31 +40,43 @@ type Client struct {
 
 // impl
 
-func (c *Client) Dial(network string, addr string) (net.Conn, error) {
+func (c *Client) DialContext(ctx context.Context, network string, addr string) (net.Conn, error) {
 	if network[:3] == "udp" {
-		a, e := c.UDPAssociateRequest(message.ParseAddr(addr), nil)
+		a, e := c.UDPAssociateRequest(ctx, message.ParseAddr(addr), nil)
 		if e != nil {
 			return nil, e
 		}
 		a.expectAddr = message.ParseAddr(addr)
 		return a, nil
 	}
-	return c.ConnectRequest(addr, nil, nil)
+	return c.ConnectRequest(ctx, addr, nil, nil)
+}
+
+func (c *Client) Dial(network string, addr string) (net.Conn, error) {
+	return c.DialContext(context.Background(), network, addr)
+}
+
+func (c *Client) ListenContext(ctx context.Context, network string, addr string) (net.Listener, error) {
+	return c.BindRequest(ctx, message.ParseAddr(addr), nil)
 }
 
 func (c *Client) Listen(network string, addr string) (net.Listener, error) {
-	return c.BindRequest(message.ParseAddr(addr), nil)
+	return c.ListenContext(context.Background(), network, addr)
+}
+
+func (c *Client) ListenPacketContext(ctx context.Context, network string, addr string) (net.PacketConn, error) {
+	return c.UDPAssociateRequest(ctx, message.ParseAddr(addr), nil)
 }
 
 func (c *Client) ListenPacket(network string, addr string) (net.PacketConn, error) {
-	return c.UDPAssociateRequest(message.ParseAddr(addr), nil)
+	return c.ListenPacketContext(context.Background(), network, addr)
 }
 
 // raw requests
 
-func (c *Client) ConnectRequest(addr string, initData []byte, option *message.OptionSet) (net.Conn, error) {
+func (c *Client) ConnectRequest(ctx context.Context, addr string, initData []byte, option *message.OptionSet) (net.Conn, error) {
 	addr2 := message.ParseAddr(addr)
-	sconn, opr, err := c.handshake(context.TODO(), message.CommandConnect, addr2, initData, option)
+	sconn, opr, err := c.handshake(ctx, message.CommandConnect, addr2, initData, option)
 	if err != nil {
 		return nil, err
 	}
@@ -77,8 +89,8 @@ func (c *Client) ConnectRequest(addr string, initData []byte, option *message.Op
 	}, nil
 }
 
-func (c *Client) BindRequest(addr net.Addr, option *message.OptionSet) (*ProxyTCPListener, error) {
-	sconn, opr, err := c.handshake(context.TODO(), message.CommandBind, addr, []byte{}, option)
+func (c *Client) BindRequest(ctx context.Context, addr net.Addr, option *message.OptionSet) (*ProxyTCPListener, error) {
+	sconn, opr, err := c.handshake(ctx, message.CommandBind, addr, []byte{}, option)
 	if err != nil {
 		return nil, err
 	}
@@ -98,9 +110,9 @@ func (c *Client) BindRequest(addr net.Addr, option *message.OptionSet) (*ProxyTC
 	}, nil
 }
 
-func (c *Client) UDPAssociateRequest(addr net.Addr, option *message.OptionSet) (*ProxyUDPConn, error) {
+func (c *Client) UDPAssociateRequest(ctx context.Context, addr net.Addr, option *message.OptionSet) (*ProxyUDPConn, error) {
 	sconn, opr, err := c.handshake(
-		context.TODO(),
+		ctx,
 		message.CommandUdpAssociate,
 		addr,
 		[]byte{},
@@ -128,8 +140,8 @@ func (c *Client) UDPAssociateRequest(addr net.Addr, option *message.OptionSet) (
 }
 
 // NoopRequest send a NOOP request
-func (c *Client) NoopRequest() error {
-	sconn, _, err := c.handshake(context.TODO(), message.CommandNoop, message.DefaultAddr, []byte{}, nil)
+func (c *Client) NoopRequest(ctx context.Context) error {
+	sconn, _, err := c.handshake(ctx, message.CommandNoop, message.DefaultAddr, []byte{}, nil)
 	if err != nil {
 		return err
 	}
@@ -198,7 +210,7 @@ func (c *Client) makeDGramConn() (net.Conn, error) {
 }
 
 // authn running authentication in handshake
-func (c *Client) authn(req message.Request, sconn net.Conn, initData []byte) error {
+func (c *Client) authn(ctx context.Context, req message.Request, sconn net.Conn, initData []byte) error {
 	var cac *auth.ClientAuthenticationChannels
 	if c.AuthenticationMethod == nil {
 		c.AuthenticationMethod = auth.NoneClientAuthenticationMethod{}
@@ -231,7 +243,7 @@ func (c *Client) authn(req message.Request, sconn net.Conn, initData []byte) err
 		}
 		if id != 0 {
 			cac = auth.NewClientAuthenticationChannels()
-			go c.AuthenticationMethod.Authenticate(context.TODO(), sconn, *cac)
+			go c.AuthenticationMethod.Authenticate(ctx, sconn, *cac)
 			data := <-cac.Data
 			if len(data) > 0 {
 				req.Options.Add(message.Option{Kind: message.OptionKindAuthenticationData, Data: message.AuthenticationDataOptionData{
@@ -354,7 +366,7 @@ func (c *Client) handshake(
 		Options:     option,
 	}
 
-	if err = c.authn(req, sconn, initData); err != nil {
+	if err = c.authn(ctx, req, sconn, initData); err != nil {
 		return nil, nil, err
 	}
 
