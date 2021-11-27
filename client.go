@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"net"
+	"syscall"
 
 	"github.com/pion/dtls/v2"
 	"github.com/studentmain/socks6/auth"
@@ -32,6 +33,8 @@ type Client struct {
 	UseToken uint32
 	// suggested bind backlog
 	Backlog int
+
+	EnableICMP bool
 
 	session  []byte
 	token    uint32
@@ -111,12 +114,27 @@ func (c *Client) BindRequest(ctx context.Context, addr net.Addr, option *message
 }
 
 func (c *Client) UDPAssociateRequest(ctx context.Context, addr net.Addr, option *message.OptionSet) (*ProxyUDPConn, error) {
+	opset := message.NewOptionSet()
+	if c.EnableICMP {
+		opset.Add(message.Option{
+			Kind: message.OptionKindStack,
+			Data: message.BaseStackOptionData{
+				RemoteLeg: true,
+				Level:     message.StackOptionLevelUDP,
+				Code:      message.StackOptionCodeUDPError,
+				Data: &message.UDPErrorOptionData{
+					Availability: true,
+				},
+			},
+		})
+	}
+
 	sconn, opr, err := c.handshake(
 		ctx,
 		message.CommandUdpAssociate,
 		addr,
 		[]byte{},
-		nil,
+		opset,
 	)
 	if err != nil {
 		return nil, err
@@ -351,10 +369,18 @@ func (c *Client) handshake(
 	initData []byte,
 	option *message.OptionSet,
 ) (net.Conn, *message.OperationReply, error) {
+	netErr := net.OpError{
+		Op:   "dial",
+		Net:  "socks6",
+		Addr: addr,
+	}
 	sconn, err := c.makeStreamConn()
 	if err != nil {
-		return nil, nil, err
+		netErr.Source = sconn.LocalAddr()
+		return nil, nil, &netErr
 	}
+	netErr.Source = sconn.LocalAddr()
+
 	cd := internal.NewCancellableDefer(func() {
 		sconn.Close()
 	})
@@ -370,7 +396,8 @@ func (c *Client) handshake(
 	}
 
 	if err = c.authn(ctx, req, sconn, initData); err != nil {
-		return nil, nil, err
+		netErr.Err = err
+		return nil, nil, &netErr
 	}
 
 	opr, err := message.ParseOperationReplyFrom(sconn)
@@ -378,18 +405,48 @@ func (c *Client) handshake(
 		return nil, nil, err
 	}
 	if opr.ReplyCode != 0 {
-		return nil, nil, errors.New("operation reply fail")
+		netErr.Err = convertReplyError(opr.ReplyCode)
+		return nil, nil, &netErr
 	}
 	if c.UseSession {
 		if d, ok := opr.Options.GetData(message.OptionKindSessionID); ok {
 			c.session = d.(message.SessionIDOptionData).ID
 		} else {
 			if len(c.session) == 0 {
-				return nil, nil, errors.New("session fail")
+				netErr.Err = errors.New("session fail")
+				return nil, nil, &netErr
 			}
 		}
 	}
 
 	cd.Cancel()
 	return sconn, opr, nil
+}
+
+func convertReplyError(code message.ReplyCode) error {
+	switch code {
+	case message.OperationReplyCommandNotSupported:
+		return syscall.EOPNOTSUPP
+	case message.OperationReplyAddressNotSupported:
+		return syscall.EAFNOSUPPORT
+	case message.OperationReplyNetworkUnreachable:
+		return syscall.ENETUNREACH
+	case message.OperationReplyHostUnreachable:
+		return syscall.EHOSTUNREACH
+	case message.OperationReplyNotAllowedByRule:
+		return syscall.EPERM
+	case message.OperationReplyConnectionRefused:
+		return syscall.ECONNREFUSED
+	case message.OperationReplyTimeout:
+		return syscall.ETIMEDOUT
+
+	case message.OperationReplySuccess:
+		return nil
+	case message.OperationReplyServerFailure:
+		return errors.New("socks 6 server failure")
+	case message.OperationReplyTTLExpired:
+		return errors.New("ttl expired") // todo ?
+	}
+	lg.Panic("not implemented reply code conversion")
+	return nil
 }

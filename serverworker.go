@@ -574,14 +574,13 @@ func (s *ServerWorker) UdpAssociateHandler(
 }
 
 func (s *ServerWorker) ForwardICMP(ctx context.Context, msg *icmp.Message, ip *net.IPAddr, ver int) {
-	var code byte
+	var code message.UDPErrorType = 0
 	var reporter *message.Socks6Addr
 	// map icmp message to socks6 addresses and code
 	hdr := []byte{}
 
 	switch ver {
 	case 4:
-		code = byte(0)
 		reporter = &message.Socks6Addr{
 			AddressType: message.AddressTypeIPv4,
 			Address:     ip.IP.To4(),
@@ -591,9 +590,9 @@ func (s *ServerWorker) ForwardICMP(ctx context.Context, msg *icmp.Message, ip *n
 		case ipv4.ICMPTypeDestinationUnreachable:
 			switch msg.Code {
 			case 0:
-				code = 1
+				code = message.UDPErrorNetworkUnreachable
 			case 1:
-				code = 2
+				code = message.UDPErrorHostUnreachable
 			default:
 				return
 			}
@@ -602,7 +601,7 @@ func (s *ServerWorker) ForwardICMP(ctx context.Context, msg *icmp.Message, ip *n
 		case ipv4.ICMPTypeTimeExceeded:
 			switch msg.Code {
 			case 0:
-				code = 3
+				code = message.UDPErrorTTLExpired
 			default:
 				return
 			}
@@ -610,7 +609,6 @@ func (s *ServerWorker) ForwardICMP(ctx context.Context, msg *icmp.Message, ip *n
 			hdr = m2.Data
 		}
 	case 6:
-		code = byte(0)
 		reporter = &message.Socks6Addr{
 			AddressType: message.AddressTypeIPv6,
 			Address:     ip.IP.To16(),
@@ -620,9 +618,9 @@ func (s *ServerWorker) ForwardICMP(ctx context.Context, msg *icmp.Message, ip *n
 		case ipv6.ICMPTypeDestinationUnreachable:
 			switch msg.Code {
 			case 0:
-				code = 1
+				code = message.UDPErrorNetworkUnreachable
 			case 3:
-				code = 2
+				code = message.UDPErrorHostUnreachable
 			default:
 				return
 			}
@@ -631,14 +629,14 @@ func (s *ServerWorker) ForwardICMP(ctx context.Context, msg *icmp.Message, ip *n
 		case ipv6.ICMPTypeTimeExceeded:
 			switch msg.Code {
 			case 0:
-				code = 3
+				code = message.UDPErrorTTLExpired
 			default:
 				return
 			}
 			m2 := msg.Body.(*icmp.TimeExceeded)
 			hdr = m2.Data
 		case ipv6.ICMPTypePacketTooBig:
-			code = 4
+			code = message.UDPErrorDatagramTooBig
 			m2 := msg.Body.(*icmp.TimeExceeded)
 			hdr = m2.Data
 		}

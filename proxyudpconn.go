@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/studentmain/socks6/common/lg"
@@ -78,7 +79,12 @@ func (u *ProxyUDPConn) readAck() error {
 // Read implements net.Conn
 func (u *ProxyUDPConn) Read(p []byte) (int, error) {
 	if u.expectAddr == nil {
-		return 0, errors.New("don't know read from where, use Dial to create connection")
+		return 0, &net.OpError{
+			Op:     "read",
+			Net:    "socks6",
+			Source: u.LocalAddr(),
+			Err:    errors.New("use Dial to create connection"),
+		}
 	}
 	for {
 		n, a, e := u.ReadFrom(p)
@@ -96,6 +102,12 @@ func (u *ProxyUDPConn) ReadFrom(p []byte) (int, net.Addr, error) {
 	u.ackDone.Wait()
 	cd := internal.NewCancellableDefer(func() { u.Close() })
 
+	netErr := net.OpError{
+		Op:     "read",
+		Net:    "socks6",
+		Source: u.LocalAddr(),
+		Addr:   u.ProxyRemoteAddr(),
+	}
 	// read message
 	h := message.UDPMessage{}
 	if u.overTcp {
@@ -105,7 +117,8 @@ func (u *ProxyUDPConn) ReadFrom(p []byte) (int, net.Addr, error) {
 		h2, err := message.ParseUDPMessageFrom(u.conn)
 		h = *h2
 		if err != nil {
-			return 0, nil, err
+			netErr.Err = err
+			return 0, nil, &netErr
 		}
 	} else {
 		buf := internal.BytesPool64k.Rent()
@@ -113,29 +126,33 @@ func (u *ProxyUDPConn) ReadFrom(p []byte) (int, net.Addr, error) {
 
 		l, err := u.conn.Read(buf)
 		if err != nil {
-			return 0, nil, err
+			netErr.Err = err
+			return 0, nil, &netErr
 		}
 		h2, err := message.ParseUDPMessageFrom(bytes.NewReader(buf[:l]))
 		h = *h2
 		if err != nil {
+			netErr.Err = err
 			return 0, nil, err
 		}
 	}
 
 	if h.AssociationID != u.assocId {
-		return 0, nil, errors.New("assoc mismatch")
+		netErr.Err = errors.New("assoc mismatch")
+		return 0, nil, &netErr
 	}
 	if h.Type == message.UDPMessageError && u.icmp {
-		// todo icmp error
-		lg.Info("icmp", h)
-		return 0, nil, errors.New("icmp error report not supported")
+		netErr.Err = convertIcmpError(h)
+		return 0, nil, &netErr
 	} else if h.Type != message.UDPMessageDatagram {
-		return 0, nil, errors.New("not udp datagram message")
+		netErr.Err = errors.New("not udp datagram message")
+		return 0, nil, &netErr
 	}
 	// resolve as udp address
 	addr, err := net.ResolveUDPAddr("udp", h.Endpoint.String())
 	if err != nil {
-		return 0, nil, err
+		netErr.Err = err
+		return 0, nil, &netErr
 	}
 	// copy data to buffer
 	ld := len(h.Data)
@@ -155,20 +172,30 @@ func (u *ProxyUDPConn) ReadFrom(p []byte) (int, net.Addr, error) {
 // Write implements net.Conn
 func (u *ProxyUDPConn) Write(p []byte) (int, error) {
 	if u.expectAddr == nil {
-		return 0, errors.New("don't know write to where, use Dial to create connection")
+		return 0, &net.OpError{
+			Op:     "write",
+			Net:    "socks6",
+			Source: u.LocalAddr(),
+			Err:    errors.New("use Dial to create connection"),
+		}
 	}
 	return u.WriteTo(p, u.expectAddr)
 }
 
 // WriteTo implements net.PacketConn
 func (u *ProxyUDPConn) WriteTo(p []byte, addr net.Addr) (int, error) {
-	var err error = nil
+	netErr := net.OpError{
+		Op:     "write",
+		Net:    "socks6",
+		Source: u.LocalAddr(),
+		Addr:   u.ProxyRemoteAddr(),
+	}
 	u.runAck.Do(func() {
-		err = u.readAck()
+		netErr.Err = u.readAck()
 	})
-	if err != nil {
+	if netErr.Err != nil {
 		u.Close()
-		return 0, err
+		return 0, &netErr
 	}
 
 	h := message.UDPMessage{
@@ -180,9 +207,11 @@ func (u *ProxyUDPConn) WriteTo(p []byte, addr net.Addr) (int, error) {
 
 	n, err := u.conn.Write(h.Marshal())
 	if err != nil {
+		netErr.Err = err
 		u.Close()
+		return 0, &netErr
 	}
-	return n, err
+	return n, nil
 }
 
 func (u *ProxyUDPConn) Close() error {
@@ -221,4 +250,19 @@ func (u *ProxyUDPConn) SetReadDeadline(t time.Time) error {
 }
 func (u *ProxyUDPConn) SetWriteDeadline(t time.Time) error {
 	return u.conn.SetWriteDeadline(t)
+}
+
+func convertIcmpError(msg message.UDPMessage) error {
+	switch msg.ErrorCode {
+	case message.UDPErrorNetworkUnreachable:
+		return syscall.ENETUNREACH
+	case message.UDPErrorHostUnreachable:
+		return syscall.EHOSTUNREACH
+	case message.UDPErrorTTLExpired:
+		return ErrTTLExpired
+	case message.UDPErrorDatagramTooBig:
+		return syscall.E2BIG
+	}
+	lg.Panic("not implemented icmp error conversion")
+	return nil
 }

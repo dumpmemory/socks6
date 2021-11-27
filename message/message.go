@@ -240,6 +240,16 @@ const (
 	UDPMessageError
 )
 
+type UDPErrorType byte
+
+const (
+	_ UDPErrorType = iota
+	UDPErrorNetworkUnreachable
+	UDPErrorHostUnreachable
+	UDPErrorTTLExpired
+	UDPErrorDatagramTooBig
+)
+
 type UDPMessage struct {
 	Type          UDPHeaderType
 	AssociationID uint64
@@ -247,7 +257,7 @@ type UDPMessage struct {
 	Endpoint *Socks6Addr
 	// icmp
 	ErrorEndpoint *Socks6Addr
-	ErrorCode     byte
+	ErrorCode     UDPErrorType
 	// dgram
 	Data []byte
 }
@@ -294,7 +304,7 @@ func (u *UDPMessage) Marshal() []byte {
 		b.Write(addr)
 
 		b.WriteByte(byte(u.ErrorEndpoint.AddressType))
-		b.WriteByte(u.ErrorCode)
+		b.WriteByte(byte(u.ErrorCode))
 		b.WriteByte(0)
 		b.WriteByte(0)
 
@@ -347,7 +357,7 @@ func ParseUDPMessageFrom(b io.Reader) (*UDPMessage, error) {
 		return nil, err
 	}
 
-	u.ErrorCode = buf[1]
+	u.ErrorCode = UDPErrorType(buf[1])
 
 	// todo possible desync2
 	eaddr, err := ParseAddressFrom(b, AddressType(buf[0]))
