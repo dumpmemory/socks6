@@ -21,7 +21,7 @@ SOCKS 6 wireformat parser and serializer is located in message package.
 
 Stand-alone server and SOCKS 5 to SOCKS 6 converter client is planned.
 
-currently based on draft 11
+currently based on draft 12
 
 done: finished
 n/a: not applicable

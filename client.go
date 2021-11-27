@@ -217,6 +217,9 @@ func (c *Client) authn(ctx context.Context, req message.Request, sconn net.Conn,
 	}
 	// add authn options
 	id := c.AuthenticationMethod.ID()
+	if id == 6 {
+		lg.Panic("SSL authentication is prohibited")
+	}
 	if len(c.session) > 0 {
 		// use session
 		req.Options.Add(message.Option{Kind: message.OptionKindSessionID, Data: message.SessionIDOptionData{ID: c.session}})

@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/studentmain/socks6/common/lg"
 	"github.com/studentmain/socks6/message"
 )
 
@@ -130,6 +131,9 @@ func (d *DefaultServerAuthenticator) pickMethod(
 }
 
 func (d *DefaultServerAuthenticator) AddMethod(method ServerAuthenticationMethod) {
+	if method.ID() == 6 {
+		lg.Panic("SSL authentication is prohibited")
+	}
 	d.Methods[method.ID()] = method
 }
 

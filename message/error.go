@@ -30,6 +30,11 @@ var ErrBufferSize = common.LeveledError{
 	Base:    ErrMessageProcess,
 	Level:   lg.LvWarning,
 }
+var ErrOptionTooLong = common.LeveledError{
+	Message: "option too long",
+	Base:    ErrMessageProcess,
+	Level:   lg.LvWarning,
+}
 
 var ErrStackOptionNoLeg = common.LeveledError{
 	Message: "stack option should have at least one leg",
