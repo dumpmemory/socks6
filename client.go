@@ -147,13 +147,16 @@ func (c *Client) UDPAssociateRequest(ctx context.Context, addr net.Addr, option 
 	if uc.overTcp {
 		uc.conn = uc.base
 	} else {
-		dc, err := c.makeDGramConn()
-		if err != nil {
-			return nil, err
+		dc, err2 := c.connectDatagram()
+		if err2 != nil {
+			return nil, &net.OpError{Op: "dial", Net: "socks6", Addr: addr, Err: err2}
 		}
 		uc.conn = dc
 	}
-	uc.init()
+	err = uc.init()
+	if err != nil {
+		return nil, &net.OpError{Op: "dial", Net: "socks6", Addr: addr, Source: uc.LocalAddr(), Err: err}
+	}
 	return &uc, nil
 }
 
@@ -169,62 +172,49 @@ func (c *Client) NoopRequest(ctx context.Context) error {
 
 // common
 
-func (c *Client) makeStreamConn() (net.Conn, error) {
-	var nc net.Conn
-	df := net.Dial
-	if c.DialFunc != nil {
-		df = c.DialFunc
-	}
-	if c.Encrypted {
-		lg.Debug("connect via tls")
-		conn, err := net.Dial("tcp", c.Server)
+func (c *Client) dialEncrypted(network, address string) (net.Conn, error) {
+	switch network {
+	case "tcp", "tcp4", "tcp6":
+		return tls.Dial(network, address, &tls.Config{ServerName: c.Server})
+	case "udp", "udp4", "udp6":
+		baseConn, err := net.Dial("udp", c.Server)
 		if err != nil {
 			return nil, err
 		}
-		pc := tls.Client(conn, &tls.Config{
-			InsecureSkipVerify: true,
-		})
-		nc = pc
-	} else {
-		lg.Debug("connect via tcp")
-		pc, err := df("tcp", c.Server)
-		if err != nil {
-			return nil, err
-		}
-		nc = pc
+		return dtls.Client(baseConn, &dtls.Config{ServerName: c.Server})
+	default:
+		return nil, net.UnknownNetworkError(network)
 	}
-
-	return nc, nil
 }
 
-func (c *Client) makeDGramConn() (net.Conn, error) {
-	var nc net.Conn
-	df := net.Dial
+func (c *Client) connectStream() (net.Conn, error) {
+	dial := net.Dial
 	if c.DialFunc != nil {
-		df = c.DialFunc
+		dial = c.DialFunc
+	} else if c.Encrypted {
+		dial = c.dialEncrypted
 	}
-	if c.Encrypted {
-		lg.Debug("connect via dtls")
-		conn, err := net.Dial("udp", c.Server)
-		if err != nil {
-			return nil, err
-		}
-		pc, err := dtls.Client(conn, &dtls.Config{
-			InsecureSkipVerify: true,
-		})
-		if err != nil {
-			return nil, err
-		}
-		nc = pc
-	} else {
-		lg.Debug("connect via udp")
-		pc, err := df("udp", c.Server)
-		if err != nil {
-			return nil, err
-		}
-		nc = pc
+
+	conn, err := dial("tcp", c.Server)
+	if err != nil {
+		return nil, err
 	}
-	return nc, nil
+	return conn, nil
+}
+
+func (c *Client) connectDatagram() (net.Conn, error) {
+	dial := net.Dial
+	if c.DialFunc != nil {
+		dial = c.DialFunc
+	} else if c.Encrypted {
+		dial = c.dialEncrypted
+	}
+
+	conn, err := dial("udp", c.Server)
+	if err != nil {
+		return nil, err
+	}
+	return conn, nil
 }
 
 // authn running authentication in handshake
@@ -322,10 +312,8 @@ func (c *Client) authn(ctx context.Context, req message.Request, sconn net.Conn,
 	}
 
 	// check final reply
-	fail := false
-	if finalRep.Type != message.AuthenticationReplySuccess {
-		fail = true
-	}
+	fail := finalRep.Type != message.AuthenticationReplySuccess
+
 	if _, f := finalRep.Options.GetData(message.OptionKindSessionInvalid); f {
 		c.session = []byte{}
 		fail = true
@@ -374,7 +362,7 @@ func (c *Client) handshake(
 		Net:  "socks6",
 		Addr: addr,
 	}
-	sconn, err := c.makeStreamConn()
+	sconn, err := c.connectStream()
 	if err != nil {
 		netErr.Source = sconn.LocalAddr()
 		return nil, nil, &netErr
@@ -434,7 +422,7 @@ func convertReplyError(code message.ReplyCode) error {
 	case message.OperationReplyHostUnreachable:
 		return syscall.EHOSTUNREACH
 	case message.OperationReplyNotAllowedByRule:
-		return syscall.EPERM
+		return syscall.EACCES
 	case message.OperationReplyConnectionRefused:
 		return syscall.ECONNREFUSED
 	case message.OperationReplyTimeout:
@@ -443,9 +431,9 @@ func convertReplyError(code message.ReplyCode) error {
 	case message.OperationReplySuccess:
 		return nil
 	case message.OperationReplyServerFailure:
-		return errors.New("socks 6 server failure")
+		return ErrServerFailure
 	case message.OperationReplyTTLExpired:
-		return errors.New("ttl expired") // todo ?
+		return ErrTTLExpired
 	}
 	lg.Panic("not implemented reply code conversion")
 	return nil

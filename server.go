@@ -32,12 +32,19 @@ type Server struct {
 	dtls  net.Listener
 	icmp4 net.PacketConn
 	icmp6 net.PacketConn
+
+	listeners []canClose
+}
+
+type canClose interface {
+	Close() error
 }
 
 func (s *Server) Start(ctx context.Context) {
 	if s.Worker == nil {
 		s.Worker = NewServerWorker()
 	}
+	s.listeners = []canClose{}
 
 	if s.CleartextPort == 0 && s.EncryptedPort == 0 {
 		s.CleartextPort = common.CleartextPort
@@ -62,11 +69,12 @@ func (s *Server) Start(ctx context.Context) {
 	go s.Worker.ClearUnusedResource(ctx)
 	go func() {
 		<-ctx.Done()
-		s.tcp.Close()
-		s.udp.Close()
-		s.tls.Close()
-		s.dtls.Close()
-		s.icmp4.Close()
+		for _, v := range s.listeners {
+			err := v.Close()
+			if err != nil {
+				lg.Warning("error when close listener", err)
+			}
+		}
 	}()
 }
 
@@ -74,7 +82,7 @@ func (s *Server) startTCP(ctx context.Context, addr string) {
 	addr2 := internal.Must2(net.ResolveTCPAddr("tcp", addr)).(*net.TCPAddr)
 	s.tcp = internal.Must2(net.ListenTCP("tcp", addr2)).(*net.TCPListener)
 	lg.Infof("start TCP server at %s", s.tcp.Addr())
-
+	s.listeners = append(s.listeners, s.tcp)
 	go func() {
 		for {
 			conn, err := s.tcp.Accept()
@@ -92,6 +100,7 @@ func (s *Server) startTLS(ctx context.Context, addr string) {
 		Certificates: []tls.Certificate{*s.Cert},
 	})).(net.Listener)
 	lg.Infof("start TLS server at %s", s.tls.Addr())
+	s.listeners = append(s.listeners, s.tls)
 
 	go func() {
 		for {
@@ -109,6 +118,7 @@ func (s *Server) startUDP(ctx context.Context, addr string) {
 	addr2 := internal.Must2(net.ResolveUDPAddr("udp", addr)).(*net.UDPAddr)
 	s.udp = internal.Must2(net.ListenUDP("udp", addr2)).(*net.UDPConn)
 	lg.Infof("start UDP server at %s", s.udp.LocalAddr())
+	s.listeners = append(s.listeners, s.udp)
 
 	go func() {
 		defer s.udp.Close()
@@ -141,6 +151,7 @@ func (s *Server) startDTLS(ctx context.Context, addr string) {
 		Certificates: []tls.Certificate{*s.Cert},
 	})).(net.Listener)
 	lg.Infof("start DTLS server at %s", s.dtls.Addr())
+	s.listeners = append(s.listeners, s.dtls)
 
 	go func() {
 		for {
@@ -192,6 +203,8 @@ func (s *Server) startICMP(ctx context.Context) {
 	}
 	s.icmp4 = i4
 	s.icmp6 = i6
+	s.listeners = append(s.listeners, s.icmp4)
+	s.listeners = append(s.listeners, s.icmp6)
 
 	fn := func(c net.PacketConn, ipv int) {
 		b := internal.BytesPool4k.Rent()

@@ -2,7 +2,6 @@ package socks6
 
 import (
 	"context"
-	"errors"
 	"net"
 	"sync"
 	"time"
@@ -98,7 +97,7 @@ func (u *udpAssociation) handleTcpUp(ctx context.Context) {
 			return
 		}
 		if msg.AssociationID != u.id {
-			u.reportErr(errors.New("not same assoc"))
+			u.reportErr(ErrAssociationMismatch)
 			return
 		}
 
@@ -135,7 +134,7 @@ func (u *udpAssociation) handleUdpUp(ctx context.Context, cp ClientPacket) {
 		return
 	}
 	if msg.AssociationID != u.id {
-		u.reportErr(errors.New("not same assoc"))
+		u.reportErr(ErrAssociationMismatch)
 		return
 	}
 	// start assoc if necessary

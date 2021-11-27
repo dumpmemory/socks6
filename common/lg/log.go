@@ -56,7 +56,6 @@ func lgprint(lv Level, v ...interface{}) {
 	}
 	ln := fmt.Sprintln(v...)
 	Backend(lv, ln)
-
 }
 
 func Fatalf(format string, v ...interface{}) {

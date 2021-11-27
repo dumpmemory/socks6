@@ -2,7 +2,6 @@ package socks6
 
 import (
 	"bytes"
-	"errors"
 	"net"
 	"sync"
 	"syscall"
@@ -38,7 +37,7 @@ func (u *ProxyUDPConn) init() error {
 		return err
 	}
 	if a.Type != message.UDPMessageAssociationInit {
-		return errors.New("not assoc init")
+		return ErrUnexpectedMessage
 	}
 	u.assocId = a.AssociationID
 	u.ackDone.Add(1)
@@ -67,10 +66,10 @@ func (u *ProxyUDPConn) readAck() error {
 		return err
 	}
 	if ack.AssociationID != u.assocId {
-		return errors.New("not same association")
+		return ErrAssociationMismatch
 	}
 	if ack.Type != message.UDPMessageAssociationAck {
-		return errors.New("not assoc ack message")
+		return ErrUnexpectedMessage
 	}
 	u.ackDone.Done()
 	return nil
@@ -83,7 +82,7 @@ func (u *ProxyUDPConn) Read(p []byte) (int, error) {
 			Op:     "read",
 			Net:    "socks6",
 			Source: u.LocalAddr(),
-			Err:    errors.New("use Dial to create connection"),
+			Err:    syscall.EDESTADDRREQ,
 		}
 	}
 	for {
@@ -103,7 +102,7 @@ func (u *ProxyUDPConn) ReadFrom(p []byte) (int, net.Addr, error) {
 	cd := internal.NewCancellableDefer(func() { u.Close() })
 
 	netErr := net.OpError{
-		Op:     "read",
+		Op:     "readfrom",
 		Net:    "socks6",
 		Source: u.LocalAddr(),
 		Addr:   u.ProxyRemoteAddr(),
@@ -138,14 +137,14 @@ func (u *ProxyUDPConn) ReadFrom(p []byte) (int, net.Addr, error) {
 	}
 
 	if h.AssociationID != u.assocId {
-		netErr.Err = errors.New("assoc mismatch")
+		netErr.Err = ErrAssociationMismatch
 		return 0, nil, &netErr
 	}
 	if h.Type == message.UDPMessageError && u.icmp {
 		netErr.Err = convertIcmpError(h)
 		return 0, nil, &netErr
 	} else if h.Type != message.UDPMessageDatagram {
-		netErr.Err = errors.New("not udp datagram message")
+		netErr.Err = ErrUnexpectedMessage
 		return 0, nil, &netErr
 	}
 	// resolve as udp address
@@ -176,7 +175,7 @@ func (u *ProxyUDPConn) Write(p []byte) (int, error) {
 			Op:     "write",
 			Net:    "socks6",
 			Source: u.LocalAddr(),
-			Err:    errors.New("use Dial to create connection"),
+			Err:    syscall.EDESTADDRREQ,
 		}
 	}
 	return u.WriteTo(p, u.expectAddr)
@@ -185,7 +184,7 @@ func (u *ProxyUDPConn) Write(p []byte) (int, error) {
 // WriteTo implements net.PacketConn
 func (u *ProxyUDPConn) WriteTo(p []byte, addr net.Addr) (int, error) {
 	netErr := net.OpError{
-		Op:     "write",
+		Op:     "writeto",
 		Net:    "socks6",
 		Source: u.LocalAddr(),
 		Addr:   u.ProxyRemoteAddr(),
