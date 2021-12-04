@@ -3,10 +3,13 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"encoding/json"
+	"flag"
 	"log"
-	"time"
+	"os"
 
 	"github.com/studentmain/socks6"
+	"github.com/studentmain/socks6/common"
 	"github.com/studentmain/socks6/common/lg"
 )
 
@@ -65,13 +68,38 @@ fQIXRNDBdXLIdOAl2+PZ
 func main() {
 	log.SetFlags(log.LstdFlags | log.Lshortfile | log.Lmicroseconds)
 	lg.MinimalLevel = lg.LvDebug
+
+	conf := flag.String("config", "config.json", "config file")
+	flag.Parse()
+
 	kp, _ := tls.X509KeyPair([]byte(debugPem), []byte(debugKey))
 	s := socks6.Server{
-		CleartextPort: 10888,
-		EncryptedPort: 10889,
+		CleartextPort: common.CleartextPort,
+		EncryptedPort: common.EncryptedPort,
 		Address:       "0.0.0.0",
 		Cert:          &kp,
 	}
-	s.Start(context.Background())
-	time.Sleep(8 * time.Hour)
+
+	c, err := os.ReadFile(*conf)
+	c2 := Config{}
+	if err == nil {
+		json.Unmarshal(c, &c2)
+		s.Address = c2.Address
+		kp2, _ := tls.LoadX509KeyPair(c2.CertFile, c2.KeyFile)
+		s.Cert = &kp2
+		s.CleartextPort = c2.CleartextPort
+		s.EncryptedPort = c2.EncryptedPort
+		lg.MinimalLevel = lg.Level(c2.LogLevel)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	s.Start(ctx)
+	lg.Info("server is running, close input stream (ctrl-d) to stop")
+	b := []byte{0}
+	for {
+		_, err := os.Stdin.Read(b)
+		if err != nil {
+			cancel()
+			break
+		}
+	}
 }
