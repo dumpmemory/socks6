@@ -90,7 +90,7 @@ func (u *ProxyUDPConn) Read(p []byte) (int, error) {
 		if e != nil {
 			return 0, e
 		}
-		if message.AddrString(a) == message.AddrString(u.expectAddr) {
+		if a.String() == u.expectAddr.String() {
 			return n, e
 		}
 	}

@@ -20,7 +20,7 @@ func NewOptionSet() *OptionSet {
 
 func ParseOptionSetFrom(b io.Reader, limit int) (*OptionSet, error) {
 	ops := NewOptionSet()
-	if limit > OptionSize {
+	if limit > MaxOptionSize {
 		return nil, ErrOptionTooLong
 	}
 	totalLen := 0

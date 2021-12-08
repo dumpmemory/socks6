@@ -95,13 +95,6 @@ func ConvertAddr(addr net.Addr) *Socks6Addr {
 	}
 }
 
-// AddrString create a stable string represtation for input address for hashing purpose
-// todo needn't
-func AddrString(n net.Addr) string {
-	s6a := ConvertAddr(n)
-	return s6a.String()
-}
-
 // NewAddr parse address string to Socks6Addr
 func NewAddr(address string) (*Socks6Addr, error) {
 	h, p, err := net.SplitHostPort(address)
@@ -183,8 +176,12 @@ func (a *Socks6Addr) MarshalAddress() []byte {
 	return internal.Dup(a.Address[:l])
 }
 
-// ParseAddressFrom read address of given type from reader
 func ParseAddressFrom(b io.Reader, atyp AddressType) (*Socks6Addr, error) {
+	return ParseAddressFromWithLimit(b, atyp, 256)
+}
+
+// ParseAddressFrom read address of given type from reader
+func ParseAddressFromWithLimit(b io.Reader, atyp AddressType, limit int) (*Socks6Addr, error) {
 	a := &Socks6Addr{}
 	a.AddressType = atyp
 	buf := make([]byte, 256)
@@ -192,10 +189,16 @@ func ParseAddressFrom(b io.Reader, atyp AddressType) (*Socks6Addr, error) {
 	if a.AddressType == AddressTypeDomainName {
 		// domain name
 		// read length
+		if limit <= 1 {
+			return nil, ErrBufferSize
+		}
 		if _, err := io.ReadFull(b, buf[:1]); err != nil {
 			return nil, err
 		}
 		l := buf[0]
+		if int(l)+1 >= limit {
+			return nil, ErrBufferSize
+		}
 		// read addr
 		if _, err := io.ReadFull(b, buf[:l]); err != nil {
 			return nil, err
@@ -215,6 +218,9 @@ func ParseAddressFrom(b io.Reader, atyp AddressType) (*Socks6Addr, error) {
 		default:
 			// unknown address type
 			return nil, ErrAddressTypeNotSupport
+		}
+		if limit < l {
+			return nil, ErrBufferSize
 		}
 		// read addr
 		if _, err := io.ReadFull(b, buf[:l]); err != nil {

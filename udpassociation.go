@@ -51,7 +51,7 @@ func newUdpAssociation(
 	id := internal.RandUint64()
 	ps := ""
 	if pair != nil {
-		ps = message.AddrString(pair)
+		ps = pair.String()
 	}
 	return &udpAssociation{
 		id:  id,
@@ -140,11 +140,11 @@ func (u *udpAssociation) handleUdpUp(ctx context.Context, cp ClientPacket) {
 	// start assoc if necessary
 	if !u.assocOk {
 		u.assocOk = true
-		u.acceptDgram = message.AddrString(cp.Source)
+		u.acceptDgram = cp.Source.String()
 		u.ack()
 		u.downlink = cp.Downlink
 	}
-	if u.acceptDgram != message.AddrString(cp.Source) {
+	if u.acceptDgram != cp.Source.String() {
 		lg.Error(u.cc.ConnId(), "should send association ack via udp first")
 		return
 	}

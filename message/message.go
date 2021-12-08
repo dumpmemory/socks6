@@ -337,8 +337,7 @@ func ParseUDPMessageFrom(b io.Reader) (*UDPMessage, error) {
 		return nil, err
 	}
 
-	// todo possible desync: msgLength = 20, atyp = 3, addr[0] = 100
-	addr, err := ParseAddressFrom(b, AddressType(buf[0]))
+	addr, err := ParseAddressFromWithLimit(b, AddressType(buf[0]), int(totalLen)-16)
 	if err != nil {
 		return nil, err
 	}
@@ -359,8 +358,7 @@ func ParseUDPMessageFrom(b io.Reader) (*UDPMessage, error) {
 
 	u.ErrorCode = UDPErrorType(buf[1])
 
-	// todo possible desync2
-	eaddr, err := ParseAddressFrom(b, AddressType(buf[0]))
+	eaddr, err := ParseAddressFromWithLimit(b, AddressType(buf[0]), int(remainLen)-4)
 	if err != nil {
 		return nil, err
 	}

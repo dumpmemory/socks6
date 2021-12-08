@@ -28,6 +28,8 @@ type CommandHandler func(
 	cc ClientConn,
 )
 
+// todo socket like api?
+
 // ServerWorker is a customizeable SOCKS 6 server
 type ServerWorker struct {
 	Authenticator auth.ServerAuthenticator
@@ -478,7 +480,7 @@ func (s *ServerWorker) UdpAssociateHandler(
 
 	defer closeConn.Defer()
 
-	destStr := message.AddrString(cc.Destination())
+	destStr := cc.Destination().String()
 	irid64, reserved := s.reservedUdpAddr.Load(destStr)
 	// already reserved
 	if reserved {
@@ -565,7 +567,7 @@ func (s *ServerWorker) UdpAssociateHandler(
 	s.udpAssociation.Store(assoc.id, assoc)
 	lg.Trace("start udp assoc", assoc.id)
 	if reservedAddr != nil {
-		s.reservedUdpAddr.Store(message.AddrString(reservedAddr), assoc.id)
+		s.reservedUdpAddr.Store(reservedAddr.String(), assoc.id)
 	}
 	closeConn.Cancel()
 
@@ -657,13 +659,15 @@ func (s *ServerWorker) ForwardICMP(ctx context.Context, msg *icmp.Message, ip *n
 			return true
 		}
 		// not same origin
-		if message.AddrString(ua.udp.LocalAddr()) != message.AddrString(ipSrc) {
+		if ua.udp.LocalAddr().String() != ipSrc.String() {
 			return true
 		}
 		ua.handleIcmpDown(ctx, code, ipSrc, ipDst, reporter)
 		return true
 	})
 }
+
+// todo request clear resource by resource themselves
 
 // ClearUnusedResource clear no longer used resources (UDP associations, etc.)
 // only need to call it once for each ServerWorker
