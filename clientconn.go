@@ -46,3 +46,9 @@ func (c ClientConn) WriteReply(code message.ReplyCode, ep net.Addr, opt *message
 	_, e := c.Conn.Write(oprep.Marshal())
 	return e
 }
+
+type Datagram struct {
+	Addr     net.Addr
+	Data     []byte
+	Downlink DatagramDownlink
+}

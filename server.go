@@ -134,11 +134,13 @@ func (s *Server) startUDP(ctx context.Context, addr string) {
 
 			go s.Worker.ServeDatagram(
 				ctx,
-				rAddr,
-				buf[:nRead],
-				func(b []byte) error {
-					_, err := s.udp.WriteTo(b, rAddr)
-					return err
+				Datagram{
+					Addr: rAddr,
+					Data: internal.Dup(buf[:nRead]),
+					Downlink: func(b []byte) error {
+						_, err := s.udp.WriteTo(b, rAddr)
+						return err
+					},
 				},
 			)
 		}
@@ -174,11 +176,13 @@ func (s *Server) startDTLS(ctx context.Context, addr string) {
 					}
 					go s.Worker.ServeDatagram(
 						ctx,
-						conn.RemoteAddr(),
-						buf[:nRead],
-						func(b []byte) error {
-							_, err := conn.Write(b)
-							return err
+						Datagram{
+							Addr: conn.RemoteAddr(),
+							Data: internal.Dup(buf[:nRead]),
+							Downlink: func(b []byte) error {
+								_, err := conn.Write(b)
+								return err
+							},
 						},
 					)
 				}

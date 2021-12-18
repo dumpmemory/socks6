@@ -40,6 +40,8 @@ type ServerWorker struct {
 	// VersionErrorHandler should close connection by itself
 	VersionErrorHandler func(ctx context.Context, ver message.ErrVersionMismatch, conn net.Conn)
 
+	DaatgramVersionErrorHandler func(ctx context.Context, ver message.ErrVersionMismatch, dgram Datagram)
+
 	Outbound ServerOutbound
 
 	// control UDP NAT filtering behavior,
@@ -189,7 +191,7 @@ func (s *ServerWorker) ServeStream(
 	if err != nil {
 		// not socks6
 		evm := message.ErrVersionMismatch{}
-		if errors.As(err, &evm) {
+		if errors.As(err, &evm) && s.VersionErrorHandler != nil {
 			closeConn.Cancel()
 			s.VersionErrorHandler(ctx, evm, conn)
 			return
@@ -304,12 +306,14 @@ func (s *ServerWorker) ServeStream(
 
 func (s *ServerWorker) ServeDatagram(
 	ctx context.Context,
-	addr net.Addr,
-	data []byte,
-	downlink func([]byte) error,
+	dgram Datagram,
 ) {
-	h, err := message.ParseUDPMessageFrom(bytes.NewReader(data))
+	h, err := message.ParseUDPMessageFrom(bytes.NewReader(dgram.Data))
 	if err != nil {
+		evm := message.ErrVersionMismatch{}
+		if errors.As(err, &evm) && s.DaatgramVersionErrorHandler != nil {
+			s.DaatgramVersionErrorHandler(ctx, evm, dgram)
+		}
 		return
 	}
 	iassoc, ok := s.udpAssociation.Load(h.AssociationID)
@@ -320,8 +324,8 @@ func (s *ServerWorker) ServeDatagram(
 
 	cp := ClientPacket{
 		Message:  h,
-		Source:   addr,
-		Downlink: downlink,
+		Source:   dgram.Addr,
+		Downlink: dgram.Downlink,
 	}
 	assoc.handleUdpUp(ctx, cp)
 }

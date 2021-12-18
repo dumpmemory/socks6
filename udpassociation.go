@@ -11,14 +11,14 @@ import (
 	"github.com/studentmain/socks6/message"
 )
 
-// UDPDownlink is a function used to write datagram to specific UDP endpoint
-type UDPDownlink func(b []byte) error
+// DatagramDownlink is a function used to write datagram to specific UDP endpoint
+type DatagramDownlink func(b []byte) error
 
 // ClientPacket represent a single UDPHeader recieved from client
 type ClientPacket struct {
 	Message  *message.UDPMessage
 	Source   net.Addr
-	Downlink UDPDownlink
+	Downlink DatagramDownlink
 }
 
 // udpAssociation contain UDP association state
