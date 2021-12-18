@@ -5,7 +5,7 @@ package common
 // TODO: set to const 6 and update comment when standardized
 // 1xx: represent draft xx
 // 2xx: based on draft xx
-var ProtocolVersion byte = 112
+var ProtocolVersion byte = 212
 
 const (
 	CleartextPort = 1080

@@ -21,13 +21,13 @@ const (
 
 type Request struct {
 	CommandCode CommandCode
-	Endpoint    *Socks6Addr
+	Endpoint    *SocksAddr
 	Options     *OptionSet
 }
 
 func NewRequest() *Request {
 	return &Request{
-		Endpoint: &Socks6Addr{
+		Endpoint: &SocksAddr{
 			AddressType: AddressTypeIPv4,
 			Address:     []byte{0, 0, 0, 0},
 		},
@@ -163,13 +163,13 @@ const (
 
 type OperationReply struct {
 	ReplyCode ReplyCode
-	Endpoint  *Socks6Addr
+	Endpoint  *SocksAddr
 	Options   *OptionSet
 }
 
 func NewOperationReply() *OperationReply {
 	return &OperationReply{
-		Endpoint: &Socks6Addr{
+		Endpoint: &SocksAddr{
 			AddressType: AddressTypeIPv4,
 			Address:     []byte{0, 0, 0, 0},
 		},
@@ -254,9 +254,9 @@ type UDPMessage struct {
 	Type          UDPHeaderType
 	AssociationID uint64
 	// dgram & icmp
-	Endpoint *Socks6Addr
+	Endpoint *SocksAddr
 	// icmp
-	ErrorEndpoint *Socks6Addr
+	ErrorEndpoint *SocksAddr
 	ErrorCode     UDPErrorType
 	// dgram
 	Data []byte

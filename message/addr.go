@@ -19,8 +19,8 @@ const (
 	AddressTypeIPv6       AddressType = 4
 )
 
-// Socks6Addr is address and port used in SOCKS6 protocol
-type Socks6Addr struct {
+// SocksAddr is address and port used in SOCKS6 protocol
+type SocksAddr struct {
 	// address' type
 	AddressType AddressType
 	// actual address,
@@ -32,14 +32,14 @@ type Socks6Addr struct {
 }
 
 // AddrIPv4Zero is 0.0.0.0:0 in Socks6Addr format
-var AddrIPv4Zero *Socks6Addr = &Socks6Addr{
+var AddrIPv4Zero *SocksAddr = &SocksAddr{
 	AddressType: AddressTypeIPv4,
 	Address:     []byte{0, 0, 0, 0},
 	Port:        0,
 }
 
 // AddrIPv6Zero is [::]:0 in Socks6Addr format
-var AddrIPv6Zero *Socks6Addr = &Socks6Addr{
+var AddrIPv6Zero *SocksAddr = &SocksAddr{
 	AddressType: AddressTypeIPv6,
 	Address: []byte{
 		0, 0, 0, 0,
@@ -50,11 +50,11 @@ var AddrIPv6Zero *Socks6Addr = &Socks6Addr{
 }
 
 // DefaultAddr is 0.0.0.0:0 in Socks6Addr format
-var DefaultAddr *Socks6Addr = AddrIPv4Zero
+var DefaultAddr *SocksAddr = AddrIPv4Zero
 
 // ParseAddr parse address string to Socks6Addr
 // panic when error
-func ParseAddr(addr string) *Socks6Addr {
+func ParseAddr(addr string) *SocksAddr {
 	r, err := NewAddr(addr)
 	if err != nil {
 		lg.Panic("can't parse address", addr, err)
@@ -63,7 +63,7 @@ func ParseAddr(addr string) *Socks6Addr {
 }
 
 // ConvertAddr try to convert net.Addr to Socks6Addr
-func ConvertAddr(addr net.Addr) *Socks6Addr {
+func ConvertAddr(addr net.Addr) *SocksAddr {
 	var ip net.IP
 	var port int
 	if addr == nil {
@@ -76,7 +76,7 @@ func ConvertAddr(addr net.Addr) *Socks6Addr {
 	case *net.UDPAddr:
 		ip = a.IP
 		port = a.Port
-	case *Socks6Addr:
+	case *SocksAddr:
 		return a
 	default:
 		return ParseAddr(addr.String())
@@ -88,7 +88,7 @@ func ConvertAddr(addr net.Addr) *Socks6Addr {
 		af = AddressTypeIPv4
 		ip = ip4
 	}
-	return &Socks6Addr{
+	return &SocksAddr{
 		AddressType: af,
 		Address:     ip,
 		Port:        uint16(port),
@@ -96,7 +96,7 @@ func ConvertAddr(addr net.Addr) *Socks6Addr {
 }
 
 // NewAddr parse address string to Socks6Addr
-func NewAddr(address string) (*Socks6Addr, error) {
+func NewAddr(address string) (*SocksAddr, error) {
 	h, p, err := net.SplitHostPort(address)
 	if err != nil {
 		return nil, err
@@ -135,7 +135,7 @@ func NewAddr(address string) (*Socks6Addr, error) {
 		atyp = AddressTypeDomainName
 		addr = internal.Dup([]byte(asc))
 	}
-	return &Socks6Addr{
+	return &SocksAddr{
 		AddressType: atyp,
 		Address:     addr,
 		Port:        uint16(port),
@@ -143,12 +143,12 @@ func NewAddr(address string) (*Socks6Addr, error) {
 }
 
 // Network implements net.Conn, always return "socks6"
-func (a *Socks6Addr) Network() string {
+func (a *SocksAddr) Network() string {
 	return "socks6"
 }
 
 // String implements net.Conn
-func (a *Socks6Addr) String() string {
+func (a *SocksAddr) String() string {
 	var h string
 	switch a.AddressType {
 	case AddressTypeIPv4, AddressTypeIPv6:
@@ -160,7 +160,7 @@ func (a *Socks6Addr) String() string {
 }
 
 // MarshalAddress get host address' (without port) wireformat representation
-func (a *Socks6Addr) MarshalAddress() []byte {
+func (a *SocksAddr) MarshalAddress() []byte {
 	if a.AddressType == AddressTypeDomainName {
 		r := append([]byte{byte(len(a.Address))}, a.Address...)
 		total := internal.PaddedLen(len(r), 4)
@@ -176,13 +176,13 @@ func (a *Socks6Addr) MarshalAddress() []byte {
 	return internal.Dup(a.Address[:l])
 }
 
-func ParseAddressFrom(b io.Reader, atyp AddressType) (*Socks6Addr, error) {
+func ParseAddressFrom(b io.Reader, atyp AddressType) (*SocksAddr, error) {
 	return ParseAddressFromWithLimit(b, atyp, 256)
 }
 
 // ParseAddressFrom read address of given type from reader
-func ParseAddressFromWithLimit(b io.Reader, atyp AddressType, limit int) (*Socks6Addr, error) {
-	a := &Socks6Addr{}
+func ParseAddressFromWithLimit(b io.Reader, atyp AddressType, limit int) (*SocksAddr, error) {
+	a := &SocksAddr{}
 	a.AddressType = atyp
 	buf := make([]byte, 256)
 
@@ -232,7 +232,7 @@ func ParseAddressFromWithLimit(b io.Reader, atyp AddressType, limit int) (*Socks
 }
 
 // AddrLen return host address' wireformat length without padding
-func (s *Socks6Addr) AddrLen() int {
+func (s *SocksAddr) AddrLen() int {
 	switch s.AddressType {
 	case AddressTypeIPv4:
 		return 4

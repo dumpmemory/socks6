@@ -191,7 +191,7 @@ func (u *udpAssociation) handleUdpDown(ctx context.Context) {
 }
 
 // handleIcmpDown send an socks 6 icmp message to client
-func (u *udpAssociation) handleIcmpDown(ctx context.Context, code message.UDPErrorType, src, dst, reporter *message.Socks6Addr) {
+func (u *udpAssociation) handleIcmpDown(ctx context.Context, code message.UDPErrorType, src, dst, reporter *message.SocksAddr) {
 	uh := message.UDPMessage{
 		Type:          message.UDPMessageError,
 		AssociationID: u.id,

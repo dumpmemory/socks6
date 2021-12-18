@@ -67,9 +67,9 @@ type ServerWorker struct {
 
 // ServerOutbound is a group of function called by ServerWorker when a connection or listener is needed to fullfill client request
 type ServerOutbound interface {
-	Dial(ctx context.Context, option message.StackOptionInfo, addr *message.Socks6Addr) (net.Conn, message.StackOptionInfo, error)
-	Listen(ctx context.Context, option message.StackOptionInfo, addr *message.Socks6Addr) (net.Listener, message.StackOptionInfo, error)
-	ListenPacket(ctx context.Context, option message.StackOptionInfo, addr *message.Socks6Addr) (net.PacketConn, message.StackOptionInfo, error)
+	Dial(ctx context.Context, option message.StackOptionInfo, addr *message.SocksAddr) (net.Conn, message.StackOptionInfo, error)
+	Listen(ctx context.Context, option message.StackOptionInfo, addr *message.SocksAddr) (net.Listener, message.StackOptionInfo, error)
+	ListenPacket(ctx context.Context, option message.StackOptionInfo, addr *message.SocksAddr) (net.PacketConn, message.StackOptionInfo, error)
 }
 
 // InternetServerOutbound implements ServerOutbound, create a internet connection/listener
@@ -79,15 +79,15 @@ type InternetServerOutbound struct {
 	MulticastInterface *net.Interface // address
 }
 
-func (i InternetServerOutbound) Dial(ctx context.Context, option message.StackOptionInfo, addr *message.Socks6Addr) (net.Conn, message.StackOptionInfo, error) {
+func (i InternetServerOutbound) Dial(ctx context.Context, option message.StackOptionInfo, addr *message.SocksAddr) (net.Conn, message.StackOptionInfo, error) {
 	a := message.ConvertAddr(addr)
 	return socket.DialWithOption(ctx, *a, option)
 }
-func (i InternetServerOutbound) Listen(ctx context.Context, option message.StackOptionInfo, addr *message.Socks6Addr) (net.Listener, message.StackOptionInfo, error) {
+func (i InternetServerOutbound) Listen(ctx context.Context, option message.StackOptionInfo, addr *message.SocksAddr) (net.Listener, message.StackOptionInfo, error) {
 	a := message.ConvertAddr(addr)
 	return socket.ListenerWithOption(ctx, *a, option)
 }
-func (i InternetServerOutbound) ListenPacket(ctx context.Context, option message.StackOptionInfo, addr *message.Socks6Addr) (net.PacketConn, message.StackOptionInfo, error) {
+func (i InternetServerOutbound) ListenPacket(ctx context.Context, option message.StackOptionInfo, addr *message.SocksAddr) (net.PacketConn, message.StackOptionInfo, error) {
 	mcast := false
 	if addr.AddressType != message.AddressTypeDomainName {
 		ip := net.IP(addr.Address)
@@ -577,13 +577,13 @@ func (s *ServerWorker) UdpAssociateHandler(
 
 func (s *ServerWorker) ForwardICMP(ctx context.Context, msg *icmp.Message, ip *net.IPAddr, ver int) {
 	var code message.UDPErrorType = 0
-	var reporter *message.Socks6Addr
+	var reporter *message.SocksAddr
 	// map icmp message to socks6 addresses and code
 	hdr := []byte{}
 
 	switch ver {
 	case 4:
-		reporter = &message.Socks6Addr{
+		reporter = &message.SocksAddr{
 			AddressType: message.AddressTypeIPv4,
 			Address:     ip.IP.To4(),
 		}
@@ -611,7 +611,7 @@ func (s *ServerWorker) ForwardICMP(ctx context.Context, msg *icmp.Message, ip *n
 			hdr = m2.Data
 		}
 	case 6:
-		reporter = &message.Socks6Addr{
+		reporter = &message.SocksAddr{
 			AddressType: message.AddressTypeIPv6,
 			Address:     ip.IP.To16(),
 		}
@@ -786,7 +786,7 @@ var protocolWithPort = map[int]bool{
 	132: true, // sctp
 }
 
-func parseSrcDstAddrFromIPHeader(b []byte, v int) (*message.Socks6Addr, *message.Socks6Addr, int, error) {
+func parseSrcDstAddrFromIPHeader(b []byte, v int) (*message.SocksAddr, *message.SocksAddr, int, error) {
 	switch v {
 	case 4:
 		hd, err := icmp.ParseIPv4Header(b)
@@ -800,12 +800,12 @@ func parseSrcDstAddrFromIPHeader(b []byte, v int) (*message.Socks6Addr, *message
 			return nil, nil, 0, errors.New("port field not exist")
 		}
 		data := b[hd.Len:]
-		s := message.Socks6Addr{
+		s := message.SocksAddr{
 			AddressType: message.AddressTypeIPv4,
 			Address:     hd.Src.To4(),
 			Port:        binary.BigEndian.Uint16(data),
 		}
-		d := message.Socks6Addr{
+		d := message.SocksAddr{
 			AddressType: message.AddressTypeIPv4,
 			Address:     hd.Dst.To4(),
 			Port:        binary.BigEndian.Uint16(data[2:]),
@@ -823,12 +823,12 @@ func parseSrcDstAddrFromIPHeader(b []byte, v int) (*message.Socks6Addr, *message
 			return nil, nil, 0, errors.New("port field not exist")
 		}
 		data := b[ipv6.HeaderLen:]
-		s := message.Socks6Addr{
+		s := message.SocksAddr{
 			AddressType: message.AddressTypeIPv6,
 			Address:     hd.Src,
 			Port:        binary.BigEndian.Uint16(data),
 		}
-		d := message.Socks6Addr{
+		d := message.SocksAddr{
 			AddressType: message.AddressTypeIPv6,
 			Address:     hd.Dst,
 			Port:        binary.BigEndian.Uint16(data[2:]),

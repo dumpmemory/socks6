@@ -11,7 +11,7 @@ func SetConnOpt(conn net.Conn, opt message.StackOptionInfo) message.StackOptionI
 	return message.StackOptionInfo{}
 }
 
-func DialWithOption(ctx context.Context, addr message.Socks6Addr, opt message.StackOptionInfo) (net.Conn, message.StackOptionInfo, error) {
+func DialWithOption(ctx context.Context, addr message.SocksAddr, opt message.StackOptionInfo) (net.Conn, message.StackOptionInfo, error) {
 	appliedOption := message.StackOptionInfo{}
 
 	dialer := net.Dialer{}
@@ -30,7 +30,7 @@ func DialWithOption(ctx context.Context, addr message.Socks6Addr, opt message.St
 	return conn, appliedOption, err
 }
 
-func ListenerWithOption(ctx context.Context, addr message.Socks6Addr, opt message.StackOptionInfo) (net.Listener, message.StackOptionInfo, error) {
+func ListenerWithOption(ctx context.Context, addr message.SocksAddr, opt message.StackOptionInfo) (net.Listener, message.StackOptionInfo, error) {
 	appliedOption := message.StackOptionInfo{}
 
 	cfg := net.ListenConfig{}
