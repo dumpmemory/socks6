@@ -217,37 +217,28 @@ func (c *Client) connectDatagram() (net.Conn, error) {
 	return conn, nil
 }
 
-// authn running authentication in handshake
-func (c *Client) authn(ctx context.Context, req message.Request, sconn net.Conn, initData []byte) error {
+func (c *Client) createAuthnOption(ctx context.Context, sconn net.Conn, id byte, dataLen int) ([]message.Option, *auth.ClientAuthenticationChannels) {
 	var cac *auth.ClientAuthenticationChannels
-	if c.AuthenticationMethod == nil {
-		c.AuthenticationMethod = auth.NoneClientAuthenticationMethod{}
-	}
-	// add authn options
-	id := c.AuthenticationMethod.ID()
-	if id == 6 {
-		lg.Panic("SSL authentication is prohibited")
-	}
+	opts := []message.Option{}
 	if len(c.session) > 0 {
 		// use session
-		req.Options.Add(message.Option{Kind: message.OptionKindSessionID, Data: message.SessionIDOptionData{ID: c.session}})
+		opts = append(opts, message.Option{Kind: message.OptionKindSessionID, Data: message.SessionIDOptionData{ID: c.session}})
 		if c.maxToken-c.token > 0 {
 			// use token
-			req.Options.Add(message.Option{Kind: message.OptionKindIdempotenceExpenditure, Data: message.IdempotenceExpenditureOptionData{Token: c.token}})
+			opts = append(opts, message.Option{Kind: message.OptionKindIdempotenceExpenditure, Data: message.IdempotenceExpenditureOptionData{Token: c.token}})
 			c.token++
 			// request token when necessary
 			if c.maxToken-c.token < c.UseToken/8 {
-				req.Options.Add(message.Option{Kind: message.OptionKindTokenRequest, Data: message.TokenRequestOptionData{WindowSize: c.UseToken}})
+				opts = append(opts, message.Option{Kind: message.OptionKindTokenRequest, Data: message.TokenRequestOptionData{WindowSize: c.UseToken}})
 			}
 		}
 	} else {
 		// use original authn method
-		ld := len(initData)
-		if ld > 0 || id != 0 {
-			req.Options.Add(message.Option{
+		if dataLen > 0 || id != 0 {
+			opts = append(opts, message.Option{
 				Kind: message.OptionKindAuthenticationMethodAdvertisement,
 				Data: message.AuthenticationMethodAdvertisementOptionData{
-					InitialDataLength: uint16(ld),
+					InitialDataLength: uint16(dataLen),
 					Methods:           []byte{id},
 				},
 			})
@@ -257,7 +248,7 @@ func (c *Client) authn(ctx context.Context, req message.Request, sconn net.Conn,
 			go c.AuthenticationMethod.Authenticate(ctx, sconn, *cac)
 			data := <-cac.Data
 			if len(data) > 0 {
-				req.Options.Add(message.Option{Kind: message.OptionKindAuthenticationData, Data: message.AuthenticationDataOptionData{
+				opts = append(opts, message.Option{Kind: message.OptionKindAuthenticationData, Data: message.AuthenticationDataOptionData{
 					Method: id,
 					Data:   data,
 				}})
@@ -266,13 +257,66 @@ func (c *Client) authn(ctx context.Context, req message.Request, sconn net.Conn,
 
 		// request session and token
 		if c.UseSession {
-			req.Options.Add(message.Option{Kind: message.OptionKindSessionRequest, Data: message.SessionRequestOptionData{}})
+			opts = append(opts, message.Option{Kind: message.OptionKindSessionRequest, Data: message.SessionRequestOptionData{}})
 			if c.UseToken != 0 {
-				req.Options.Add(message.Option{Kind: message.OptionKindTokenRequest, Data: message.TokenRequestOptionData{WindowSize: c.UseToken}})
+				opts = append(opts, message.Option{Kind: message.OptionKindTokenRequest, Data: message.TokenRequestOptionData{WindowSize: c.UseToken}})
 			}
 		}
 	}
+	return opts, cac
+}
 
+func (c *Client) checkAuthnReply(finalRep *message.AuthenticationReply) error {
+	fail := finalRep.Type != message.AuthenticationReplySuccess
+
+	if _, f := finalRep.Options.GetData(message.OptionKindSessionInvalid); f {
+		c.session = []byte{}
+		fail = true
+	}
+	if _, f := finalRep.Options.GetData(message.OptionKindIdempotenceRejected); f {
+		c.maxToken = 0
+		fail = true
+	}
+	if fail {
+		return errors.New("authn fail")
+	}
+	if !c.UseSession {
+		return nil
+	}
+	if _, f := finalRep.Options.GetData(message.OptionKindSessionOK); !f {
+		// no session is not really a problem
+		return nil
+	}
+
+	if c.UseToken > 0 {
+		if _, f := finalRep.Options.GetData(message.OptionKindIdempotenceAccepted); !f {
+			return nil
+		}
+		if d, ok := finalRep.Options.GetData(message.OptionKindIdempotenceWindow); ok {
+			dd := d.(message.IdempotenceWindowOptionData)
+			c.token = dd.WindowBase
+			c.maxToken = dd.WindowSize
+		} else {
+			if c.maxToken == 0 {
+				return errors.New("token fail")
+			}
+		}
+	}
+	return nil
+}
+
+// authn running authentication in handshake
+func (c *Client) authn(ctx context.Context, req message.Request, sconn net.Conn, initData []byte) error {
+	if c.AuthenticationMethod == nil {
+		c.AuthenticationMethod = auth.NoneClientAuthenticationMethod{}
+	}
+	// add authn options
+	id := c.AuthenticationMethod.ID()
+	if id == 6 {
+		lg.Panic("SSL authentication is prohibited")
+	}
+	ops, cac := c.createAuthnOption(ctx, sconn, id, len(initData))
+	req.Options.AddMany(ops)
 	// io
 	if _, err := sconn.Write(req.Marshal()); err != nil {
 		return err
@@ -312,41 +356,7 @@ func (c *Client) authn(ctx context.Context, req message.Request, sconn net.Conn,
 	}
 
 	// check final reply
-	fail := finalRep.Type != message.AuthenticationReplySuccess
-
-	if _, f := finalRep.Options.GetData(message.OptionKindSessionInvalid); f {
-		c.session = []byte{}
-		fail = true
-	}
-	if _, f := finalRep.Options.GetData(message.OptionKindIdempotenceRejected); f {
-		c.maxToken = 0
-		fail = true
-	}
-	if fail {
-		return errors.New("authn fail")
-	}
-	if c.UseSession {
-		if _, f := finalRep.Options.GetData(message.OptionKindSessionOK); !f {
-			// no session is not really a problem
-			return nil
-		}
-
-		if c.UseToken > 0 {
-			if _, f := finalRep.Options.GetData(message.OptionKindIdempotenceAccepted); !f {
-				return nil
-			}
-			if d, ok := finalRep.Options.GetData(message.OptionKindIdempotenceWindow); ok {
-				dd := d.(message.IdempotenceWindowOptionData)
-				c.token = dd.WindowBase
-				c.maxToken = dd.WindowSize
-			} else {
-				if c.maxToken == 0 {
-					return errors.New("token fail")
-				}
-			}
-		}
-	}
-	return nil
+	return c.checkAuthnReply(finalRep)
 }
 
 // handshake handle the common handshake part of protocol
