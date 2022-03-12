@@ -11,14 +11,14 @@ import (
 	"github.com/studentmain/socks6/message"
 )
 
-// UDPDownlink is a function used to write datagram to specific UDP endpoint
-type UDPDownlink func(b []byte) error
+// DatagramDownlink is a function used to write datagram to specific UDP endpoint
+type DatagramDownlink func(b []byte) error
 
 // ClientPacket represent a single UDPHeader received from client
 type ClientPacket struct {
 	Message  *message.UDPMessage
 	Source   net.Addr
-	Downlink UDPDownlink
+	Downlink DatagramDownlink
 }
 
 // udpAssociation contain UDP association state
@@ -191,7 +191,7 @@ func (u *udpAssociation) handleUdpDown(ctx context.Context) {
 }
 
 // handleIcmpDown send an socks 6 icmp message to client
-func (u *udpAssociation) handleIcmpDown(ctx context.Context, code message.UDPErrorType, src, dst, reporter *message.Socks6Addr) {
+func (u *udpAssociation) handleIcmpDown(ctx context.Context, code message.UDPErrorType, src, dst, reporter *message.SocksAddr) {
 	uh := message.UDPMessage{
 		Type:          message.UDPMessageError,
 		AssociationID: u.id,

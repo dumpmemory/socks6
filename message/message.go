@@ -21,13 +21,13 @@ const (
 
 type Request struct {
 	CommandCode CommandCode
-	Endpoint    *Socks6Addr
+	Endpoint    *SocksAddr
 	Options     *OptionSet
 }
 
 func NewRequest() *Request {
 	return &Request{
-		Endpoint: &Socks6Addr{
+		Endpoint: &SocksAddr{
 			AddressType: AddressTypeIPv4,
 			Address:     []byte{0, 0, 0, 0},
 		},
@@ -45,20 +45,18 @@ func ParseRequestFrom(b io.Reader) (*Request, error) {
 	if buf[0] != protocolVersion {
 		return r, ErrVersionMismatch{Version: int(buf[0]), ConsumedBytes: buf[:1]}
 	}
-	// ver cc opLen2 port2 0 aTyp
-	if _, err := io.ReadFull(b, buf[1:8]); err != nil {
+	// ver cc opLen2
+	if _, err := io.ReadFull(b, buf[1:4]); err != nil {
 		return nil, err
 	}
 
 	r.CommandCode = CommandCode(buf[1])
 	optLen := binary.BigEndian.Uint16(buf[2:])
 
-	aTyp := AddressType(buf[7])
-	addr, err := ParseAddressFrom(b, aTyp)
+	addr, _, _, err := ParseSocksAddr6From(b)
 	if err != nil {
 		return nil, err
 	}
-	addr.Port = binary.BigEndian.Uint16(buf[4:])
 	r.Endpoint = addr
 
 	ops, err := ParseOptionSetFrom(b, int(optLen))
@@ -73,20 +71,13 @@ func (r *Request) Marshal() (buf []byte) {
 	if r.Options != nil {
 		ops = r.Options.Marshal()
 	}
-	addr := r.Endpoint.MarshalAddress()
-
 	b := bytes.NewBuffer(buf)
 
 	b.WriteByte(protocolVersion)
 	b.WriteByte(byte(r.CommandCode))
 	binary.Write(b, binary.BigEndian, uint16(len(ops)))
 
-	binary.Write(b, binary.BigEndian, r.Endpoint.Port)
-	b.WriteByte(0)
-	b.WriteByte(byte(r.Endpoint.AddressType))
-
-	b.Write(addr)
-
+	b.Write(r.Endpoint.Marshal6(0))
 	b.Write(ops)
 	return b.Bytes()
 }
@@ -163,13 +154,13 @@ const (
 
 type OperationReply struct {
 	ReplyCode ReplyCode
-	Endpoint  *Socks6Addr
+	Endpoint  *SocksAddr
 	Options   *OptionSet
 }
 
 func NewOperationReply() *OperationReply {
 	return &OperationReply{
-		Endpoint: &Socks6Addr{
+		Endpoint: &SocksAddr{
 			AddressType: AddressTypeIPv4,
 			Address:     []byte{0, 0, 0, 0},
 		},
@@ -183,7 +174,6 @@ func NewOperationReplyWithCode(code ReplyCode) *OperationReply {
 }
 func (o *OperationReply) Marshal() []byte {
 	ops := o.Options.Marshal()
-	addr := o.Endpoint.MarshalAddress()
 
 	b := bytes.Buffer{}
 
@@ -191,12 +181,7 @@ func (o *OperationReply) Marshal() []byte {
 	b.WriteByte(byte(o.ReplyCode))
 	binary.Write(&b, binary.BigEndian, uint16(len(ops)))
 
-	binary.Write(&b, binary.BigEndian, o.Endpoint.Port)
-	b.WriteByte(0)
-	b.WriteByte(byte(o.Endpoint.AddressType))
-
-	b.Write(addr)
-
+	b.Write(o.Endpoint.Marshal6(0))
 	b.Write(ops)
 	return b.Bytes()
 }
@@ -204,8 +189,8 @@ func ParseOperationReplyFrom(b io.Reader) (*OperationReply, error) {
 	r := &OperationReply{}
 	buf := internal.BytesPool64k.Rent()
 	defer internal.BytesPool64k.Return(buf)
-	// ver cc opLen2 port2 0 aTyp
-	if _, err := io.ReadFull(b, buf[:8]); err != nil {
+	// ver cc opLen2
+	if _, err := io.ReadFull(b, buf[:4]); err != nil {
 		return nil, err
 	}
 	if buf[0] != protocolVersion {
@@ -214,12 +199,10 @@ func ParseOperationReplyFrom(b io.Reader) (*OperationReply, error) {
 	r.ReplyCode = ReplyCode(buf[1])
 	optLen := binary.BigEndian.Uint16(buf[2:])
 
-	aTyp := AddressType(buf[7])
-	addr, err := ParseAddressFrom(b, aTyp)
+	addr, _, _, err := ParseSocksAddr6From(b)
 	if err != nil {
 		return nil, err
 	}
-	addr.Port = binary.BigEndian.Uint16(buf[4:])
 	r.Endpoint = addr
 
 	ops, err := ParseOptionSetFrom(b, int(optLen))
@@ -254,9 +237,9 @@ type UDPMessage struct {
 	Type          UDPHeaderType
 	AssociationID uint64
 	// dgram & icmp
-	Endpoint *Socks6Addr
+	Endpoint *SocksAddr
 	// icmp
-	ErrorEndpoint *Socks6Addr
+	ErrorEndpoint *SocksAddr
 	ErrorCode     UDPErrorType
 	// dgram
 	Data []byte
@@ -272,24 +255,19 @@ func (u *UDPMessage) Marshal() []byte {
 		binary.Write(&b, binary.BigEndian, uint16(12))
 		binary.Write(&b, binary.BigEndian, u.AssociationID)
 	case UDPMessageDatagram:
-		addr := u.Endpoint.MarshalAddress()
-		totalLen := 16 + len(addr) + len(u.Data)
+		addr := u.Endpoint.Marshal6(0)
+		totalLen := 12 + len(addr) + len(u.Data)
 		b.WriteByte(protocolVersion)
 		b.WriteByte(byte(u.Type))
 		binary.Write(&b, binary.BigEndian, uint16(totalLen))
 		binary.Write(&b, binary.BigEndian, u.AssociationID)
 
-		b.WriteByte(byte(u.Endpoint.AddressType))
-		b.WriteByte(0)
-		binary.Write(&b, binary.BigEndian, u.Endpoint.Port)
-
 		b.Write(addr)
-
 		b.Write(u.Data)
 	case UDPMessageError:
-		addr := u.Endpoint.MarshalAddress()
-		eaddr := u.ErrorEndpoint.MarshalAddress()
-		totalLen := 20 + len(addr) + len(eaddr)
+		addr := u.Endpoint.Marshal6(0)
+		eaddr := u.ErrorEndpoint.Marshal6(byte(u.ErrorCode))
+		totalLen := 12 + len(addr) + len(eaddr)
 
 		b.WriteByte(protocolVersion)
 		b.WriteByte(byte(u.Type))
@@ -297,17 +275,7 @@ func (u *UDPMessage) Marshal() []byte {
 
 		binary.Write(&b, binary.BigEndian, u.AssociationID)
 
-		b.WriteByte(byte(u.Endpoint.AddressType))
-		b.WriteByte(0)
-		binary.Write(&b, binary.BigEndian, u.Endpoint.Port)
-
 		b.Write(addr)
-
-		b.WriteByte(byte(u.ErrorEndpoint.AddressType))
-		b.WriteByte(byte(u.ErrorCode))
-		b.WriteByte(0)
-		b.WriteByte(0)
-
 		b.Write(eaddr)
 	}
 	return b.Bytes()
@@ -325,7 +293,7 @@ func ParseUDPMessageFrom(b io.Reader) (*UDPMessage, error) {
 	}
 
 	totalLen := binary.BigEndian.Uint16(buf[2:])
-
+	remainLen := int(totalLen) - 12
 	u.Type = UDPHeaderType(buf[1])
 	u.AssociationID = binary.BigEndian.Uint64(buf[4:])
 
@@ -333,17 +301,13 @@ func ParseUDPMessageFrom(b io.Reader) (*UDPMessage, error) {
 		return u, nil
 	}
 
-	if _, err := io.ReadFull(b, buf[:4]); err != nil {
-		return nil, err
-	}
-
-	addr, err := ParseAddressFromWithLimit(b, AddressType(buf[0]), int(totalLen)-16)
+	addr, _, l, err := ParseSocksAddr6FromWithLimit(b, remainLen)
 	if err != nil {
 		return nil, err
 	}
-	addr.Port = binary.BigEndian.Uint16(buf[2:])
 	u.Endpoint = addr
-	remainLen := totalLen - uint16(addr.AddrLen()) - 16
+	remainLen -= l
+
 	if u.Type == UDPMessageDatagram {
 		if _, err = io.ReadFull(b, buf[:remainLen]); err != nil {
 			return nil, err
@@ -352,16 +316,11 @@ func ParseUDPMessageFrom(b io.Reader) (*UDPMessage, error) {
 		return u, nil
 	}
 
-	if _, err = io.ReadFull(b, buf[:4]); err != nil {
-		return nil, err
-	}
-
-	u.ErrorCode = UDPErrorType(buf[1])
-
-	eaddr, err := ParseAddressFromWithLimit(b, AddressType(buf[0]), int(remainLen)-4)
+	eaddr, uerr, _, err := ParseSocksAddr6FromWithLimit(b, remainLen)
 	if err != nil {
 		return nil, err
 	}
+	u.ErrorCode = UDPErrorType(uerr)
 	u.ErrorEndpoint = eaddr
 
 	return u, nil

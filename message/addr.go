@@ -2,6 +2,7 @@ package message
 
 import (
 	"bytes"
+	"encoding/binary"
 	"io"
 	"net"
 	"strconv"
@@ -19,8 +20,8 @@ const (
 	AddressTypeIPv6       AddressType = 4
 )
 
-// Socks6Addr is address and port used in SOCKS6 protocol
-type Socks6Addr struct {
+// SocksAddr is address and port used in SOCKS6 protocol
+type SocksAddr struct {
 	// address' type
 	AddressType AddressType
 	// actual address,
@@ -31,15 +32,15 @@ type Socks6Addr struct {
 	Port uint16
 }
 
-// AddrIPv4Zero is 0.0.0.0:0 in Socks6Addr format
-var AddrIPv4Zero *Socks6Addr = &Socks6Addr{
+// AddrIPv4Zero is 0.0.0.0:0 in SocksAddr format
+var AddrIPv4Zero *SocksAddr = &SocksAddr{
 	AddressType: AddressTypeIPv4,
 	Address:     []byte{0, 0, 0, 0},
 	Port:        0,
 }
 
-// AddrIPv6Zero is [::]:0 in Socks6Addr format
-var AddrIPv6Zero *Socks6Addr = &Socks6Addr{
+// AddrIPv6Zero is [::]:0 in SocksAddr format
+var AddrIPv6Zero *SocksAddr = &SocksAddr{
 	AddressType: AddressTypeIPv6,
 	Address: []byte{
 		0, 0, 0, 0,
@@ -49,12 +50,12 @@ var AddrIPv6Zero *Socks6Addr = &Socks6Addr{
 	Port: 0,
 }
 
-// DefaultAddr is 0.0.0.0:0 in Socks6Addr format
-var DefaultAddr *Socks6Addr = AddrIPv4Zero
+// DefaultAddr is 0.0.0.0:0 in SocksAddr format
+var DefaultAddr *SocksAddr = AddrIPv4Zero
 
-// ParseAddr parse address string to Socks6Addr
+// ParseAddr parse address string to SocksAddr
 // panic when error
-func ParseAddr(addr string) *Socks6Addr {
+func ParseAddr(addr string) *SocksAddr {
 	r, err := NewAddr(addr)
 	if err != nil {
 		lg.Panic("can't parse address", addr, err)
@@ -62,8 +63,8 @@ func ParseAddr(addr string) *Socks6Addr {
 	return r
 }
 
-// ConvertAddr try to convert net.Addr to Socks6Addr
-func ConvertAddr(addr net.Addr) *Socks6Addr {
+// ConvertAddr try to convert net.Addr to SocksAddr
+func ConvertAddr(addr net.Addr) *SocksAddr {
 	var ip net.IP
 	var port int
 	if addr == nil {
@@ -76,7 +77,7 @@ func ConvertAddr(addr net.Addr) *Socks6Addr {
 	case *net.UDPAddr:
 		ip = a.IP
 		port = a.Port
-	case *Socks6Addr:
+	case *SocksAddr:
 		return a
 	default:
 		return ParseAddr(addr.String())
@@ -88,15 +89,15 @@ func ConvertAddr(addr net.Addr) *Socks6Addr {
 		af = AddressTypeIPv4
 		ip = ip4
 	}
-	return &Socks6Addr{
+	return &SocksAddr{
 		AddressType: af,
 		Address:     ip,
 		Port:        uint16(port),
 	}
 }
 
-// NewAddr parse address string to Socks6Addr
-func NewAddr(address string) (*Socks6Addr, error) {
+// NewAddr parse address string to SocksAddr
+func NewAddr(address string) (*SocksAddr, error) {
 	h, p, err := net.SplitHostPort(address)
 	if err != nil {
 		return nil, err
@@ -135,20 +136,20 @@ func NewAddr(address string) (*Socks6Addr, error) {
 		atyp = AddressTypeDomainName
 		addr = internal.Dup([]byte(asc))
 	}
-	return &Socks6Addr{
+	return &SocksAddr{
 		AddressType: atyp,
 		Address:     addr,
 		Port:        uint16(port),
 	}, nil
 }
 
-// Network implements net.Conn, always return "socks6"
-func (a *Socks6Addr) Network() string {
-	return "socks6"
+// Network implements net.Conn, always return "socks"
+func (a *SocksAddr) Network() string {
+	return "socks"
 }
 
 // String implements net.Conn
-func (a *Socks6Addr) String() string {
+func (a *SocksAddr) String() string {
 	var h string
 	switch a.AddressType {
 	case AddressTypeIPv4, AddressTypeIPv6:
@@ -159,89 +160,136 @@ func (a *Socks6Addr) String() string {
 	return net.JoinHostPort(h, strconv.FormatInt(int64(a.Port), 10))
 }
 
-// MarshalAddress get host address' (without port) wireformat representation
-func (a *Socks6Addr) MarshalAddress() []byte {
+func (a *SocksAddr) Marshal6(pad byte) []byte {
+	b := &bytes.Buffer{}
+	binary.Write(b, binary.BigEndian, a.Port)
+	b.WriteByte(pad)
+	b.WriteByte(byte(a.AddressType))
+
+	npad := 0
 	if a.AddressType == AddressTypeDomainName {
-		r := append([]byte{byte(len(a.Address))}, a.Address...)
-		total := internal.PaddedLen(len(r), 4)
-		lPad := total - len(r)
-		r = append(r, make([]byte, lPad)...)
-		r[0] = byte(total) - 1
-		return r
+		l := 1 + len(a.Address)
+		total := internal.PaddedLen(l, 4)
+		if total > 255 {
+			lg.Panic("address too long")
+		}
+		b.WriteByte(byte(total))
+		npad = total - l
 	}
-	l := 16
-	if a.AddressType == AddressTypeIPv4 {
-		l = 4
+	b.Write(a.Address)
+	if npad > 0 {
+		b.Write(make([]byte, npad))
 	}
-	return internal.Dup(a.Address[:l])
+	return b.Bytes()
 }
 
-func ParseAddressFrom(b io.Reader, atyp AddressType) (*Socks6Addr, error) {
-	return ParseAddressFromWithLimit(b, atyp, 256)
-}
-
-// ParseAddressFrom read address of given type from reader
-func ParseAddressFromWithLimit(b io.Reader, atyp AddressType, limit int) (*Socks6Addr, error) {
-	a := &Socks6Addr{}
-	a.AddressType = atyp
+func ParseSocksAddr6FromWithLimit(b io.Reader, limit int) (addr *SocksAddr, pad byte, nConsume int, err error) {
+	if limit <= 4 {
+		return nil, 0, 0, ErrBufferSize
+	}
+	addr = &SocksAddr{}
 	buf := make([]byte, 256)
+	if _, err := io.ReadFull(b, buf[:4]); err != nil {
+		return nil, 0, 0, err
+	}
+	addr.Port = binary.BigEndian.Uint16(buf)
+	padding := buf[2]
+	addr.AddressType = AddressType(buf[3])
 
-	if a.AddressType == AddressTypeDomainName {
+	if addr.AddressType == AddressTypeDomainName {
 		// domain name
 		// read length
-		if limit <= 1 {
-			return nil, ErrBufferSize
+		if limit <= 5 {
+			return nil, 0, 0, ErrBufferSize
 		}
 		if _, err := io.ReadFull(b, buf[:1]); err != nil {
-			return nil, err
+			return nil, 0, 0, err
 		}
 		l := buf[0]
-		if int(l)+1 >= limit {
-			return nil, ErrBufferSize
+		if int(l)+5 >= limit {
+			return nil, 0, 0, ErrBufferSize
 		}
 		// read addr
 		if _, err := io.ReadFull(b, buf[:l]); err != nil {
-			return nil, err
+			return nil, 0, 0, err
 		}
 		// remove padding
-		a.Address = bytes.Trim(buf[:l], "\x00")
-		return a, nil
+		addr.Address = bytes.Trim(buf[:l], "\x00")
+		return addr, padding, int(l) + 5, nil
 	} else {
 		// ip
 		l := 4
 		// determine reading length
-		switch a.AddressType {
+		switch addr.AddressType {
 		case AddressTypeIPv6:
 			l = 16
 		case AddressTypeIPv4:
 			l = 4
 		default:
 			// unknown address type
-			return nil, ErrAddressTypeNotSupport
+			return nil, 0, 0, ErrAddressTypeNotSupport
 		}
-		if limit < l {
-			return nil, ErrBufferSize
+		if limit < l+4 {
+			return nil, 0, 0, ErrBufferSize
 		}
 		// read addr
 		if _, err := io.ReadFull(b, buf[:l]); err != nil {
-			return nil, err
+			return nil, 0, 0, err
 		}
-		a.Address = internal.Dup(buf[:l])
-		return a, nil
+		addr.Address = internal.Dup(buf[:l])
+		return addr, padding, int(l) + 4, nil
 	}
 }
 
-// AddrLen return host address' wireformat length without padding
-func (s *Socks6Addr) AddrLen() int {
-	switch s.AddressType {
-	case AddressTypeIPv4:
-		return 4
-	case AddressTypeIPv6:
-		return 16
-	case AddressTypeDomainName:
-		return len(s.Address) + 1
-	default:
-		lg.Panic("address type not set")
-		return 0
+func ParseSocksAddr6From(b io.Reader) (addr *SocksAddr, pad byte, nConsume int, err error) {
+	return ParseSocksAddr6FromWithLimit(b, 260)
+}
+
+func (a *SocksAddr) Marshal5() []byte {
+	b := &bytes.Buffer{}
+	b.WriteByte(byte(a.AddressType))
+
+	if a.AddressType == AddressTypeDomainName {
+		l := 1 + len(a.Address)
+		if l > 255 {
+			lg.Panic("address too long")
+		}
+		b.WriteByte(byte(l))
 	}
+	b.Write(a.Address)
+	binary.Write(b, binary.BigEndian, a.Port)
+	return b.Bytes()
+}
+
+func ParseSocksAddr5From(b io.Reader) (*SocksAddr, error) {
+	buf := make([]byte, 256)
+	a := &SocksAddr{}
+	if _, err := io.ReadFull(b, buf[:1]); err != nil {
+		return nil, err
+	}
+	a.AddressType = AddressType(buf[0])
+	l := byte(4)
+
+	if a.AddressType == AddressTypeDomainName {
+		if _, err := io.ReadFull(b, buf[:1]); err != nil {
+			return nil, err
+		}
+		l = buf[0]
+
+	} else {
+		switch a.AddressType {
+		case AddressTypeIPv6:
+			l = 16
+		case AddressTypeIPv4:
+			l = 4
+		default:
+			return nil, ErrAddressTypeNotSupport
+		}
+	}
+	if _, err := io.ReadFull(b, buf[:l+2]); err != nil {
+		return nil, err
+	}
+	a.Address = internal.Dup(buf[:l])
+	a.Port = binary.BigEndian.Uint16(buf[l:])
+	return a, nil
 }

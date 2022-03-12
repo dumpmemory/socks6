@@ -18,7 +18,7 @@ type ClientConn struct {
 }
 
 // Destination is endpoint included in client's request
-func (c ClientConn) Destination() *message.Socks6Addr {
+func (c ClientConn) Destination() *message.SocksAddr {
 	return c.Request.Endpoint
 }
 
@@ -45,4 +45,10 @@ func (c ClientConn) WriteReply(code message.ReplyCode, ep net.Addr, opt *message
 	setSessionId(oprep, c.Session)
 	_, e := c.Conn.Write(oprep.Marshal())
 	return e
+}
+
+type Datagram struct {
+	Addr     net.Addr
+	Data     []byte
+	Downlink DatagramDownlink
 }
