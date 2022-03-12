@@ -6,7 +6,7 @@ import (
 	"github.com/studentmain/socks6/message"
 )
 
-// ClientConn represents a SOCKS 6 connection recieved by server
+// ClientConn represents a SOCKS 6 connection received by server
 type ClientConn struct {
 	Conn    net.Conn         // base connection
 	Request *message.Request // request sent by client

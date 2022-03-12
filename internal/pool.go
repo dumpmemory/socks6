@@ -44,7 +44,7 @@ func (p *BytesPool) Return(b []byte) {
 	p.ch <- b
 }
 
-// BytesPool64k is a BytesPool with array size 65536, primarily used as large header and UDP recieve buffer
+// BytesPool64k is a BytesPool with array size 65536, primarily used as large header and UDP receive buffer
 var BytesPool64k = NewBytesPool(65536, 16)
 
 // BytesPool4k is a BytesPool with array size 4096, used as message forwarding buffer

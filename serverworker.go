@@ -187,22 +187,9 @@ func (s *ServerWorker) ServeStream(
 
 	req, err := message.ParseRequestFrom(conn1)
 	if err != nil {
-		// not socks6
-		evm := message.ErrVersionMismatch{}
-		if errors.As(err, &evm) {
-			closeConn.Cancel()
-			s.VersionErrorHandler(ctx, evm, conn)
-			return
-		}
-		// detect and reply addr not support early, as auth can't continue
-		if errors.Is(err, message.ErrAddressTypeNotSupport) {
-			conn.Write(message.NewAuthenticationReplyWithType(message.AuthenticationReplyFail).Marshal())
-			conn.Write(message.NewOperationReplyWithCode(message.OperationReplyAddressNotSupported).Marshal())
-			return
-		} else {
-			lg.Warningf("can't parse request from %s, %+v", ccid, err)
-			return
-		}
+		closeConn.Cancel()
+		s.handleRequestError(ctx, conn, err)
+		return
 	}
 	lg.Tracef("request from %s, %+v", ccid, req)
 
@@ -216,59 +203,14 @@ func (s *ServerWorker) ServeStream(
 		}
 	}
 
-	result1, sac := s.Authenticator.Authenticate(ctx, conn, *req)
-	// final auth result
-	auth := *result1
-	if result1.Success {
-		// one stage auth, success
-		auth = *result1
-		reply := setAuthMethodInfo(message.NewAuthenticationReplyWithType(message.AuthenticationReplySuccess), *result1)
-		lg.Debugf("%s authenticate %+v , %+v", ccid, auth, reply)
-		if _, err = conn.Write(reply.Marshal()); err != nil {
-			lg.Warning(ccid, "can't write auth reply", err)
-			return
-		}
-	} else if !result1.Continue {
-		reply := message.NewAuthenticationReplyWithType(message.AuthenticationReplyFail)
-		if _, err = conn.Write(reply.Marshal()); err != nil {
-			lg.Warning(ccid, "can't write reply", err)
-			return
-		}
-	} else {
-		// two stage auth
-		reply1 := setAuthMethodInfo(message.NewAuthenticationReplyWithType(message.AuthenticationReplyFail), *result1)
-		if _, err = conn.Write(reply1.Marshal()); err != nil {
-			lg.Warning(ccid, "can't write auth reply 1", err)
-			return
-		}
-		// run stage 2
-		lg.Debug(ccid, "auth stage 2")
-
-		result2, err := s.Authenticator.ContinueAuthenticate(sac, *req)
-		if err != nil {
-			lg.Warning(ccid, "auth stage 2 error", err)
-			conn.Write(message.NewAuthenticationReplyWithType(message.AuthenticationReplyFail).Marshal())
-			return
-		}
-		auth = *result2
-		reply := setAuthMethodInfo(message.NewAuthenticationReply(), *result2)
-		if result2.Success {
-			reply.Type = message.AuthenticationReplySuccess
-		} else {
-			reply.Type = message.AuthenticationReplyFail
-		}
-		lg.Debugf("%s auth stage 2 done %+v , %+v", ccid, auth, reply)
-		if _, err = conn.Write(reply.Marshal()); err != nil {
-			lg.Warning(ccid, "can't write auth reply 2", err)
-			return
-		}
+	auth := s.authn(ctx, conn, req)
+	if auth == nil {
+		return
 	}
-
 	if !auth.Success {
 		lg.Info(ccid, "authenticate fail")
 		return
 	}
-
 	lg.Trace(ccid, "authenticate success")
 	cc := ClientConn{
 		Conn:    conn,
@@ -280,13 +222,12 @@ func (s *ServerWorker) ServeStream(
 		InitialData: initData,
 	}
 
-	if s.Rule != nil {
-		if !s.Rule(cc) {
-			lg.Info(ccid, "not allowed by rule")
-			conn.Write(message.NewOperationReplyWithCode(message.OperationReplyNotAllowedByRule).Marshal())
-			return
-		}
+	if s.Rule != nil && !s.Rule(cc) {
+		lg.Info(ccid, "not allowed by rule")
+		conn.Write(message.NewOperationReplyWithCode(message.OperationReplyNotAllowedByRule).Marshal())
+		return
 	}
+
 	// per-command
 	h, ok := s.CommandHandlers[req.CommandCode]
 	if !ok {
@@ -300,6 +241,85 @@ func (s *ServerWorker) ServeStream(
 	// it's handler's job to close conn
 	closeConn.Cancel()
 	h(ctx, cc)
+}
+
+func (s *ServerWorker) handleRequestError(
+	ctx context.Context,
+	conn net.Conn,
+	err error,
+) {
+	evm := message.ErrVersionMismatch{}
+	if errors.As(err, &evm) {
+		s.VersionErrorHandler(ctx, evm, conn)
+		return
+	}
+	defer conn.Close()
+	// detect and reply addr not support early, as auth can't continue
+	if errors.Is(err, message.ErrAddressTypeNotSupport) {
+		conn.Write(message.NewAuthenticationReplyWithType(message.AuthenticationReplyFail).Marshal())
+		conn.Write(message.NewOperationReplyWithCode(message.OperationReplyAddressNotSupported).Marshal())
+		return
+	} else {
+		lg.Warningf("can't parse request from %s, %+v", conn3Tuple(conn), err)
+		return
+	}
+}
+
+func (s *ServerWorker) authn(
+	ctx context.Context,
+	conn net.Conn,
+	req *message.Request,
+) *auth.ServerAuthenticationResult {
+	ccid := conn3Tuple(conn)
+	result1, sac := s.Authenticator.Authenticate(ctx, conn, *req)
+
+	auth := *result1
+	if result1.Success {
+		// one stage auth, success
+		auth = *result1
+		reply := setAuthMethodInfo(message.NewAuthenticationReplyWithType(message.AuthenticationReplySuccess), *result1)
+		lg.Debugf("%s authenticate %+v , %+v", ccid, auth, reply)
+		if _, err := conn.Write(reply.Marshal()); err != nil {
+			lg.Warning(ccid, "can't write auth reply", err)
+			return nil
+		}
+	} else if !result1.Continue {
+		// one stage auth, can't continue
+		reply := message.NewAuthenticationReplyWithType(message.AuthenticationReplyFail)
+		if _, err := conn.Write(reply.Marshal()); err != nil {
+			lg.Warning(ccid, "can't write reply", err)
+			return nil
+		}
+	} else {
+		// two stage auth
+		reply1 := setAuthMethodInfo(message.NewAuthenticationReplyWithType(message.AuthenticationReplyFail), *result1)
+		if _, err := conn.Write(reply1.Marshal()); err != nil {
+			lg.Warning(ccid, "can't write auth reply 1", err)
+			return nil
+		}
+		// run stage 2
+		lg.Debug(ccid, "auth stage 2")
+
+		result2, err := s.Authenticator.ContinueAuthenticate(sac, *req)
+		if err != nil {
+			lg.Warning(ccid, "auth stage 2 error", err)
+			conn.Write(message.NewAuthenticationReplyWithType(message.AuthenticationReplyFail).Marshal())
+			return nil
+		}
+		auth = *result2
+		reply := setAuthMethodInfo(message.NewAuthenticationReply(), *result2)
+		if result2.Success {
+			reply.Type = message.AuthenticationReplySuccess
+		} else {
+			reply.Type = message.AuthenticationReplyFail
+		}
+		lg.Debugf("%s auth stage 2 done %+v , %+v", ccid, auth, reply)
+		if _, err = conn.Write(reply.Marshal()); err != nil {
+			lg.Warning(ccid, "can't write auth reply 2", err)
+			return nil
+		}
+	}
+	return &auth
 }
 
 func (s *ServerWorker) ServeDatagram(

@@ -14,7 +14,7 @@ import (
 // UDPDownlink is a function used to write datagram to specific UDP endpoint
 type UDPDownlink func(b []byte) error
 
-// ClientPacket represent a single UDPHeader recieved from client
+// ClientPacket represent a single UDPHeader received from client
 type ClientPacket struct {
 	Message  *message.UDPMessage
 	Source   net.Addr
@@ -29,7 +29,7 @@ type udpAssociation struct {
 	cc          ClientConn
 	acceptTcp   bool   // whether to accept datagram over tcp
 	acceptDgram string // which client address is accepted
-	assocOk     bool   // first datagram recieved
+	assocOk     bool   // first datagram received
 	icmpOn      bool
 
 	pair     string // reserved port
