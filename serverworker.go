@@ -40,7 +40,7 @@ type ServerWorker struct {
 	// VersionErrorHandler should close connection by itself
 	VersionErrorHandler func(ctx context.Context, ver message.ErrVersionMismatch, conn net.Conn)
 
-	DaatgramVersionErrorHandler func(ctx context.Context, ver message.ErrVersionMismatch, dgram Datagram)
+	DatagramVersionErrorHandler func(ctx context.Context, ver message.ErrVersionMismatch, dgram Datagram)
 
 	Outbound ServerOutbound
 
@@ -62,9 +62,9 @@ type ServerWorker struct {
 	IgnoreFragmentedRequest bool
 	EnableICMP              bool
 
-	backlogListener *sync.Map // map[string]*bl
-	reservedUdpAddr *sync.Map // map[string]uint64
-	udpAssociation  *sync.Map // map[uint64]*ua
+	backlogListener internal.SyncMap[string, *backlogListener] // *sync.Map // map[string]*bl
+	reservedUdpAddr *sync.Map                                  // map[string]uint64
+	udpAssociation  *sync.Map                                  // map[uint64]*ua
 }
 
 // ServerOutbound is a group of function called by ServerWorker when a connection or listener is needed to fullfill client request
@@ -132,7 +132,7 @@ func NewServerWorker() *ServerWorker {
 			DefaultIPv4: common.GuessDefaultIPv4(),
 			DefaultIPv6: common.GuessDefaultIPv6(),
 		},
-		backlogListener: &sync.Map{},
+		backlogListener: internal.SyncMap[string, *backlogListener]{Map: sync.Map{}},
 		reservedUdpAddr: &sync.Map{},
 		udpAssociation:  &sync.Map{},
 	}
@@ -324,30 +324,66 @@ func (s *ServerWorker) authn(
 	return &auth
 }
 
+func (s *ServerWorker) ServeDatagramSource(
+	ctx context.Context,
+	dgramSrc DatagramSource,
+) {
+	assoc, h := s.handleFirstDatagram(ctx, *dgramSrc.ReadDatagram())
+	assoc.handleUdpUp(ctx, ClientPacket{
+		Message:  h,
+		Source:   dgramSrc.Addr,
+		Downlink: dgramSrc.Downlink,
+	})
+
+	for {
+		d := dgramSrc.ReadDatagram()
+		if d == nil {
+			return
+		}
+		h, err := message.ParseUDPMessageFrom(bytes.NewReader(d.Data))
+		if err != nil {
+			lg.Warning(err)
+			return
+		}
+		assoc.handleUdpUp(ctx, ClientPacket{
+			Message:  h,
+			Source:   dgramSrc.Addr,
+			Downlink: dgramSrc.Downlink,
+		})
+	}
+}
+
 func (s *ServerWorker) ServeDatagram(
 	ctx context.Context,
 	dgram Datagram,
 ) {
-	h, err := message.ParseUDPMessageFrom(bytes.NewReader(dgram.Data))
-	if err != nil {
-		evm := message.ErrVersionMismatch{}
-		if errors.As(err, &evm) && s.DaatgramVersionErrorHandler != nil {
-			s.DaatgramVersionErrorHandler(ctx, evm, dgram)
-		}
-		return
-	}
-	iassoc, ok := s.udpAssociation.Load(h.AssociationID)
-	if !ok {
-		return
-	}
-	assoc := iassoc.(*udpAssociation)
-
-	cp := ClientPacket{
+	assoc, h := s.handleFirstDatagram(ctx, dgram)
+	assoc.handleUdpUp(ctx, ClientPacket{
 		Message:  h,
 		Source:   dgram.Addr,
 		Downlink: dgram.Downlink,
+	})
+}
+
+func (s *ServerWorker) handleFirstDatagram(
+	ctx context.Context,
+	dgram Datagram,
+) (*udpAssociation, *message.UDPMessage) {
+	h, err := message.ParseUDPMessageFrom(bytes.NewReader(dgram.Data))
+	if err != nil {
+		evm := message.ErrVersionMismatch{}
+		if errors.As(err, &evm) && s.DatagramVersionErrorHandler != nil {
+			s.DatagramVersionErrorHandler(ctx, evm, dgram)
+		}
+		return nil, nil
 	}
-	assoc.handleUdpUp(ctx, cp)
+	iassoc, ok := s.udpAssociation.Load(h.AssociationID)
+	if !ok {
+		return nil, nil
+	}
+	assoc := iassoc.(*udpAssociation)
+
+	return assoc, h
 }
 
 func (s *ServerWorker) NoopHandler(
@@ -406,9 +442,8 @@ func (s *ServerWorker) BindHandler(
 
 	defer closeConn.Defer()
 	// find backlogged listener
-	ibl, accept := s.backlogListener.Load(cc.Destination().String())
+	bl, accept := s.backlogListener.Load(cc.Destination().String())
 	if accept {
-		bl := ibl.(*backlogListener)
 		lg.Info(cc.ConnId(), "trying accept backlogged connection at", bl.listener.Addr())
 		// bl.handler is blocking, needn't cancel defer
 		bl.handler(ctx, cc)
@@ -600,72 +635,9 @@ func (s *ServerWorker) UdpAssociateHandler(
 }
 
 func (s *ServerWorker) ForwardICMP(ctx context.Context, msg *icmp.Message, ip *net.IPAddr, ver int) {
-	var code message.UDPErrorType = 0
-	var reporter *message.SocksAddr
-	// map icmp message to socks6 addresses and code
-	hdr := []byte{}
-
-	switch ver {
-	case 4:
-		reporter = &message.SocksAddr{
-			AddressType: message.AddressTypeIPv4,
-			Address:     ip.IP.To4(),
-		}
-
-		switch msg.Type {
-		case ipv4.ICMPTypeDestinationUnreachable:
-			switch msg.Code {
-			case 0:
-				code = message.UDPErrorNetworkUnreachable
-			case 1:
-				code = message.UDPErrorHostUnreachable
-			default:
-				return
-			}
-			m2 := msg.Body.(*icmp.DstUnreach)
-			hdr = m2.Data
-		case ipv4.ICMPTypeTimeExceeded:
-			switch msg.Code {
-			case 0:
-				code = message.UDPErrorTTLExpired
-			default:
-				return
-			}
-			m2 := msg.Body.(*icmp.TimeExceeded)
-			hdr = m2.Data
-		}
-	case 6:
-		reporter = &message.SocksAddr{
-			AddressType: message.AddressTypeIPv6,
-			Address:     ip.IP.To16(),
-		}
-
-		switch msg.Type {
-		case ipv6.ICMPTypeDestinationUnreachable:
-			switch msg.Code {
-			case 0:
-				code = message.UDPErrorNetworkUnreachable
-			case 3:
-				code = message.UDPErrorHostUnreachable
-			default:
-				return
-			}
-			m2 := msg.Body.(*icmp.DstUnreach)
-			hdr = m2.Data
-		case ipv6.ICMPTypeTimeExceeded:
-			switch msg.Code {
-			case 0:
-				code = message.UDPErrorTTLExpired
-			default:
-				return
-			}
-			m2 := msg.Body.(*icmp.TimeExceeded)
-			hdr = m2.Data
-		case ipv6.ICMPTypePacketTooBig:
-			code = message.UDPErrorDatagramTooBig
-			m2 := msg.Body.(*icmp.TimeExceeded)
-			hdr = m2.Data
-		}
+	code, reporter, hdr := convertICMPError(msg, ip, ver)
+	if hdr == nil {
+		return
 	}
 	ipSrc, ipDst, proto, err := parseSrcDstAddrFromIPHeader(hdr, ver)
 	if err != nil {
@@ -707,8 +679,8 @@ func (s *ServerWorker) ClearUnusedResource(ctx context.Context) {
 	for !stop {
 		<-tick.C
 
-		s.backlogListener.Range(func(key, value interface{}) bool {
-			bl := value.(*backlogListener)
+		s.backlogListener.Range(func(key string, value *backlogListener) bool {
+			bl := value
 			if bl.alive {
 				return true
 			}
@@ -861,4 +833,76 @@ func parseSrcDstAddrFromIPHeader(b []byte, v int) (*message.SocksAddr, *message.
 	default:
 		return nil, nil, 0, errors.New("what ip version?")
 	}
+}
+
+func convertICMPError(msg *icmp.Message, ip *net.IPAddr, ver int,
+) (message.UDPErrorType, *message.SocksAddr, []byte) {
+	var code message.UDPErrorType = 0
+	var reporter *message.SocksAddr
+	// map icmp message to socks6 addresses and code
+	hdr := []byte{}
+
+	switch ver {
+	case 4:
+		reporter = &message.SocksAddr{
+			AddressType: message.AddressTypeIPv4,
+			Address:     ip.IP.To4(),
+		}
+
+		switch msg.Type {
+		case ipv4.ICMPTypeDestinationUnreachable:
+			switch msg.Code {
+			case 0:
+				code = message.UDPErrorNetworkUnreachable
+			case 1:
+				code = message.UDPErrorHostUnreachable
+			default:
+				return 0, nil, nil
+			}
+			m2 := msg.Body.(*icmp.DstUnreach)
+			hdr = m2.Data
+		case ipv4.ICMPTypeTimeExceeded:
+			switch msg.Code {
+			case 0:
+				code = message.UDPErrorTTLExpired
+			default:
+				return 0, nil, nil
+			}
+			m2 := msg.Body.(*icmp.TimeExceeded)
+			hdr = m2.Data
+		}
+	case 6:
+		reporter = &message.SocksAddr{
+			AddressType: message.AddressTypeIPv6,
+			Address:     ip.IP.To16(),
+		}
+
+		switch msg.Type {
+		case ipv6.ICMPTypeDestinationUnreachable:
+			switch msg.Code {
+			case 0:
+				code = message.UDPErrorNetworkUnreachable
+			case 3:
+				code = message.UDPErrorHostUnreachable
+			default:
+				return 0, nil, nil
+			}
+			m2 := msg.Body.(*icmp.DstUnreach)
+			hdr = m2.Data
+		case ipv6.ICMPTypeTimeExceeded:
+			switch msg.Code {
+			case 0:
+				code = message.UDPErrorTTLExpired
+			default:
+				return 0, nil, nil
+			}
+			m2 := msg.Body.(*icmp.TimeExceeded)
+			hdr = m2.Data
+		case ipv6.ICMPTypePacketTooBig:
+			code = message.UDPErrorDatagramTooBig
+			m2 := msg.Body.(*icmp.TimeExceeded)
+			hdr = m2.Data
+		}
+	}
+	return code, reporter, hdr
 }

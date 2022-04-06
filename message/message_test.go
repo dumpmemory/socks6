@@ -44,7 +44,7 @@ func TestRequest(t *testing.T) {
 			}, expect: &message.Request{
 				CommandCode: 1,
 				Endpoint:    message.ParseAddr("127.0.0.1:1"),
-				Options:     internal.Must2(message.ParseOptionSetFrom(bytes.NewReader([]byte{1, 0, 0, 4}), 4)).(*message.OptionSet),
+				Options:     internal.Must2(message.ParseOptionSetFrom(bytes.NewReader([]byte{1, 0, 0, 4}), 4)),
 			}, e: nil,
 		}, {
 			in: []byte{

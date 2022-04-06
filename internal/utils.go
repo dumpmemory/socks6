@@ -25,11 +25,7 @@ func SortByte(b []byte) {
 }
 
 // Must2 passthrough first parameter, panic when second parameter is not nil
-//
-// Example:
-//
-// size:=Must2(conn.Write(data)).(int)
-func Must2(v interface{}, e error) interface{} {
+func Must2[T any](v T, e error) T {
 	if e != nil {
 		lg.Panic(e)
 	}

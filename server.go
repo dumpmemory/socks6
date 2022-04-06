@@ -79,8 +79,8 @@ func (s *Server) Start(ctx context.Context) {
 }
 
 func (s *Server) startTCP(ctx context.Context, addr string) {
-	addr2 := internal.Must2(net.ResolveTCPAddr("tcp", addr)).(*net.TCPAddr)
-	s.tcp = internal.Must2(net.ListenTCP("tcp", addr2)).(*net.TCPListener)
+	addr2 := internal.Must2(net.ResolveTCPAddr("tcp", addr))
+	s.tcp = internal.Must2(net.ListenTCP("tcp", addr2))
 	lg.Infof("start TCP server at %s", s.tcp.Addr())
 	s.listeners = append(s.listeners, s.tcp)
 	go func() {
@@ -98,7 +98,7 @@ func (s *Server) startTCP(ctx context.Context, addr string) {
 func (s *Server) startTLS(ctx context.Context, addr string) {
 	s.tls = internal.Must2(tls.Listen("tcp", addr, &tls.Config{
 		Certificates: []tls.Certificate{*s.Cert},
-	})).(net.Listener)
+	}))
 	lg.Infof("start TLS server at %s", s.tls.Addr())
 	s.listeners = append(s.listeners, s.tls)
 
@@ -115,8 +115,8 @@ func (s *Server) startTLS(ctx context.Context, addr string) {
 }
 
 func (s *Server) startUDP(ctx context.Context, addr string) {
-	addr2 := internal.Must2(net.ResolveUDPAddr("udp", addr)).(*net.UDPAddr)
-	s.udp = internal.Must2(net.ListenUDP("udp", addr2)).(*net.UDPConn)
+	addr2 := internal.Must2(net.ResolveUDPAddr("udp", addr))
+	s.udp = internal.Must2(net.ListenUDP("udp", addr2))
 	lg.Infof("start UDP server at %s", s.udp.LocalAddr())
 	s.listeners = append(s.listeners, s.udp)
 
@@ -148,10 +148,10 @@ func (s *Server) startUDP(ctx context.Context, addr string) {
 }
 
 func (s *Server) startDTLS(ctx context.Context, addr string) {
-	addr2 := internal.Must2(net.ResolveUDPAddr("udp", addr)).(*net.UDPAddr)
+	addr2 := internal.Must2(net.ResolveUDPAddr("udp", addr))
 	s.dtls = internal.Must2(dtls.Listen("udp", addr2, &dtls.Config{
 		Certificates: []tls.Certificate{*s.Cert},
-	})).(net.Listener)
+	}))
 	lg.Infof("start DTLS server at %s", s.dtls.Addr())
 	s.listeners = append(s.listeners, s.dtls)
 
@@ -167,24 +167,22 @@ func (s *Server) startDTLS(ctx context.Context, addr string) {
 
 				buf := internal.BytesPool4k.Rent()
 				defer internal.BytesPool4k.Return(buf)
-
+				ds := DatagramSource{
+					Addr: conn.RemoteAddr(),
+					Data: new(chan []byte),
+					Downlink: func(b []byte) error {
+						_, err := conn.Write(b)
+						return err
+					},
+				}
+				go s.Worker.ServeDatagramSource(ctx, ds)
 				for {
 					nRead, err := conn.Read(buf)
 					if err != nil {
 						lg.Warningf("DTLS conn %s read error %s", conn.RemoteAddr(), err)
 						return
 					}
-					go s.Worker.ServeDatagram(
-						ctx,
-						Datagram{
-							Addr: conn.RemoteAddr(),
-							Data: internal.Dup(buf[:nRead]),
-							Downlink: func(b []byte) error {
-								_, err := conn.Write(b)
-								return err
-							},
-						},
-					)
+					*ds.Data <- internal.Dup(buf[:nRead])
 				}
 			}()
 		}
