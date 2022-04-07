@@ -4,10 +4,10 @@ import (
 	"context"
 	"encoding/base64"
 	"net"
-	"sync"
 	"time"
 
 	"github.com/studentmain/socks6/common/lg"
+	"github.com/studentmain/socks6/internal"
 	"github.com/studentmain/socks6/message"
 )
 
@@ -42,7 +42,7 @@ type DefaultServerAuthenticator struct {
 	DisableSession bool
 	DisableToken   bool
 
-	sessions sync.Map // map[base64_rawstd(id)]*session
+	sessions internal.SyncMap[string, *serverSession] // map[base64_rawstd(id)]*session
 }
 
 func (d *DefaultServerAuthenticator) Authenticate(
@@ -155,7 +155,7 @@ func (d *DefaultServerAuthenticator) sessionCheck(
 	sk := base64.RawStdEncoding.EncodeToString(sid)
 	var session *serverSession
 	if isession, ok := d.sessions.Load(sk); ok {
-		session = isession.(*serverSession)
+		session = isession
 	} else {
 		// mismatch session
 		return &sessionInvalid
@@ -291,7 +291,7 @@ func (d *DefaultServerAuthenticator) SessionConnClose(id []byte) {
 	sk := base64.RawStdEncoding.EncodeToString(id)
 	var session *serverSession
 	if isession, ok := d.sessions.Load(sk); ok {
-		session = isession.(*serverSession)
+		session = isession
 	} else {
 		return
 	}

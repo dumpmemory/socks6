@@ -3,7 +3,6 @@ package socks6
 import (
 	"context"
 	"net"
-	"sync"
 	"time"
 
 	"github.com/studentmain/socks6/common/lg"
@@ -35,8 +34,8 @@ type udpAssociation struct {
 	pair     string // reserved port
 	downlink func(b []byte) error
 
-	allowedRemote sync.Map // allowed remote host
-	addrFilter    bool     // when true, only datagram from allowedRemote will send to client
+	allowedRemote internal.SyncMap[string, any] // allowed remote host
+	addrFilter    bool                          // when true, only datagram from allowedRemote will send to client
 
 	alive bool
 }
@@ -65,7 +64,7 @@ func newUdpAssociation(
 		icmpOn:      icmpOn,
 
 		addrFilter:    addrFilter,
-		allowedRemote: sync.Map{},
+		allowedRemote: internal.NewSyncMap[string, any](),
 	}
 }
 

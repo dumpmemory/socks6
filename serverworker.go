@@ -8,7 +8,6 @@ import (
 	"io"
 	"net"
 	"os"
-	"sync"
 	"syscall"
 	"time"
 
@@ -62,9 +61,9 @@ type ServerWorker struct {
 	IgnoreFragmentedRequest bool
 	EnableICMP              bool
 
-	backlogListener internal.SyncMap[string, *backlogListener] // *sync.Map // map[string]*bl
-	reservedUdpAddr *sync.Map                                  // map[string]uint64
-	udpAssociation  *sync.Map                                  // map[uint64]*ua
+	backlogListener internal.SyncMap[string, *backlogListener] // map[string]*bl
+	reservedUdpAddr internal.SyncMap[string, uint64]           // map[string]uint64
+	udpAssociation  internal.SyncMap[uint64, *udpAssociation]  // map[uint64]*ua
 }
 
 // ServerOutbound is a group of function called by ServerWorker when a connection or listener is needed to fullfill client request
@@ -132,9 +131,9 @@ func NewServerWorker() *ServerWorker {
 			DefaultIPv4: common.GuessDefaultIPv4(),
 			DefaultIPv6: common.GuessDefaultIPv6(),
 		},
-		backlogListener: internal.SyncMap[string, *backlogListener]{Map: sync.Map{}},
-		reservedUdpAddr: &sync.Map{},
-		udpAssociation:  &sync.Map{},
+		backlogListener: internal.NewSyncMap[string, *backlogListener](),
+		reservedUdpAddr: internal.NewSyncMap[string, uint64](),
+		udpAssociation:  internal.NewSyncMap[uint64, *udpAssociation](),
 	}
 
 	r.CommandHandlers = map[message.CommandCode]CommandHandler{
@@ -377,12 +376,10 @@ func (s *ServerWorker) handleFirstDatagram(
 		}
 		return nil, nil
 	}
-	iassoc, ok := s.udpAssociation.Load(h.AssociationID)
+	assoc, ok := s.udpAssociation.Load(h.AssociationID)
 	if !ok {
 		return nil, nil
 	}
-	assoc := iassoc.(*udpAssociation)
-
 	return assoc, h
 }
 
@@ -540,15 +537,13 @@ func (s *ServerWorker) UdpAssociateHandler(
 	defer closeConn.Defer()
 
 	destStr := cc.Destination().String()
-	irid64, reserved := s.reservedUdpAddr.Load(destStr)
+	rid, reserved := s.reservedUdpAddr.Load(destStr)
 	// already reserved
 	if reserved {
-		rid := irid64.(uint64)
-		irua, ok := s.udpAssociation.Load(rid)
+		rua, ok := s.udpAssociation.Load(rid)
 		if !ok {
 			lg.Warning("reserve port exist after association delete")
 		} else {
-			rua := irua.(*udpAssociation)
 			// not same session, fail
 			if !bytes.Equal(rua.cc.Session, cc.Session) {
 				cc.WriteReplyCode(message.OperationReplyConnectionRefused)
@@ -648,8 +643,8 @@ func (s *ServerWorker) ForwardICMP(ctx context.Context, msg *icmp.Message, ip *n
 		return
 	}
 	// todo faster way to find corresponding assoc
-	s.udpAssociation.Range(func(key, value interface{}) bool {
-		ua := value.(*udpAssociation)
+	s.udpAssociation.Range(func(key uint64, value *udpAssociation) bool {
+		ua := value
 		// icmp disabled
 		if !ua.icmpOn {
 			return true
@@ -687,8 +682,8 @@ func (s *ServerWorker) ClearUnusedResource(ctx context.Context) {
 			s.backlogListener.Delete(key)
 			return true
 		})
-		s.udpAssociation.Range(func(key, value interface{}) bool {
-			ua := value.(*udpAssociation)
+		s.udpAssociation.Range(func(key uint64, value *udpAssociation) bool {
+			ua := value
 			if ua.alive {
 				return true
 			}
