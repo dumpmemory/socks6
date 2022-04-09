@@ -45,6 +45,13 @@ type DefaultServerAuthenticator struct {
 	sessions internal.SyncMap[string, *serverSession] // map[base64_rawstd(id)]*session
 }
 
+func NewServerAuthenticator() *DefaultServerAuthenticator {
+	return &DefaultServerAuthenticator{
+		Methods:  map[byte]ServerAuthenticationMethod{},
+		sessions: internal.NewSyncMap[string, *serverSession](),
+	}
+}
+
 func (d *DefaultServerAuthenticator) Authenticate(
 	ctx context.Context,
 	conn net.Conn,

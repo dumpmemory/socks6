@@ -30,20 +30,6 @@ func optionDataTestMarshal(t *testing.T, bin []byte, obj message.Option) {
 	obj.Length = uint16(rand.Uint32())
 	assert.Equal(t, bin, obj.Marshal())
 }
-func optionDataTestProtocolPolice(t *testing.T, bin []byte, obj message.Option) {
-	buf := make([]byte, len(bin))
-	copy(buf, bin)
-	op, err := message.ParseOptionFrom(bytes.NewReader(buf))
-	for i := 0; i < len(buf); i++ {
-		buf[i] = byte(rand.Uint32())
-	}
-	// maybe we just want warning
-	assert.ErrorIs(t, err, message.ErrBufferSize)
-	if obj.Data != nil {
-		obj.Length = uint16(len(bin))
-		assert.Equal(t, obj, op)
-	}
-}
 
 func TestOption(t *testing.T) {
 	_, err := message.ParseOptionFrom(bytes.NewReader(nil))
@@ -163,9 +149,6 @@ func TestAuthenticationMethodSelectionOptionData(t *testing.T) {
 				Method: 2,
 			},
 		})
-	optionDataTestProtocolPolice(t, []byte{
-		0, 3, 0, 5, 1,
-	}, message.Option{})
 }
 
 func TestAuthenticationDataOptionData(t *testing.T) {
@@ -201,10 +184,6 @@ func TestSessionRequestOptionData(t *testing.T) {
 			Kind: message.OptionKindSessionRequest,
 			Data: message.SessionRequestOptionData{},
 		})
-	optionDataTestProtocolPolice(t,
-		[]byte{
-			0, 5, 0, 5, 1,
-		}, message.Option{})
 }
 
 func TestSessionIDOptionData(t *testing.T) {
@@ -228,10 +207,6 @@ func TestSessionOKOptionData(t *testing.T) {
 			Kind: message.OptionKindSessionOK,
 			Data: message.SessionOKOptionData{},
 		})
-	optionDataTestProtocolPolice(t,
-		[]byte{
-			0, 8, 0, 5, 1,
-		}, message.Option{})
 }
 func TestSessionInvalidOptionData(t *testing.T) {
 	optionDataTest(t,
@@ -241,10 +216,6 @@ func TestSessionInvalidOptionData(t *testing.T) {
 			Kind: message.OptionKindSessionInvalid,
 			Data: message.SessionInvalidOptionData{},
 		})
-	optionDataTestProtocolPolice(t,
-		[]byte{
-			0, 9, 0, 5, 1,
-		}, message.Option{})
 }
 func TestSessionSessionTeardownOptionData(t *testing.T) {
 	optionDataTest(t,
@@ -254,10 +225,6 @@ func TestSessionSessionTeardownOptionData(t *testing.T) {
 			Kind: message.OptionKindSessionTeardown,
 			Data: message.SessionTeardownOptionData{},
 		})
-	optionDataTestProtocolPolice(t,
-		[]byte{
-			0, 10, 0, 5, 1,
-		}, message.Option{})
 }
 
 func TestTokenRequestOptionData(t *testing.T) {
@@ -271,10 +238,6 @@ func TestTokenRequestOptionData(t *testing.T) {
 				WindowSize: 512,
 			},
 		})
-	optionDataTestProtocolPolice(t,
-		[]byte{
-			0, 11, 0, 5, 1,
-		}, message.Option{})
 }
 func TestIdempotenceWindowOptionData(t *testing.T) {
 	optionDataTest(t,
@@ -289,10 +252,6 @@ func TestIdempotenceWindowOptionData(t *testing.T) {
 				WindowSize: 257,
 			},
 		})
-	optionDataTestProtocolPolice(t,
-		[]byte{
-			0, 12, 0, 5, 1,
-		}, message.Option{})
 }
 func TestIdempotenceExpenditureOptionData(t *testing.T) {
 	optionDataTest(t,
@@ -305,10 +264,6 @@ func TestIdempotenceExpenditureOptionData(t *testing.T) {
 				Token: 256,
 			},
 		})
-	optionDataTestProtocolPolice(t,
-		[]byte{
-			0, 13, 0, 5, 1,
-		}, message.Option{})
 }
 func TestIdempotenceAcceptedOptionData(t *testing.T) {
 	optionDataTest(t,
@@ -318,10 +273,6 @@ func TestIdempotenceAcceptedOptionData(t *testing.T) {
 			Kind: message.OptionKindIdempotenceAccepted,
 			Data: message.IdempotenceAcceptedOptionData{},
 		})
-	optionDataTestProtocolPolice(t,
-		[]byte{
-			0, 14, 0, 5, 1,
-		}, message.Option{})
 }
 
 func TestIdempotenceRejectedOptionData(t *testing.T) {
@@ -332,8 +283,4 @@ func TestIdempotenceRejectedOptionData(t *testing.T) {
 			Kind: message.OptionKindIdempotenceRejected,
 			Data: message.IdempotenceRejectedOptionData{},
 		})
-	optionDataTestProtocolPolice(t,
-		[]byte{
-			0, 15, 0, 5, 1,
-		}, message.Option{})
 }

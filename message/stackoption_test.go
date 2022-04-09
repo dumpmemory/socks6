@@ -58,11 +58,6 @@ func TestStackOptionData(t *testing.T) {
 				},
 			},
 		})
-	optionDataTestProtocolPolice(t,
-		[]byte{
-			0, 1, 0, 8,
-			legLevel(false, false, 6), 10, 0, 0,
-		}, message.Option{})
 }
 
 func TestSetStackOptionDataParser(t *testing.T) {
@@ -171,11 +166,6 @@ func TestHappyEyeballOptionData(t *testing.T) {
 				},
 			},
 		})
-	optionDataTestProtocolPolice(t,
-		[]byte{
-			0, 1, 0, 8,
-			legLevel(false, true, 1), 2, 0, 0,
-		}, message.Option{})
 	stackOptionDataTest(t,
 		&message.HappyEyeballOptionData{
 			Availability: false,
@@ -350,12 +340,4 @@ func TestPortParityOptionData(t *testing.T) {
 			Parity:  message.StackPortParityOptionParityEven,
 			Reserve: true,
 		})
-	optionDataTestProtocolPolice(t, []byte{
-		0, 1, 0, 8,
-		legLevel(false, true, 5), 2, 0, 0,
-	}, message.Option{})
-	optionDataTestProtocolPolice(t, []byte{
-		0, 1, 0, 8,
-		legLevel(false, true, 5), 2, 9, 1,
-	}, message.Option{})
 }

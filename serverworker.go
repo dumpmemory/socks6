@@ -119,9 +119,7 @@ func (i InternetServerOutbound) ListenPacket(ctx context.Context, option message
 
 // NewServerWorker create a standard SOCKS 6 server
 func NewServerWorker() *ServerWorker {
-	defaultAuth := &auth.DefaultServerAuthenticator{
-		Methods: map[byte]auth.ServerAuthenticationMethod{},
-	}
+	defaultAuth := auth.NewServerAuthenticator()
 	defaultAuth.AddMethod(auth.NoneServerAuthenticationMethod{})
 
 	r := &ServerWorker{
@@ -173,6 +171,7 @@ func (s *ServerWorker) ServeStream(
 	ctx context.Context,
 	conn net.Conn,
 ) {
+	lg.Warning("ss")
 	closeConn := internal.NewCancellableDefer(func() {
 		conn.Close()
 	})

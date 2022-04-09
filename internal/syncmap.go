@@ -1,6 +1,8 @@
 package internal
 
-import "sync"
+import (
+	"sync"
+)
 
 type SyncMap[K comparable, V any] struct {
 	m *sync.Map
@@ -14,7 +16,8 @@ func NewSyncMap[K comparable, V any]() SyncMap[K, V] {
 
 func (s *SyncMap[K, V]) Load(key K) (value V, ok bool) {
 	v, o := s.m.Load(key)
-	return v.(V), o
+	v2, _ := v.(V)
+	return v2, o
 }
 
 func (s *SyncMap[K, V]) Store(key K, value V) {

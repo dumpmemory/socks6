@@ -28,7 +28,7 @@ func TestRequest(t *testing.T) {
 				Options:     message.NewOptionSet(),
 			}, e: nil,
 		},
-		{in: []byte{common.ProtocolVersion, 1, 0, 0}, expect: nil, e: io.ErrUnexpectedEOF},
+		{in: []byte{common.ProtocolVersion, 1, 0, 0}, expect: nil, e: io.EOF},
 		{in: []byte{common.ProtocolVersion, 1, 0, 0, 0, 0, 0, 1}, expect: nil, e: io.EOF},
 		{
 			in:     []byte{5, 1, 0, 1, 127, 0, 0, 1, 0, 0},
@@ -58,7 +58,7 @@ func TestRequest(t *testing.T) {
 	for _, tt := range tests {
 		actual, err := message.ParseRequestFrom(bytes.NewReader(tt.in))
 		if tt.e != nil {
-			assert.ErrorAs(t, err, tt.e)
+			assert.ErrorIs(t, err, tt.e)
 		} else {
 			assert.Nil(t, err)
 			assert.Equal(t, tt.expect, actual)
