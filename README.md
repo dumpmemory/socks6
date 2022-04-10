@@ -71,3 +71,44 @@ A fd based new network stack is needed in order to support them.
 - [go-shadowsocks2](https://github.com/shadowsocks/go-shadowsocks2)
 - [v2ray](https://github.com/v2fly/v2ray-core)
 - [txthinking/socks5](https://github.com/txthinking/socks5)
+
+--------
+
+## Experimental/customized features
+
+This implementation contains some experimental and customized features.
+
+Experimental features are intended to integrate to RFC.
+If they are not integrated eventually, it will either removed or become optional customized feature.
+
+Customized features are designed to improve user experience, especially under eletronic warfare scenario,
+which radar cross section (RCS) are important.
+All of these features are optional.
+
+(Radar: a device which determine some object's position and type,
+by sending some carefully constructed data then read and analysis possible reflection data.)
+
+### Consistent address format
+
+See [https://github.com/45G/socks6-draft/issues/5](https://github.com/45G/socks6-draft/issues/5)
+
+Use same address format in TCP and UDP message, to simplify address parsing. Not integrate to RFC yet, can't be disabled.
+
+### Ignore fragmented request message
+
+Optional. Used to mitigate large packet DDoS [1] attack and to help reduce server's RCS[2].
+
+Implemented by only reading from buffer when parsing request message,
+which is implemented by setting read timeout to 1us after accept connection and hope it works as intended/imagine.
+It cause reflection only occured when incoming pulse is long enough and using special modulation,
+effectively make reflection harder to occur, which in turn reduced RCS.
+
+- [1] [https://datatracker.ietf.org/doc/html/draft-olteanu-intarea-socks-6-11#section-13.1](https://datatracker.ietf.org/doc/html/draft-olteanu-intarea-socks-6-11#section-13.1)
+- [2] [https://censorbib.nymity.ch/#Alice2020a](https://censorbib.nymity.ch/#Alice2020a)
+
+### Address dependent filtering NAT (Restricted cone)
+
+Optional. In some sceneario, UDP Endpoint independent filtering (Full cone) NAT can reflect radar pulse, cause much higher RCS.
+Switch to address dependent filtering can absorb incoming radar pulse, reduce RCS sigficantly without losing critical end-to-end property too much.
+
+About UDP NAT behavior see [RFC4787](https://datatracker.ietf.org/doc/html/rfc4787)
