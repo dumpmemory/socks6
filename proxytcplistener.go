@@ -5,6 +5,7 @@ import (
 	"net"
 	"sync"
 
+	"github.com/studentmain/socks6/internal"
 	"github.com/studentmain/socks6/message"
 )
 
@@ -22,19 +23,27 @@ type ProxyTCPListener struct {
 	used bool
 }
 
+var _ net.Listener = &ProxyTCPListener{}
+
 func (t *ProxyTCPListener) Accept() (net.Conn, error) {
 	return t.AcceptContext(context.Background())
 }
 
 func (t *ProxyTCPListener) AcceptContext(ctx context.Context) (net.Conn, error) {
-	t.lock.Lock()
 	if t.used {
 		return nil, &net.OpError{}
 	}
+
+	t.lock.Lock()
+
+	unlock := internal.NewCancellableDefer(func() {
+		t.lock.Unlock()
+	})
+	defer unlock.Defer()
+
 	// read oprep2
 	oprep, err := message.ParseOperationReplyFrom(t.netConn)
 	if err != nil {
-		t.lock.Unlock()
 		return nil, err
 	}
 	cconn := ProxyTCPConn{
@@ -46,16 +55,17 @@ func (t *ProxyTCPListener) AcceptContext(ctx context.Context) (net.Conn, error) 
 	if t.backlog == 0 {
 		t.used = true
 		cconn.netConn = t.netConn
-		t.lock.Unlock()
 		return &cconn, nil
 	} else {
 		// unlock asap, BindRequest is time consuming
+		unlock.Cancel()
 		t.lock.Unlock()
-		tbc, err := t.client.BindRequest(ctx, t.bind, t.op)
+
+		subListener, err := t.client.BindRequest(ctx, t.bind, t.op)
 		if err != nil {
 			return nil, err
 		}
-		return tbc.AcceptContext(ctx)
+		return subListener.AcceptContext(ctx)
 	}
 }
 

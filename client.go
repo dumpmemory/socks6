@@ -113,14 +113,14 @@ func (c *Client) BindRequest(ctx context.Context, addr net.Addr, option *message
 		return nil, err
 	}
 	rso := message.GetStackOptionInfo(opr.Options, false)
-	bl := uint16(0)
+	backlog := uint16(0)
 	if ibl, ok := rso[message.StackOptionTCPBacklog]; ok {
-		bl = ibl.(uint16)
+		backlog = ibl.(uint16)
 	}
 
 	return &ProxyTCPListener{
 		netConn: sconn,
-		backlog: bl,
+		backlog: backlog,
 		bind:    opr.Endpoint,
 		client:  c,
 		used:    false,
@@ -154,25 +154,25 @@ func (c *Client) UDPAssociateRequest(ctx context.Context, addr net.Addr, option 
 	if err != nil {
 		return nil, err
 	}
-	uc := ProxyUDPConn{
-		overTcp: c.UDPOverTCP,
-		base:    sconn,
-		rbind:   opr.Endpoint,
+	pconn := ProxyUDPConn{
+		overTcp:  c.UDPOverTCP,
+		origConn: sconn,
+		rbind:    opr.Endpoint,
 	}
-	if uc.overTcp {
-		uc.conn = uc.base
+	if pconn.overTcp {
+		pconn.dataConn = pconn.origConn
 	} else {
-		dc, err2 := c.connectDatagram()
+		dconn, err2 := c.connectDatagram()
 		if err2 != nil {
 			return nil, &net.OpError{Op: "dial", Net: "socks6", Addr: addr, Err: err2}
 		}
-		uc.conn = dc
+		pconn.dataConn = dconn
 	}
-	err = uc.init()
+	err = pconn.init()
 	if err != nil {
-		return nil, &net.OpError{Op: "dial", Net: "socks6", Addr: addr, Source: uc.LocalAddr(), Err: err}
+		return nil, &net.OpError{Op: "dial", Net: "socks6", Addr: addr, Source: pconn.LocalAddr(), Err: err}
 	}
-	return &uc, nil
+	return &pconn, nil
 }
 
 // NoopRequest send a NOOP request

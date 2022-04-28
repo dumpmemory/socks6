@@ -18,6 +18,8 @@ type ProxyTCPConn struct {
 	addrPair
 }
 
+var _ net.Conn = &ProxyTCPConn{}
+
 // [localaddr]----netConn----[[proxyremoteaddr][proxylocaladdr]]----[remoteaddr]
 
 func (t *ProxyTCPConn) RemoteAddr() net.Addr {
@@ -25,9 +27,9 @@ func (t *ProxyTCPConn) RemoteAddr() net.Addr {
 }
 
 func (t *ProxyTCPConn) ProxyLocalAddr() net.Addr {
-	return t.addrPair.local
+	return t.local
 }
 
 func (t *ProxyTCPConn) ProxyRemoteAddr() net.Addr {
-	return t.addrPair.remote
+	return t.remote
 }

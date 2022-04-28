@@ -2,6 +2,8 @@ package socks6
 
 import (
 	"bytes"
+	"errors"
+	"math/rand"
 	"net"
 	"sync"
 	"syscall"
@@ -14,8 +16,8 @@ import (
 
 // ProxyUDPConn represents a SOCKS 6 UDP client "connection", implements net.PacketConn, net.Conn
 type ProxyUDPConn struct {
-	base       net.Conn // original tcp conn
-	conn       net.Conn // data conn
+	origConn   net.Conn // original tcp conn
+	dataConn   net.Conn // data conn
 	overTcp    bool
 	expectAddr net.Addr // expected remote addr
 	icmp       bool     // accept icmp error report
@@ -25,14 +27,14 @@ type ProxyUDPConn struct {
 	parseLock sync.Mutex // needn't write lock, write message is finished in 1 write, but read message is in many read
 	rbind     net.Addr   // remote bind addr
 
-	ackDone sync.WaitGroup
-	runAck  sync.Once
+	acked   bool
+	lastErr error // todo actually use lastErr ?
 }
 
 // init setup association
 func (u *ProxyUDPConn) init() error {
 	// read assoc init
-	a, err := message.ParseUDPMessageFrom(u.base)
+	a, err := message.ParseUDPMessageFrom(u.origConn)
 	if err != nil {
 		return err
 	}
@@ -40,39 +42,85 @@ func (u *ProxyUDPConn) init() error {
 		return ErrUnexpectedMessage
 	}
 	u.assocId = a.AssociationID
-	u.ackDone.Add(1)
+
+	// needn't wait for ACK before read data
+	// only server can send data (not true when using raw UDP, but why you use it?)
+	// if server start send data, then assoc already established
+	// ack is send over tcp:
+	// 1. won't lost
+	// 2. can be slower than data over udp
+	go u.rexmitFirstPacket()
+	go u.readAck()
+	return nil
+}
+
+func (u *ProxyUDPConn) rexmitFirstPacket() {
+	<-time.After(5 * time.Second)
+
+	// it's possible to have a "smart fallback"
+	// first try udp, if no ack, fallback to tcp
+
+	// may cause special radar reflection
+	for i := 0; i < 10; i++ {
+		// randomized timeout to somehow mitigate it
+		ms := time.Duration(rand.Intn(5000)+5000) * time.Millisecond
+		<-time.After(ms)
+		if u.acked {
+			break
+		}
+
+		msg := message.UDPMessage{
+			Type:          message.UDPMessageDatagram,
+			AssociationID: u.assocId,
+			Endpoint:      message.AddrIPv4Zero,
+			Data:          []byte{},
+		}
+		_, err := u.dataConn.Write(msg.Marshal())
+		if err != nil {
+			u.lastErr = err
+			u.Close()
+			return
+		}
+	}
+	u.lastErr = errors.New("timeout")
+}
+
+func (u *ProxyUDPConn) readAck() {
+	// block TCP read
+	u.parseLock.Lock()
+	defer u.parseLock.Unlock()
+	ack, err := message.ParseUDPMessageFrom(u.origConn)
+	failed := true
+	if err != nil {
+		u.lastErr = err
+	} else if ack.AssociationID != u.assocId {
+		u.lastErr = ErrAssociationMismatch
+	} else if ack.Type != message.UDPMessageAssociationAck {
+		u.lastErr = ErrUnexpectedMessage
+	} else {
+		failed = false
+	}
+	u.acked = true
+
+	if failed {
+		u.Close()
+		return
+	}
 
 	if !u.overTcp {
 		// tcp conn health checkers
 		go func() {
-			u.ackDone.Wait()
 			buf := make([]byte, 256)
 			for {
-				_, err := u.base.Read(buf)
-				// todo improve error report
+				_, err := u.origConn.Read(buf)
 				if err != nil {
+					u.lastErr = err
 					u.Close()
 					return
 				}
 			}
 		}()
 	}
-	return nil
-}
-
-func (u *ProxyUDPConn) readAck() error {
-	ack, err := message.ParseUDPMessageFrom(u.base)
-	if err != nil {
-		return err
-	}
-	if ack.AssociationID != u.assocId {
-		return ErrAssociationMismatch
-	}
-	if ack.Type != message.UDPMessageAssociationAck {
-		return ErrUnexpectedMessage
-	}
-	u.ackDone.Done()
-	return nil
 }
 
 // Read implements net.Conn
@@ -98,7 +146,6 @@ func (u *ProxyUDPConn) Read(p []byte) (int, error) {
 
 // ReadFrom implements net.PacketConn
 func (u *ProxyUDPConn) ReadFrom(p []byte) (int, net.Addr, error) {
-	u.ackDone.Wait()
 	cd := internal.NewCancellableDefer(func() { u.Close() })
 
 	netErr := net.OpError{
@@ -113,17 +160,20 @@ func (u *ProxyUDPConn) ReadFrom(p []byte) (int, net.Addr, error) {
 		u.parseLock.Lock()
 		defer u.parseLock.Unlock()
 
-		h2, err := message.ParseUDPMessageFrom(u.conn)
+		h2, err := message.ParseUDPMessageFrom(u.dataConn)
 		h = *h2
 		if err != nil {
 			netErr.Err = err
 			return 0, nil, &netErr
 		}
 	} else {
-		buf := internal.BytesPool64k.Rent()
-		defer internal.BytesPool64k.Return(buf)
+		// good old "UDP packet size" problem
+		// also cause some radar "reflection" (UDP is known for it's low RCS, so not a big problem)
+		// UDP allow 64k, path MTU usually not, but IP fragmentation
+		buf := internal.BytesPool4k.Rent()
+		defer internal.BytesPool4k.Return(buf)
 
-		l, err := u.conn.Read(buf)
+		l, err := u.dataConn.Read(buf)
 		if err != nil {
 			netErr.Err = err
 			return 0, nil, &netErr
@@ -136,6 +186,7 @@ func (u *ProxyUDPConn) ReadFrom(p []byte) (int, net.Addr, error) {
 		}
 	}
 
+	// silently drop to avoid DoS? is it possible or necessary (it's only possible in plaintext)?
 	if h.AssociationID != u.assocId {
 		netErr.Err = ErrAssociationMismatch
 		return 0, nil, &netErr
@@ -189,9 +240,6 @@ func (u *ProxyUDPConn) WriteTo(p []byte, addr net.Addr) (int, error) {
 		Source: u.LocalAddr(),
 		Addr:   u.ProxyRemoteAddr(),
 	}
-	u.runAck.Do(func() {
-		netErr.Err = u.readAck()
-	})
 	if netErr.Err != nil {
 		u.Close()
 		return 0, &netErr
@@ -204,7 +252,7 @@ func (u *ProxyUDPConn) WriteTo(p []byte, addr net.Addr) (int, error) {
 		Data:          p,
 	}
 
-	n, err := u.conn.Write(h.Marshal())
+	n, err := u.dataConn.Write(h.Marshal())
 	if err != nil {
 		netErr.Err = err
 		u.Close()
@@ -214,8 +262,9 @@ func (u *ProxyUDPConn) WriteTo(p []byte, addr net.Addr) (int, error) {
 }
 
 func (u *ProxyUDPConn) Close() error {
-	e1 := u.base.Close()
-	e2 := u.conn.Close()
+	u.acked = true
+	e1 := u.origConn.Close()
+	e2 := u.dataConn.Close()
 	if e1 != nil {
 		return e1
 	}
@@ -224,7 +273,7 @@ func (u *ProxyUDPConn) Close() error {
 
 // LocalAddr return client-proxy connection's client side address
 func (u *ProxyUDPConn) LocalAddr() net.Addr {
-	return u.conn.LocalAddr()
+	return u.dataConn.LocalAddr()
 }
 
 func (u *ProxyUDPConn) RemoteAddr() net.Addr {
@@ -238,17 +287,17 @@ func (u *ProxyUDPConn) ProxyBindAddr() net.Addr {
 
 // ProxyRemoteAddr return client-proxy connection's proxy side address
 func (u *ProxyUDPConn) ProxyRemoteAddr() net.Addr {
-	return u.conn.RemoteAddr()
+	return u.dataConn.RemoteAddr()
 }
 
 func (u *ProxyUDPConn) SetDeadline(t time.Time) error {
-	return u.conn.SetDeadline(t)
+	return u.dataConn.SetDeadline(t)
 }
 func (u *ProxyUDPConn) SetReadDeadline(t time.Time) error {
-	return u.conn.SetReadDeadline(t)
+	return u.dataConn.SetReadDeadline(t)
 }
 func (u *ProxyUDPConn) SetWriteDeadline(t time.Time) error {
-	return u.conn.SetWriteDeadline(t)
+	return u.dataConn.SetWriteDeadline(t)
 }
 
 func convertIcmpError(msg message.UDPMessage) error {
