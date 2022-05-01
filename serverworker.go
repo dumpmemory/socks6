@@ -3,12 +3,9 @@ package socks6
 import (
 	"bytes"
 	"context"
-	"encoding/binary"
 	"errors"
 	"io"
 	"net"
-	"os"
-	"syscall"
 	"time"
 
 	"github.com/studentmain/socks6/auth"
@@ -18,8 +15,6 @@ import (
 	"github.com/studentmain/socks6/internal/socket"
 	"github.com/studentmain/socks6/message"
 	"golang.org/x/net/icmp"
-	"golang.org/x/net/ipv4"
-	"golang.org/x/net/ipv6"
 )
 
 type CommandHandler func(
@@ -171,7 +166,6 @@ func (s *ServerWorker) ServeStream(
 	ctx context.Context,
 	conn net.Conn,
 ) {
-	lg.Warning("ss")
 	closeConn := internal.NewCancellableDefer(func() {
 		conn.Close()
 	})
@@ -504,6 +498,9 @@ func (s *ServerWorker) BindHandler(
 		case <-time.After(60 * time.Second):
 		case <-ctx.Done():
 		}
+		// can always close listener after 60s
+		// in normal condition, listener accept exactly 1 conn, then close, another close call is unnecessary but safe
+		// in error condition, of course close listener
 		listener.Close()
 	}()
 
@@ -664,8 +661,10 @@ func (s *ServerWorker) ForwardICMP(ctx context.Context, msg *icmp.Message, ip *n
 func (s *ServerWorker) ClearUnusedResource(ctx context.Context) {
 	stop := false
 
+	ctx2, cancel := context.WithCancel(ctx)
+	defer cancel()
 	go func() {
-		<-ctx.Done()
+		<-ctx2.Done()
 		stop = true
 	}()
 	tick := time.NewTicker(1 * time.Minute)
@@ -707,47 +706,6 @@ func setSessionId(oprep *message.OperationReply, id []byte) *message.OperationRe
 	return oprep
 }
 
-// getReplyCode convert dial error to socks6 error code
-func getReplyCode(err error) message.ReplyCode {
-	if err == nil {
-		return message.OperationReplySuccess
-	}
-	netErr, ok := err.(net.Error)
-	if !ok {
-		lg.Warning(err)
-		return message.OperationReplyServerFailure
-	}
-	if netErr.Timeout() {
-		return message.OperationReplyTimeout
-	}
-	opErr, ok := netErr.(*net.OpError)
-	if !ok {
-		return message.OperationReplyServerFailure
-	}
-
-	switch t := opErr.Err.(type) {
-	case *os.SyscallError:
-		errno, ok := t.Err.(syscall.Errno)
-		if !ok {
-			return message.OperationReplyServerFailure
-		}
-		// windows use windows.WSAExxxx error code, so this is necessary
-		switch common.ConvertSocketErrno(errno) {
-		case syscall.ENETUNREACH:
-			return message.OperationReplyNetworkUnreachable
-		case syscall.EHOSTUNREACH:
-			return message.OperationReplyHostUnreachable
-		case syscall.ECONNREFUSED:
-			return message.OperationReplyConnectionRefused
-		case syscall.ETIMEDOUT:
-			return message.OperationReplyTimeout
-		default:
-			return message.OperationReplyServerFailure
-		}
-	}
-	return message.OperationReplyServerFailure
-}
-
 func setAuthMethodInfo(arep *message.AuthenticationReply, result auth.ServerAuthenticationResult) *message.AuthenticationReply {
 	if result.SelectedMethod != 0 && result.SelectedMethod != 0xff {
 		arep.Options.Add(message.Option{
@@ -767,136 +725,4 @@ func setAuthMethodInfo(arep *message.AuthenticationReply, result auth.ServerAuth
 		})
 	}
 	return arep
-}
-
-var protocolWithPort = map[int]bool{
-	6:   true, // tcp
-	17:  true, // udp
-	33:  true, // dccp
-	132: true, // sctp
-}
-
-func parseSrcDstAddrFromIPHeader(b []byte, v int) (*message.SocksAddr, *message.SocksAddr, int, error) {
-	switch v {
-	case 4:
-		hd, err := icmp.ParseIPv4Header(b)
-		if err != nil {
-			return nil, nil, 0, err
-		}
-		if _, ok := protocolWithPort[hd.Protocol]; !ok {
-			return nil, nil, 0, errors.New("protocol not supported")
-		}
-		if len(b) < hd.Len+4 {
-			return nil, nil, 0, errors.New("port field not exist")
-		}
-		data := b[hd.Len:]
-		s := message.SocksAddr{
-			AddressType: message.AddressTypeIPv4,
-			Address:     hd.Src.To4(),
-			Port:        binary.BigEndian.Uint16(data),
-		}
-		d := message.SocksAddr{
-			AddressType: message.AddressTypeIPv4,
-			Address:     hd.Dst.To4(),
-			Port:        binary.BigEndian.Uint16(data[2:]),
-		}
-		return &s, &d, hd.Protocol, nil
-	case 6:
-		hd, err := ipv6.ParseHeader(b)
-		if err != nil {
-			return nil, nil, 0, err
-		}
-		if _, ok := protocolWithPort[hd.NextHeader]; !ok {
-			return nil, nil, 0, errors.New("protocol not supported")
-		}
-		if len(b) < ipv6.HeaderLen+4 {
-			return nil, nil, 0, errors.New("port field not exist")
-		}
-		data := b[ipv6.HeaderLen:]
-		s := message.SocksAddr{
-			AddressType: message.AddressTypeIPv6,
-			Address:     hd.Src,
-			Port:        binary.BigEndian.Uint16(data),
-		}
-		d := message.SocksAddr{
-			AddressType: message.AddressTypeIPv6,
-			Address:     hd.Dst,
-			Port:        binary.BigEndian.Uint16(data[2:]),
-		}
-		return &s, &d, hd.NextHeader, nil
-	default:
-		return nil, nil, 0, errors.New("what ip version?")
-	}
-}
-
-func convertICMPError(msg *icmp.Message, ip *net.IPAddr, ver int,
-) (message.UDPErrorType, *message.SocksAddr, []byte) {
-	var code message.UDPErrorType = 0
-	var reporter *message.SocksAddr
-	// map icmp message to socks6 addresses and code
-	hdr := []byte{}
-
-	switch ver {
-	case 4:
-		reporter = &message.SocksAddr{
-			AddressType: message.AddressTypeIPv4,
-			Address:     ip.IP.To4(),
-		}
-
-		switch msg.Type {
-		case ipv4.ICMPTypeDestinationUnreachable:
-			switch msg.Code {
-			case 0:
-				code = message.UDPErrorNetworkUnreachable
-			case 1:
-				code = message.UDPErrorHostUnreachable
-			default:
-				return 0, nil, nil
-			}
-			m2 := msg.Body.(*icmp.DstUnreach)
-			hdr = m2.Data
-		case ipv4.ICMPTypeTimeExceeded:
-			switch msg.Code {
-			case 0:
-				code = message.UDPErrorTTLExpired
-			default:
-				return 0, nil, nil
-			}
-			m2 := msg.Body.(*icmp.TimeExceeded)
-			hdr = m2.Data
-		}
-	case 6:
-		reporter = &message.SocksAddr{
-			AddressType: message.AddressTypeIPv6,
-			Address:     ip.IP.To16(),
-		}
-
-		switch msg.Type {
-		case ipv6.ICMPTypeDestinationUnreachable:
-			switch msg.Code {
-			case 0:
-				code = message.UDPErrorNetworkUnreachable
-			case 3:
-				code = message.UDPErrorHostUnreachable
-			default:
-				return 0, nil, nil
-			}
-			m2 := msg.Body.(*icmp.DstUnreach)
-			hdr = m2.Data
-		case ipv6.ICMPTypeTimeExceeded:
-			switch msg.Code {
-			case 0:
-				code = message.UDPErrorTTLExpired
-			default:
-				return 0, nil, nil
-			}
-			m2 := msg.Body.(*icmp.TimeExceeded)
-			hdr = m2.Data
-		case ipv6.ICMPTypePacketTooBig:
-			code = message.UDPErrorDatagramTooBig
-			m2 := msg.Body.(*icmp.TimeExceeded)
-			hdr = m2.Data
-		}
-	}
-	return code, reporter, hdr
 }

@@ -4,7 +4,6 @@ import (
 	"log"
 	"syscall"
 
-	"github.com/studentmain/socks6/message"
 	"golang.org/x/sys/windows"
 )
 

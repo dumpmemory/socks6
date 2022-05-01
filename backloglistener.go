@@ -101,9 +101,11 @@ func (b *backlogListener) worker(ctx context.Context) {
 			}
 		}
 	}()
+	ctx2, cancel := context.WithCancel(ctx)
+	defer cancel()
 	// close self when context done
 	go func() {
-		<-ctx.Done()
+		<-ctx2.Done()
 		b.close(ctx.Err())
 	}()
 	// accept loop
@@ -114,8 +116,11 @@ func (b *backlogListener) worker(ctx context.Context) {
 
 // close close listener and initial connection
 func (b *backlogListener) close(err error) {
+	if !b.alive {
+		return
+	}
+	b.alive = false
 	lg.Warning("close backlog listener", err)
 	b.listener.Close()
 	b.cc.Conn.Close()
-	b.alive = false
 }
