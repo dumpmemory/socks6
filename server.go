@@ -67,10 +67,9 @@ func (s *Server) Start(ctx context.Context) {
 		s.startICMP(ctx)
 	}
 	go s.Worker.ClearUnusedResource(ctx)
-	ctx2, cancel := context.WithCancel(ctx)
-	defer cancel()
 	go func() {
-		<-ctx2.Done()
+		<-ctx.Done()
+		lg.Info("closing all listeners")
 		for _, v := range s.listeners {
 			err := v.Close()
 			if err != nil {

@@ -1,10 +1,8 @@
 package internal
 
 import (
-	"io"
 	"sort"
 
-	"github.com/stretchr/testify/assert"
 	"github.com/studentmain/socks6/common/lg"
 )
 
@@ -30,13 +28,6 @@ func Must2[T any](v T, e error) T {
 		lg.Panic(e)
 	}
 	return v
-}
-
-func AssertRead(t assert.TestingT, r io.Reader, b []byte) {
-	b2 := Dup(b)
-	_, err := io.ReadFull(r, b2)
-	assert.Nil(t, err)
-	assert.Equal(t, b, b2)
 }
 
 type CancellableDefer struct {

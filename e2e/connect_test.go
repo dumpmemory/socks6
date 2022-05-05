@@ -10,24 +10,24 @@ import (
 )
 
 func TestConnect(t *testing.T) {
+	e2etool.WatchDog()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	echoAddr, _ := e2etool.GetAddr()
 	go e2etool.ServeTCP(ctx, echoAddr, e2etool.Echo)
-
 	sAddr, sPort := e2etool.GetAddr()
-	s := socks6.Server{
+	server := socks6.Server{
 		Address:       "127.0.0.1",
 		CleartextPort: sPort,
 		Worker:        socks6.NewServerWorker(),
 	}
-	s.Start(ctx)
-	c := socks6.Client{
+	server.Start(ctx)
+	client := socks6.Client{
 		Server:     sAddr,
 		Encrypted:  false,
 		UseSession: false,
 	}
-	fd, err := c.Dial("tcp", echoAddr)
+	fd, err := client.Dial("tcp", echoAddr)
 	assert.NoError(t, err)
 	fd.Write([]byte{1})
 	buf := make([]byte, 10)

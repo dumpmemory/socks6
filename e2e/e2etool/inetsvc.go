@@ -5,6 +5,7 @@ import (
 	"io"
 	"net"
 
+	"github.com/studentmain/socks6/common/lg"
 	"github.com/studentmain/socks6/internal"
 )
 
@@ -56,7 +57,11 @@ func ServeTCP(ctx context.Context, addr string, f func(io.ReadWriteCloser)) {
 		s.Close()
 	}()
 	for {
-		fd := internal.Must2(s.Accept())
+		fd, err := s.Accept()
+		if err != nil {
+			lg.Info("stop e2etool server", err)
+			return
+		}
 		go f(fd)
 	}
 }

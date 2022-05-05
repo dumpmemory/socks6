@@ -93,12 +93,15 @@ func (c *Client) ConnectRequest(ctx context.Context, addr string, initData []byt
 }
 
 func (c *Client) BindRequest(ctx context.Context, addr net.Addr, option *message.OptionSet) (*ProxyTCPListener, error) {
+	if option == nil {
+		option = message.NewOptionSet()
+	}
 	if c.Backlog > 0 {
 		option.Add(message.Option{
 			Kind: message.OptionKindStack,
 			Data: message.BaseStackOptionData{
-				ClientLeg: true,
-				RemoteLeg: false,
+				ClientLeg: false,
+				RemoteLeg: true,
 				Level:     message.StackOptionLevelTCP,
 				Code:      message.StackOptionCodeBacklog,
 				Data: &message.BacklogOptionData{

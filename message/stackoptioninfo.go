@@ -3,9 +3,16 @@ package message
 type StackOptionInfo map[int]interface{}
 
 func getStackOptions(options *OptionSet, clientLeg bool) []Option {
-	return options.GetKindF(OptionKindStack, func(o Option) bool {
+	fn := func(o Option) bool {
 		return o.Data.(BaseStackOptionData).RemoteLeg
-	})
+	}
+
+	if clientLeg {
+		fn = func(o Option) bool {
+			return o.Data.(BaseStackOptionData).ClientLeg
+		}
+	}
+	return options.GetKindF(OptionKindStack, fn)
 }
 func GetStackOptionInfo(ops *OptionSet, clientLeg bool) StackOptionInfo {
 	rso := StackOptionInfo{}
@@ -63,6 +70,8 @@ func getOptionFromData(id int, data interface{}, clientLeg bool, remoteLeg bool)
 		sod = &UDPErrorOptionData{}
 	case StackOptionUDPPortParity:
 		sod = &PortParityOptionData{}
+	case StackOptionTCPBacklog:
+		sod = &BacklogOptionData{}
 	}
 	sod.SetData(data)
 	lv, code := SplitStackOptionID(id)
