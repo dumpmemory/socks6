@@ -1,4 +1,4 @@
-package auth
+package e2etool
 
 import (
 	"context"
@@ -6,6 +6,7 @@ import (
 	"io"
 	"net"
 
+	"github.com/studentmain/socks6/auth"
 	"github.com/studentmain/socks6/message"
 )
 
@@ -18,13 +19,13 @@ func (f FakeEchoServerAuthenticationMethod) Authenticate(
 	ctx context.Context,
 	conn net.Conn,
 	data []byte,
-	sac *ServerAuthenticationChannels,
+	sac *auth.ServerAuthenticationChannels,
 ) {
 	buf := []byte{0}
 	rand.Read(buf)
 	expected := buf[0]
 
-	sac.Result <- ServerAuthenticationResult{
+	sac.Result <- auth.ServerAuthenticationResult{
 		Success:    false,
 		MethodData: buf,
 		Continue:   true,
@@ -39,11 +40,11 @@ func (f FakeEchoServerAuthenticationMethod) Authenticate(
 		sac.Err <- err
 	}
 	if expected != buf[0] {
-		sac.Result <- ServerAuthenticationResult{
+		sac.Result <- auth.ServerAuthenticationResult{
 			Success: false,
 		}
 	} else {
-		sac.Result <- ServerAuthenticationResult{
+		sac.Result <- auth.ServerAuthenticationResult{
 			Success: true,
 		}
 	}
@@ -58,7 +59,7 @@ type FakeEchoClientAuthenticationMethod struct{}
 func (f FakeEchoClientAuthenticationMethod) Authenticate(
 	ctx context.Context,
 	conn net.Conn,
-	cac ClientAuthenticationChannels,
+	cac auth.ClientAuthenticationChannels,
 ) {
 	cac.Data <- []byte{}
 	rep1 := <-cac.FirstAuthReply

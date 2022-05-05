@@ -364,7 +364,7 @@ func (c *Client) authn(ctx context.Context, req message.Request, sconn net.Conn,
 	}
 	if cac != nil {
 		// write 1st reply
-		cac.FirstAuthReply <- finalRep
+		cac.FirstAuthReply <- aurep1
 		// read error and reply
 		err := <-cac.Error
 		finalRep = <-cac.FinalAuthReply
