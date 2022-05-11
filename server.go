@@ -41,6 +41,7 @@ type canClose interface {
 }
 
 func (s *Server) Start(ctx context.Context) {
+	lg.Info("start SOCKS 6 listener")
 	if s.Worker == nil {
 		s.Worker = NewServerWorker()
 	}

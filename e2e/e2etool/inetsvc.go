@@ -10,8 +10,8 @@ import (
 )
 
 func Echo(c io.ReadWriteCloser) {
-	b := internal.BytesPool4k.Rent()
-	defer internal.BytesPool4k.Return(b)
+	b := internal.BytesPool64k.Rent()
+	defer internal.BytesPool64k.Return(b)
 	defer c.Close()
 	for {
 		n, err := c.Read(b)

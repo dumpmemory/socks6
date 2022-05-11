@@ -3,6 +3,7 @@ package e2e_test
 import (
 	"context"
 	"net"
+	"sync"
 	"testing"
 	"time"
 
@@ -49,6 +50,8 @@ func TestBind(t *testing.T) {
 	e2etool.AssertRead(t, clientFd, []byte{1})
 	assert.EqualValues(t, 1, n)
 	assert.NoError(t, err)
+	e2etool.AssertForward2(t, clientFd, testFd)
+
 	testFd.Close()
 	e2etool.AssertClosed(t, clientFd)
 }
@@ -89,19 +92,25 @@ func TestBacklogBind(t *testing.T) {
 	clientFd2, err := cListener.Accept()
 	assert.NoError(t, err)
 
-	_, err = clientFd1.Write([]byte{1})
-	assert.NoError(t, err)
-	e2etool.AssertRead(t, testFd1, []byte{1})
+	e2etool.AssertForward2(t, clientFd1, testFd1)
+	e2etool.AssertForward2(t, clientFd2, testFd2)
 
-	_, err = clientFd2.Write([]byte{1})
-	assert.NoError(t, err)
-	e2etool.AssertRead(t, testFd2, []byte{1})
+	wg := sync.WaitGroup{}
+	wg.Add(2)
+	go func() {
+		e2etool.AssertForward2(t, clientFd1, testFd1)
+		wg.Done()
+	}()
+	go func() {
+		e2etool.AssertForward2(t, clientFd2, testFd2)
+		wg.Done()
+	}()
+	wg.Wait()
 
 	clientFd2.Close()
+	e2etool.AssertClosed(t, testFd2)
 
-	_, err = clientFd1.Write([]byte{1})
-	assert.NoError(t, err)
-	e2etool.AssertRead(t, testFd1, []byte{1})
-
+	e2etool.AssertForward2(t, clientFd1, testFd1)
 	testFd1.Close()
+	e2etool.AssertClosed(t, clientFd1)
 }

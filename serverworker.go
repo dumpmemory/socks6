@@ -173,9 +173,11 @@ func (s *ServerWorker) ServeStream(
 
 	ccid := conn3Tuple(conn)
 
+	lg.Trace(ccid, "start processing")
 	// create a wrapper reader if necessary
 	var conn1 io.Reader = conn
 	if s.IgnoreFragmentedRequest {
+		lg.Debug("ignore fragmented request")
 		conn1 = &common.NetBufferOnlyReader{Conn: conn}
 	}
 
@@ -185,7 +187,8 @@ func (s *ServerWorker) ServeStream(
 		s.handleRequestError(ctx, conn, err)
 		return
 	}
-	lg.Tracef("request from %s, %+v", ccid, req)
+	lg.Tracef("%s requested command %d, %s", ccid, req.CommandCode, req.Endpoint)
+	lg.Debugf("%s requested %+v", ccid, req)
 
 	var initData []byte
 	if am, ok := req.Options.GetData(message.OptionKindAuthenticationMethodAdvertisement); ok {
@@ -250,11 +253,14 @@ func (s *ServerWorker) handleRequestError(
 	defer conn.Close()
 	// detect and reply addr not support early, as auth can't continue
 	if errors.Is(err, message.ErrAddressTypeNotSupport) {
+		lg.Debugf("%s atyp not supported, fire and forget error reply", conn3Tuple(conn))
+
+		// todo really failed? need clarify. no addr type = no message border info = can't authn at all
 		conn.Write(message.NewAuthenticationReplyWithType(message.AuthenticationReplyFail).Marshal())
 		conn.Write(message.NewOperationReplyWithCode(message.OperationReplyAddressNotSupported).Marshal())
 		return
 	} else {
-		lg.Warningf("can't parse request from %s, %+v", conn3Tuple(conn), err)
+		lg.Warning(conn3Tuple(conn), "can't parse request", err)
 		return
 	}
 }
@@ -272,7 +278,7 @@ func (s *ServerWorker) authn(
 		// one stage auth, success
 		auth = *result1
 		reply := setAuthMethodInfo(message.NewAuthenticationReplyWithType(message.AuthenticationReplySuccess), *result1)
-		lg.Debugf("%s authenticate %+v , %+v", ccid, auth, reply)
+		lg.Debugf("%s authenticate %+v, %+v", ccid, auth, reply)
 		if _, err := conn.Write(reply.Marshal()); err != nil {
 			lg.Warning(ccid, "can't write auth reply", err)
 			return nil
@@ -399,6 +405,7 @@ func (s *ServerWorker) ConnectHandler(
 	code := getReplyCode(err)
 
 	if code != message.OperationReplySuccess {
+		lg.Warningf("%s dial to %s failed %+v", cc.ConnId(), cc.Destination(), err)
 		cc.WriteReplyCode(code)
 		return
 	}

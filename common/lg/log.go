@@ -23,8 +23,8 @@ var levelPrefix = map[Level]string{
 	LvFatal:   "Fatal",
 	LvPanic:   "Panic",
 	LvError:   "Error",
-	LvWarning: "Warning",
-	LvInfo:    "Info",
+	LvWarning: "Warn ",
+	LvInfo:    "Info ",
 	LvTrace:   "Trace",
 	LvDebug:   "Debug",
 }
@@ -34,6 +34,24 @@ type Logger func(lv Level, str string)
 var Backend Logger = func(lv Level, str string) {
 	msg := PrependLevel(lv, str)
 	log.Output(4, msg)
+}
+
+var levelColorPrefix = map[Level]string{
+	LvFatal:   "97;101",
+	LvPanic:   "97;101",
+	LvError:   "31",
+	LvWarning: "33",
+	LvInfo:    "34",
+	LvTrace:   "37",
+	LvDebug:   "90",
+}
+
+func coloredLogger(lv Level, str string) {
+	log.Output(4, fmt.Sprintf("\x1b[%sm[%s] \x1b[0m", levelColorPrefix[lv], levelPrefix[lv])+str)
+}
+
+func EnableColor() {
+	Backend = coloredLogger
 }
 
 var MinimalLevel Level = LvInfo

@@ -32,6 +32,8 @@ type SocksAddr struct {
 	Port uint16
 }
 
+var _ net.Addr = &SocksAddr{}
+
 // AddrIPv4Zero is 0.0.0.0:0 in SocksAddr format
 var AddrIPv4Zero *SocksAddr = &SocksAddr{
 	AddressType: AddressTypeIPv4,
@@ -143,12 +145,12 @@ func NewAddr(address string) (*SocksAddr, error) {
 	}, nil
 }
 
-// Network implements net.Conn, always return "socks"
+// Network implements net.Addr, always return "socks"
 func (a *SocksAddr) Network() string {
 	return "socks"
 }
 
-// String implements net.Conn
+// String implements net.Addr
 func (a *SocksAddr) String() string {
 	var h string
 	switch a.AddressType {
@@ -160,7 +162,9 @@ func (a *SocksAddr) String() string {
 	return net.JoinHostPort(h, strconv.FormatInt(int64(a.Port), 10))
 }
 
+// Marshal6 serialize to socks 6 wireformat
 func (a *SocksAddr) Marshal6(pad byte) []byte {
+	lg.Debugf("serialize socks 6 address %+v, padding %d", a, pad)
 	b := &bytes.Buffer{}
 	binary.Write(b, binary.BigEndian, a.Port)
 	b.WriteByte(pad)
@@ -170,6 +174,7 @@ func (a *SocksAddr) Marshal6(pad byte) []byte {
 	if a.AddressType == AddressTypeDomainName {
 		l := 1 + len(a.Address)
 		total := internal.PaddedLen(l, 4)
+		lg.Debug("serialize socks 6 address domain name, padding %d to %d", total, l)
 		if total > 255 {
 			lg.Panic("address too long")
 		}
@@ -180,10 +185,15 @@ func (a *SocksAddr) Marshal6(pad byte) []byte {
 	if npad > 0 {
 		b.Write(make([]byte, npad))
 	}
-	return b.Bytes()
+
+	ret := b.Bytes()
+	lg.Debugf("serialize socks 6 address %+v to %+v", a, ret)
+	return ret
 }
 
+// ParseSocksAddr6FromWithLimit parse socks 6 address with border check
 func ParseSocksAddr6FromWithLimit(b io.Reader, limit int) (addr *SocksAddr, pad byte, nConsume int, err error) {
+	lg.Debugf("read socks 6 address withing %d byte", limit)
 	if limit <= 4 {
 		return nil, 0, 0, ErrBufferSize
 	}
@@ -192,11 +202,13 @@ func ParseSocksAddr6FromWithLimit(b io.Reader, limit int) (addr *SocksAddr, pad 
 	if _, err := io.ReadFull(b, buf[:4]); err != nil {
 		return nil, 0, 0, err
 	}
+	lg.Debug("read socks 6 address port padding atyp", buf[:4])
 	addr.Port = binary.BigEndian.Uint16(buf)
 	padding := buf[2]
 	addr.AddressType = AddressType(buf[3])
 
 	if addr.AddressType == AddressTypeDomainName {
+		lg.Debug("read socks 6 address domain name")
 		// domain name
 		// read length
 		if limit <= 5 {
@@ -205,6 +217,7 @@ func ParseSocksAddr6FromWithLimit(b io.Reader, limit int) (addr *SocksAddr, pad 
 		if _, err := io.ReadFull(b, buf[:1]); err != nil {
 			return nil, 0, 0, err
 		}
+		lg.Debug("read socks 6 address domain name length", buf[0])
 		l := buf[0]
 		if int(l)+5 >= limit {
 			return nil, 0, 0, ErrBufferSize
@@ -213,10 +226,14 @@ func ParseSocksAddr6FromWithLimit(b io.Reader, limit int) (addr *SocksAddr, pad 
 		if _, err := io.ReadFull(b, buf[:l]); err != nil {
 			return nil, 0, 0, err
 		}
+		lg.Debug("read socks 6 address domain raw", buf[:l])
 		// remove padding
 		addr.Address = bytes.Trim(buf[:l], "\x00")
+		lg.Debug("read socks 6 address domain trimmed", addr.Address)
+		lg.Debugf("read socks 6 address %+v, padding %d, used %d", addr, padding, int(l)+5)
 		return addr, padding, int(l) + 5, nil
 	} else {
+		lg.Debug("read socks 6 address ip")
 		// ip
 		l := 4
 		// determine reading length
@@ -237,15 +254,20 @@ func ParseSocksAddr6FromWithLimit(b io.Reader, limit int) (addr *SocksAddr, pad 
 			return nil, 0, 0, err
 		}
 		addr.Address = internal.Dup(buf[:l])
+		lg.Debug("read socks 6 address ip", addr.Address)
+		lg.Debugf("read socks 6 address %+v, padding %d, used %d", addr, padding, int(l)+4)
 		return addr, padding, int(l) + 4, nil
 	}
 }
 
+// ParseSocksAddr6FromWithLimit parse socks 6 address with border set to 260 byte
 func ParseSocksAddr6From(b io.Reader) (addr *SocksAddr, pad byte, nConsume int, err error) {
 	return ParseSocksAddr6FromWithLimit(b, 260)
 }
 
 func (a *SocksAddr) Marshal5() []byte {
+	lg.Debugf("serialize socks 5 address %+v", a)
+
 	b := &bytes.Buffer{}
 	b.WriteByte(byte(a.AddressType))
 
@@ -258,15 +280,22 @@ func (a *SocksAddr) Marshal5() []byte {
 	}
 	b.Write(a.Address)
 	binary.Write(b, binary.BigEndian, a.Port)
-	return b.Bytes()
+
+	ret := b.Bytes()
+	lg.Debugf("serialize socks 5 address %+v to %+v", a, ret)
+	return ret
 }
 
 func ParseSocksAddr5From(b io.Reader) (*SocksAddr, error) {
+	lg.Debug("read socks 5 address")
+
 	buf := make([]byte, 256)
 	a := &SocksAddr{}
 	if _, err := io.ReadFull(b, buf[:1]); err != nil {
 		return nil, err
 	}
+	lg.Debug("read socks 5 address atyp", buf[0])
+
 	a.AddressType = AddressType(buf[0])
 	l := byte(4)
 
@@ -276,6 +305,7 @@ func ParseSocksAddr5From(b io.Reader) (*SocksAddr, error) {
 		}
 		l = buf[0]
 
+		lg.Debug("read socks 5 address domain name length", l)
 	} else {
 		switch a.AddressType {
 		case AddressTypeIPv6:
@@ -289,7 +319,9 @@ func ParseSocksAddr5From(b io.Reader) (*SocksAddr, error) {
 	if _, err := io.ReadFull(b, buf[:l+2]); err != nil {
 		return nil, err
 	}
+	lg.Debug("read socks 5 address host port", buf[:l+2])
 	a.Address = internal.Dup(buf[:l])
 	a.Port = binary.BigEndian.Uint16(buf[l:])
+	lg.Debug("read socks 5 address", a)
 	return a, nil
 }

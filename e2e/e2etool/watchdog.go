@@ -5,7 +5,7 @@ import (
 )
 
 func WatchDog() {
-	wd(1 * time.Hour)
+	wd(1 * time.Second)
 }
 
 func WatchDog10s() {

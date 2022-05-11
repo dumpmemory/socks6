@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"io"
 
+	"github.com/studentmain/socks6/common/lg"
 	"github.com/studentmain/socks6/internal"
 )
 
@@ -35,6 +36,7 @@ func NewRequest() *Request {
 	}
 }
 func ParseRequestFrom(b io.Reader) (*Request, error) {
+	lg.Debug("read request")
 	r := &Request{}
 	buf := internal.BytesPool64k.Rent()
 	defer internal.BytesPool64k.Return(buf)
@@ -42,6 +44,8 @@ func ParseRequestFrom(b io.Reader) (*Request, error) {
 	if _, err := io.ReadFull(b, buf[:1]); err != nil {
 		return nil, err
 	}
+	lg.Debug("read request version", buf[0])
+
 	if buf[0] != protocolVersion {
 		return r, ErrVersionMismatch{Version: int(buf[0]), ConsumedBytes: buf[:1]}
 	}
@@ -49,6 +53,7 @@ func ParseRequestFrom(b io.Reader) (*Request, error) {
 	if _, err := io.ReadFull(b, buf[1:4]); err != nil {
 		return nil, err
 	}
+	lg.Debug("read request command optionsize", buf[:4])
 
 	r.CommandCode = CommandCode(buf[1])
 	optLen := binary.BigEndian.Uint16(buf[2:])
@@ -58,15 +63,18 @@ func ParseRequestFrom(b io.Reader) (*Request, error) {
 		return nil, err
 	}
 	r.Endpoint = addr
+	lg.Debug("read request addr", addr)
 
 	ops, err := ParseOptionSetFrom(b, int(optLen))
 	if err != nil {
 		return nil, err
 	}
 	r.Options = ops
+	lg.Debug("read request option", ops)
 	return r, nil
 }
 func (r *Request) Marshal() (buf []byte) {
+	lg.Debug("serialize request")
 	ops := []byte{}
 	if r.Options != nil {
 		ops = r.Options.Marshal()
@@ -79,6 +87,9 @@ func (r *Request) Marshal() (buf []byte) {
 
 	b.Write(r.Endpoint.Marshal6(0))
 	b.Write(ops)
+
+	ret := b.Bytes()
+	lg.Debugf("serialize request %+v to %+v", r, ret)
 	return b.Bytes()
 }
 
@@ -105,6 +116,8 @@ func NewAuthenticationReplyWithType(typ AuthenticationReplyType) *Authentication
 	return ar
 }
 func (a *AuthenticationReply) Marshal() []byte {
+	lg.Debug("serialize auth reply", a)
+
 	ops := a.Options.Marshal()
 	b := bytes.Buffer{}
 
@@ -113,7 +126,10 @@ func (a *AuthenticationReply) Marshal() []byte {
 	binary.Write(&b, binary.BigEndian, uint16(len(ops)))
 
 	b.Write(ops)
-	return b.Bytes()
+
+	ret := b.Bytes()
+	lg.Debugf("serialize auth reply %+v to %+v", a, ret)
+	return ret
 }
 func ParseAuthenticationReplyFrom(b io.Reader) (*AuthenticationReply, error) {
 	a := &AuthenticationReply{}
@@ -173,6 +189,8 @@ func NewOperationReplyWithCode(code ReplyCode) *OperationReply {
 	return rep
 }
 func (o *OperationReply) Marshal() []byte {
+	lg.Debug("serialize op reply", o)
+
 	ops := o.Options.Marshal()
 
 	b := bytes.Buffer{}
@@ -183,7 +201,9 @@ func (o *OperationReply) Marshal() []byte {
 
 	b.Write(o.Endpoint.Marshal6(0))
 	b.Write(ops)
-	return b.Bytes()
+	ret := b.Bytes()
+	lg.Debugf("serialize op reply %+v to %+v", o, ret)
+	return ret
 }
 func ParseOperationReplyFrom(b io.Reader) (*OperationReply, error) {
 	r := &OperationReply{}

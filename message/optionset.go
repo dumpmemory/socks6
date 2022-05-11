@@ -1,6 +1,9 @@
 package message
 
-import "io"
+import (
+	"fmt"
+	"io"
+)
 
 type OptionSet struct {
 	perKind map[OptionKind][]Option
@@ -8,6 +11,10 @@ type OptionSet struct {
 
 	cached bool
 	cache  []byte
+}
+
+func (s OptionSet) String() string {
+	return fmt.Sprintf("OptionSet%+v", s.list)
 }
 
 func NewOptionSet() *OptionSet {

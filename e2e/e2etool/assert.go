@@ -1,7 +1,9 @@
 package e2etool
 
 import (
+	"bytes"
 	"io"
+	"sync"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -36,4 +38,37 @@ func AssertClosed(t assert.TestingT, r io.Reader) {
 	n, err := r.Read(b)
 	assert.EqualValues(t, 0, n)
 	assert.Error(t, err)
+}
+
+func AssertForward(t assert.TestingT, r io.Reader, w io.Writer) {
+	l := 1024 * 1024
+	data := internal.RandBytes(l)
+
+	wg := sync.WaitGroup{}
+	wg.Add(2)
+	go func() {
+		AssertRead(t, r, data)
+		wg.Done()
+	}()
+	go func() {
+		n, err := io.Copy(w, bytes.NewReader(data))
+		assert.EqualValues(t, l, n)
+		assert.NoError(t, err)
+		wg.Done()
+	}()
+	wg.Wait()
+}
+
+func AssertForward2(t assert.TestingT, n1, n2 io.ReadWriteCloser) {
+	wg := sync.WaitGroup{}
+	wg.Add(2)
+	go func() {
+		AssertForward(t, n1, n2)
+		wg.Done()
+	}()
+	go func() {
+		AssertForward(t, n2, n1)
+		wg.Done()
+	}()
+	wg.Wait()
 }
