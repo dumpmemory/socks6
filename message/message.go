@@ -47,7 +47,7 @@ func ParseRequestFrom(b io.Reader) (*Request, error) {
 	lg.Debug("read request version", buf[0])
 
 	if buf[0] != protocolVersion {
-		return r, ErrVersionMismatch{Version: int(buf[0]), ConsumedBytes: buf[:1]}
+		return r, NewErrVersionMismatch(int(buf[0]), buf[:1])
 	}
 	// ver cc opLen2
 	if _, err := io.ReadFull(b, buf[1:4]); err != nil {
@@ -90,6 +90,52 @@ func (r *Request) Marshal() (buf []byte) {
 
 	ret := b.Bytes()
 	lg.Debugf("serialize request %+v to %+v", r, ret)
+	return b.Bytes()
+}
+
+func ParseRequest5From(b io.Reader) (*Request, error) {
+	lg.Debug("read request5")
+	r := &Request{}
+	buf := internal.BytesPool64k.Rent()
+	defer internal.BytesPool64k.Return(buf)
+
+	if _, err := io.ReadFull(b, buf[:1]); err != nil {
+		return nil, err
+	}
+	lg.Debug("read request5 version", buf[0])
+
+	if buf[0] != Socks5Version {
+		return r, ErrVersionMismatch{Version: int(buf[0]), ConsumedBytes: buf[:1]}
+	}
+	// ver cc opLen2
+	if _, err := io.ReadFull(b, buf[1:2]); err != nil {
+		return nil, err
+	}
+	lg.Debug("read request5 command", buf[:4])
+
+	r.CommandCode = CommandCode(buf[1])
+	addr, err := ParseSocksAddr5From(b)
+	if err != nil {
+		return nil, err
+	}
+	r.Endpoint = addr
+	lg.Debug("read request5 addr", addr)
+
+	return r, nil
+}
+
+func (r *Request) Marshal5() (buf []byte) {
+	lg.Debug("serialize request5")
+
+	b := bytes.NewBuffer(buf)
+
+	b.WriteByte(Socks5Version)
+	b.WriteByte(byte(r.CommandCode))
+	b.WriteByte(0)
+	b.Write(r.Endpoint.Marshal5())
+
+	ret := b.Bytes()
+	lg.Debugf("serialize request5 %+v to %+v", r, ret)
 	return b.Bytes()
 }
 
@@ -243,6 +289,44 @@ func ParseOperationReplyFrom(b io.Reader) (*OperationReply, error) {
 	return r, nil
 }
 
+func (o *OperationReply) Marshal5() []byte {
+	lg.Debug("serialize op reply5", o)
+
+	b := bytes.Buffer{}
+
+	b.WriteByte(Socks5Version)
+	b.WriteByte(byte(o.ReplyCode))
+	b.WriteByte(0)
+	b.Write(o.Endpoint.Marshal5())
+
+	ret := b.Bytes()
+	lg.Debugf("serialize op reply5 %+v to %+v", o, ret)
+	return ret
+}
+func ParseOperationReply5From(b io.Reader) (*OperationReply, error) {
+	lg.Debug("read op reply5")
+
+	r := &OperationReply{}
+	buf := internal.BytesPool64k.Rent()
+	defer internal.BytesPool64k.Return(buf)
+	// ver cc 0
+	if _, err := io.ReadFull(b, buf[:3]); err != nil {
+		return nil, err
+	}
+	if buf[0] != Socks5Version {
+		return r, NewErrVersionMismatch(int(buf[0]), nil)
+	}
+	r.ReplyCode = ReplyCode(buf[1])
+
+	addr, err := ParseSocksAddr5From(b)
+	if err != nil {
+		return nil, err
+	}
+	r.Endpoint = addr
+	lg.Debug("read op reply5 addr", addr)
+	return r, nil
+}
+
 type UDPHeaderType byte
 
 const (
@@ -317,6 +401,28 @@ func (u *UDPMessage) Marshal() []byte {
 
 	return ret
 }
+func (u *UDPMessage) Marshal5() []byte {
+	lg.Debug("serialize udpmsg5", u)
+	b := bytes.Buffer{}
+
+	switch u.Type {
+	case UDPMessageDatagram:
+		lg.Debug("serialize udpmsg5 dgram")
+		addr := u.Endpoint.Marshal6(0)
+		b.WriteByte(0)
+		b.WriteByte(0)
+		b.WriteByte(0)
+
+		b.Write(addr)
+		b.Write(u.Data)
+	default:
+		lg.Panic("unsupported in socks5")
+	}
+	ret := b.Bytes()
+	lg.Debugf("serialize udpmsg5 %v to %v", u, ret)
+
+	return ret
+}
 
 func ParseUDPMessageFrom(b io.Reader) (*UDPMessage, error) {
 	lg.Debug("read udpmsg")
@@ -366,4 +472,90 @@ func ParseUDPMessageFrom(b io.Reader) (*UDPMessage, error) {
 	lg.Debug("read udpmsg error", uerr, eaddr)
 
 	return u, nil
+}
+func ParseUDPMessage5From(b io.Reader) (*UDPMessage, error) {
+	lg.Debug("read udpmsg5")
+	u := &UDPMessage{}
+	buf := internal.BytesPool64k.Rent()
+	defer internal.BytesPool64k.Return(buf)
+	if _, err := io.ReadFull(b, buf[:3]); err != nil {
+		return nil, err
+	}
+
+	u.Type = UDPMessageDatagram
+	addr, err := ParseSocksAddr5From(b)
+	if err != nil {
+		return nil, err
+	}
+	u.Endpoint = addr
+	lg.Debug("read udpmsg5 addr", addr)
+
+	if _, err = io.ReadAll(b); err != nil {
+		return nil, err
+	}
+	lg.Debug("read udpmsg5 data")
+	return u, nil
+}
+
+type Handshake struct {
+	Methods []byte
+}
+
+func (h *Handshake) Marshal5() []byte {
+	lg.Debug("serialize methodsel")
+	if len(h.Methods) > 0xff {
+		lg.Panic("too much methods")
+	}
+	b := bytes.Buffer{}
+	b.WriteByte(Socks5Version)
+	b.WriteByte(byte(len(h.Methods)))
+	b.Write(h.Methods)
+	ret := b.Bytes()
+	lg.Debugf("serialize methodsel %v to %v", h, ret)
+	return ret
+}
+func ParseHandshake5From(b io.Reader) (*Handshake, error) {
+	h := &Handshake{}
+	buf := make([]byte, 256)
+	if _, err := io.ReadFull(b, buf[:1]); err != nil {
+		return nil, err
+	}
+	if buf[0] != Socks5Version {
+		return nil, NewErrVersionMismatch(5, buf[:1])
+	}
+	if _, err := io.ReadFull(b, buf[:1]); err != nil {
+		return nil, err
+	}
+	mlen := buf[0]
+	if _, err := io.ReadFull(b, buf[:mlen]); err != nil {
+		return nil, err
+	}
+	h.Methods = internal.Dup(buf[:mlen])
+	return h, nil
+}
+
+type MethodSelection struct {
+	Method byte
+}
+
+func (h *MethodSelection) Marshal5() []byte {
+	lg.Debug("serialize methodsel")
+	b := bytes.Buffer{}
+	b.WriteByte(Socks5Version)
+	b.WriteByte(byte(h.Method))
+	ret := b.Bytes()
+	lg.Debugf("serialize methodsel %v to %v", h, ret)
+	return ret
+}
+func ParseMethodSelection5From(b io.Reader) (*MethodSelection, error) {
+	h := &MethodSelection{}
+	buf := make([]byte, 2)
+	if _, err := io.ReadFull(b, buf[:2]); err != nil {
+		return nil, err
+	}
+	if buf[0] != Socks5Version {
+		return nil, NewErrVersionMismatch(5, buf[:1])
+	}
+	h.Method = buf[1]
+	return h, nil
 }
