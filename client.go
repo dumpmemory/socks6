@@ -45,11 +45,16 @@ type Client struct {
 
 func (c *Client) DialContext(ctx context.Context, network string, addr string) (net.Conn, error) {
 	if network[:3] == "udp" {
-		a, e := c.UDPAssociateRequest(ctx, message.ParseAddr(addr), nil)
+		sa := message.ParseAddr(addr)
+		la := message.AddrIPv4Zero
+		if sa.AddressType == message.AddressTypeIPv6 {
+			la = message.AddrIPv6Zero
+		}
+		a, e := c.UDPAssociateRequest(ctx, la, nil)
 		if e != nil {
 			return nil, e
 		}
-		a.expectAddr = message.ParseAddr(addr)
+		a.expectAddr = sa
 		return a, nil
 	}
 	return c.ConnectRequest(ctx, addr, nil, nil)

@@ -85,11 +85,12 @@ func (t Task[T]) Start() {
 				t.status = Faulted
 			}
 		}()
-		_, canceled := <-t.ct.Done()
-		if canceled {
+
+		select {
+		case <-t.ct.Done():
 			t.panic = AggregateError{t.ct.Err()}
 			t.status = Canceled
-		} else {
+		default:
 			t.status = Running
 			t.val = t.fn()
 			t.status = RanToCompletion

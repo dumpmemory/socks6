@@ -28,6 +28,7 @@ type ProxyUDPConn struct {
 	rbind     net.Addr   // remote bind addr
 
 	acked   bool
+	ackwg   sync.WaitGroup
 	lastErr error // todo actually use lastErr ?
 }
 
@@ -50,7 +51,7 @@ func (u *ProxyUDPConn) init() error {
 	// 1. won't lost
 	// 2. can be slower than data over udp
 	go u.rexmitFirstPacket()
-	go u.readAck()
+	u.readAck()
 	return nil
 }
 
@@ -87,40 +88,46 @@ func (u *ProxyUDPConn) rexmitFirstPacket() {
 
 func (u *ProxyUDPConn) readAck() {
 	// block TCP read
+	// lock when init
 	u.parseLock.Lock()
-	defer u.parseLock.Unlock()
-	ack, err := message.ParseUDPMessageFrom(u.origConn)
-	failed := true
-	if err != nil {
-		u.lastErr = err
-	} else if ack.AssociationID != u.assocId {
-		u.lastErr = ErrAssociationMismatch
-	} else if ack.Type != message.UDPMessageAssociationAck {
-		u.lastErr = ErrUnexpectedMessage
-	} else {
-		failed = false
-	}
-	u.acked = true
+	go func() {
+		// unlock when ack read complete
+		// to avoid goroutine shedule cause lock delayed
+		defer u.parseLock.Unlock()
 
-	if failed {
-		u.Close()
-		return
-	}
+		ack, err := message.ParseUDPMessageFrom(u.origConn)
+		failed := true
+		if err != nil {
+			u.lastErr = err
+		} else if ack.AssociationID != u.assocId {
+			u.lastErr = ErrAssociationMismatch
+		} else if ack.Type != message.UDPMessageAssociationAck {
+			u.lastErr = ErrUnexpectedMessage
+		} else {
+			failed = false
+		}
+		u.acked = true
 
-	if !u.overTcp {
-		// tcp conn health checkers
-		go func() {
-			buf := make([]byte, 256)
-			for {
-				_, err := u.origConn.Read(buf)
-				if err != nil {
-					u.lastErr = err
-					u.Close()
-					return
+		if failed {
+			u.Close()
+			return
+		}
+
+		if !u.overTcp {
+			// tcp conn health checkers
+			go func() {
+				buf := make([]byte, 256)
+				for {
+					_, err := u.origConn.Read(buf)
+					if err != nil {
+						u.lastErr = err
+						u.Close()
+						return
+					}
 				}
-			}
-		}()
-	}
+			}()
+		}
+	}()
 }
 
 // Read implements net.Conn
@@ -146,6 +153,7 @@ func (u *ProxyUDPConn) Read(p []byte) (int, error) {
 
 // ReadFrom implements net.PacketConn
 func (u *ProxyUDPConn) ReadFrom(p []byte) (int, net.Addr, error) {
+	lg.Debug("readfrom")
 	cd := internal.NewCancellableDefer(func() { u.Close() })
 
 	netErr := net.OpError{
