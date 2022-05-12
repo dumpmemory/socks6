@@ -77,7 +77,9 @@ func main() {
 		CleartextPort: common.CleartextPort,
 		EncryptedPort: common.EncryptedPort,
 		Address:       "0.0.0.0",
-		Cert:          &kp,
+		TlsConfig: &tls.Config{
+			Certificates: []tls.Certificate{kp},
+		},
 	}
 
 	c, err := os.ReadFile(*conf)
@@ -86,7 +88,7 @@ func main() {
 		json.Unmarshal(c, &c2)
 		s.Address = c2.Address
 		kp2, _ := tls.LoadX509KeyPair(c2.CertFile, c2.KeyFile)
-		s.Cert = &kp2
+		s.TlsConfig.Certificates[0] = kp2
 		s.CleartextPort = c2.CleartextPort
 		s.EncryptedPort = c2.EncryptedPort
 		lg.MinimalLevel = lg.Level(c2.LogLevel)

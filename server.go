@@ -20,9 +20,8 @@ type Server struct {
 	CleartextPort uint16
 	EncryptedPort uint16
 
-	Cert *tls.Certificate
-
-	Worker *ServerWorker
+	TlsConfig *tls.Config
+	Worker    *ServerWorker
 
 	// listeners
 
@@ -58,7 +57,7 @@ func (s *Server) Start(ctx context.Context) {
 		s.startUDP(ctx, cleartextEndpoint)
 	}
 
-	if s.EncryptedPort != 0 && s.Cert != nil {
+	if s.EncryptedPort != 0 && s.TlsConfig != nil {
 		encryptedEndpoint := net.JoinHostPort(s.Address, fmt.Sprintf("%d", s.EncryptedPort))
 		s.startTLS(ctx, encryptedEndpoint)
 		s.startDTLS(ctx, encryptedEndpoint)
@@ -98,9 +97,7 @@ func (s *Server) startTCP(ctx context.Context, addr string) {
 }
 
 func (s *Server) startTLS(ctx context.Context, addr string) {
-	s.tls = internal.Must2(tls.Listen("tcp", addr, &tls.Config{
-		Certificates: []tls.Certificate{*s.Cert},
-	}))
+	s.tls = internal.Must2(tls.Listen("tcp", addr, s.TlsConfig))
 	lg.Infof("start TLS server at %s", s.tls.Addr())
 	s.listeners = append(s.listeners, s.tls)
 
@@ -149,11 +146,38 @@ func (s *Server) startUDP(ctx context.Context, addr string) {
 	}()
 }
 
+func createDTLSConfig(t tls.Config) dtls.Config {
+	return dtls.Config{
+		Certificates: t.Certificates,
+		// CipherSuites
+		// CustomCipherSuites
+		// SignatureSchemes
+		// SRTPProtectionProfiles
+		ClientAuth: dtls.ClientAuthType(t.ClientAuth),
+		// ExtendedMasterSecret
+		// FlightInterval
+		// PSK
+		// PSKIdentityHint
+		InsecureSkipVerify: t.InsecureSkipVerify,
+		// InsecureHashes
+		VerifyPeerCertificate: t.VerifyPeerCertificate,
+		RootCAs:               t.RootCAs,
+		ClientCAs:             t.ClientCAs,
+		ServerName:            t.ServerName,
+		// LoggerFactory
+		// ConnectContextMaker
+		// MTU
+		// ReplayProtectionWindow
+		KeyLogWriter: t.KeyLogWriter,
+		// SessionStore
+		SupportedProtocols: t.NextProtos,
+	}
+}
+
 func (s *Server) startDTLS(ctx context.Context, addr string) {
 	addr2 := internal.Must2(net.ResolveUDPAddr("udp", addr))
-	s.dtls = internal.Must2(dtls.Listen("udp", addr2, &dtls.Config{
-		Certificates: []tls.Certificate{*s.Cert},
-	}))
+	dtlsConfig := createDTLSConfig(*s.TlsConfig)
+	s.dtls = internal.Must2(dtls.Listen("udp", addr2, &dtlsConfig))
 	lg.Infof("start DTLS server at %s", s.dtls.Addr())
 	s.listeners = append(s.listeners, s.dtls)
 
