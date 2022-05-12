@@ -2,6 +2,8 @@ package e2etool
 
 import (
 	"time"
+
+	"github.com/studentmain/socks6/common/lg"
 )
 
 func WatchDog() {
@@ -14,7 +16,12 @@ func WatchDog10s() {
 
 func wd(t time.Duration) {
 	go func() {
+		before := time.Now()
 		<-time.After(t)
-		panic("test timeout")
+		after := time.Now()
+		if after.Sub(before) < t*11/10 {
+			panic("test timeout")
+		}
+		lg.Warning("watchdog timeout, timer unstable, maybe in debug mode")
 	}()
 }

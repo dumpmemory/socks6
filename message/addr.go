@@ -174,7 +174,7 @@ func (a *SocksAddr) Marshal6(pad byte) []byte {
 	if a.AddressType == AddressTypeDomainName {
 		l := 1 + len(a.Address)
 		total := internal.PaddedLen(l, 4)
-		lg.Debug("serialize socks 6 address domain name, padding %d to %d", total, l)
+		lg.Debugf("serialize socks 6 address domain name, padding %d to %d", total, l)
 		if total > 255 {
 			lg.Panic("address too long")
 		}

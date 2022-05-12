@@ -25,6 +25,10 @@ func Echo(c io.ReadWriteCloser) {
 	}
 }
 
+func UEcho(p net.PacketConn, d []byte, a net.Addr) {
+	p.WriteTo(d, a)
+}
+
 func Discard(c io.ReadWriteCloser) {
 	b := internal.BytesPool4k.Rent()
 	defer internal.BytesPool4k.Return(b)
@@ -35,6 +39,8 @@ func Discard(c io.ReadWriteCloser) {
 			return
 		}
 	}
+}
+func UDiscard(p net.PacketConn, d []byte, a net.Addr) {
 }
 
 func Chargen(c io.ReadWriteCloser) {
@@ -47,6 +53,11 @@ func Chargen(c io.ReadWriteCloser) {
 			return
 		}
 	}
+}
+func UChargen(p net.PacketConn, d []byte, a net.Addr) {
+	b := internal.BytesPool4k.Rent()
+	defer internal.BytesPool4k.Return(b)
+	p.WriteTo(b, a)
 }
 
 func ServeTCP(ctx context.Context, addr string, f func(io.ReadWriteCloser)) {
@@ -63,5 +74,24 @@ func ServeTCP(ctx context.Context, addr string, f func(io.ReadWriteCloser)) {
 			return
 		}
 		go f(fd)
+	}
+}
+
+func ServeUDP(ctx context.Context, addr string, f func(p net.PacketConn, d []byte, a net.Addr)) {
+	s := internal.Must2(net.ListenPacket("udp", addr))
+	defer s.Close()
+	go func() {
+		<-ctx.Done()
+		s.Close()
+	}()
+	buf := make([]byte, 4096)
+	for {
+		n, addr, err := s.ReadFrom(buf)
+		data := internal.Dup(buf[:n])
+		if err != nil {
+			lg.Info("stop e2etool server", err)
+			return
+		}
+		go f(s, data, addr)
 	}
 }

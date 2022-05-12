@@ -11,10 +11,33 @@ import (
 )
 
 func AssertRead(t assert.TestingT, r io.Reader, b []byte) {
+	AssertReadMask(t, r, b, nil)
+}
+
+func AssertReadMask(t assert.TestingT, r io.Reader, b []byte, m []byte) {
+	if m != nil && len(b) > len(m) {
+		panic("mask should longer than data")
+	}
+
 	b2 := internal.Dup(b)
+	b3 := internal.Dup(b)
+
 	_, err := io.ReadFull(r, b2)
 	assert.NoError(t, err)
-	assert.Equal(t, b, b2)
+	if m != nil {
+		for i := 0; i < len(b); i++ {
+			mask := m[i] ^ 0xff
+			b2[i] &= mask
+			b3[i] &= mask
+		}
+	}
+	assert.Equal(t, b3, b2)
+}
+
+func AssertWrite(t assert.TestingT, w io.Writer, b []byte) {
+	l, err := w.Write(b)
+	assert.NoError(t, err)
+	assert.EqualValues(t, len(b), l)
 }
 
 type canSetDDL interface {

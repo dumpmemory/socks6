@@ -132,6 +132,8 @@ func (a *AuthenticationReply) Marshal() []byte {
 	return ret
 }
 func ParseAuthenticationReplyFrom(b io.Reader) (*AuthenticationReply, error) {
+	lg.Debug("read auth reply")
+
 	a := &AuthenticationReply{}
 
 	buf := internal.BytesPool64k.Rent()
@@ -140,6 +142,7 @@ func ParseAuthenticationReplyFrom(b io.Reader) (*AuthenticationReply, error) {
 	if _, err := io.ReadFull(b, buf[:4]); err != nil {
 		return nil, err
 	}
+	lg.Debug("read auth result optionsize", buf[:4])
 	if buf[0] != protocolVersion {
 		return nil, NewErrVersionMismatch(int(buf[0]), nil)
 	}
@@ -150,6 +153,8 @@ func ParseAuthenticationReplyFrom(b io.Reader) (*AuthenticationReply, error) {
 		return nil, err
 	}
 	a.Options = ops
+	lg.Debug("read auth option", ops)
+
 	return a, nil
 }
 
@@ -206,6 +211,8 @@ func (o *OperationReply) Marshal() []byte {
 	return ret
 }
 func ParseOperationReplyFrom(b io.Reader) (*OperationReply, error) {
+	lg.Debug("read op reply")
+
 	r := &OperationReply{}
 	buf := internal.BytesPool64k.Rent()
 	defer internal.BytesPool64k.Return(buf)
@@ -218,18 +225,21 @@ func ParseOperationReplyFrom(b io.Reader) (*OperationReply, error) {
 	}
 	r.ReplyCode = ReplyCode(buf[1])
 	optLen := binary.BigEndian.Uint16(buf[2:])
+	lg.Debug("read op reply command optionsize", buf[:4])
 
 	addr, _, _, err := ParseSocksAddr6From(b)
 	if err != nil {
 		return nil, err
 	}
 	r.Endpoint = addr
+	lg.Debug("read op reply addr", addr)
 
 	ops, err := ParseOptionSetFrom(b, int(optLen))
 	if err != nil {
 		return nil, err
 	}
 	r.Options = ops
+	lg.Debug("read op reply option", ops)
 	return r, nil
 }
 
@@ -266,15 +276,18 @@ type UDPMessage struct {
 }
 
 func (u *UDPMessage) Marshal() []byte {
+	lg.Debug("serialize udpmsg", u)
 	b := bytes.Buffer{}
 
 	switch u.Type {
 	case UDPMessageAssociationInit, UDPMessageAssociationAck:
+		lg.Debug("serialize udpmsg intack")
 		b.WriteByte(protocolVersion)
 		b.WriteByte(byte(u.Type))
 		binary.Write(&b, binary.BigEndian, uint16(12))
 		binary.Write(&b, binary.BigEndian, u.AssociationID)
 	case UDPMessageDatagram:
+		lg.Debug("serialize udpmsg dgram")
 		addr := u.Endpoint.Marshal6(0)
 		totalLen := 12 + len(addr) + len(u.Data)
 		b.WriteByte(protocolVersion)
@@ -285,6 +298,7 @@ func (u *UDPMessage) Marshal() []byte {
 		b.Write(addr)
 		b.Write(u.Data)
 	case UDPMessageError:
+		lg.Debug("serialize udpmsg error")
 		addr := u.Endpoint.Marshal6(0)
 		eaddr := u.ErrorEndpoint.Marshal6(byte(u.ErrorCode))
 		totalLen := 12 + len(addr) + len(eaddr)
@@ -298,10 +312,14 @@ func (u *UDPMessage) Marshal() []byte {
 		b.Write(addr)
 		b.Write(eaddr)
 	}
-	return b.Bytes()
+	ret := b.Bytes()
+	lg.Debugf("serialize udpmsg %v to %v", u, ret)
+
+	return ret
 }
 
 func ParseUDPMessageFrom(b io.Reader) (*UDPMessage, error) {
+	lg.Debug("read udpmsg")
 	u := &UDPMessage{}
 	buf := internal.BytesPool64k.Rent()
 	defer internal.BytesPool64k.Return(buf)
@@ -311,6 +329,7 @@ func ParseUDPMessageFrom(b io.Reader) (*UDPMessage, error) {
 	if buf[0] != protocolVersion {
 		return nil, NewErrVersionMismatch(int(buf[0]), nil)
 	}
+	lg.Debug("read udpmsg header", buf[:12])
 
 	totalLen := binary.BigEndian.Uint16(buf[2:])
 	remainLen := int(totalLen) - 12
@@ -327,12 +346,14 @@ func ParseUDPMessageFrom(b io.Reader) (*UDPMessage, error) {
 	}
 	u.Endpoint = addr
 	remainLen -= l
+	lg.Debug("read udpmsg addr", addr)
 
 	if u.Type == UDPMessageDatagram {
 		if _, err = io.ReadFull(b, buf[:remainLen]); err != nil {
 			return nil, err
 		}
 		u.Data = internal.Dup(buf[:remainLen])
+		lg.Debug("read udpmsg data")
 		return u, nil
 	}
 
@@ -342,6 +363,7 @@ func ParseUDPMessageFrom(b io.Reader) (*UDPMessage, error) {
 	}
 	u.ErrorCode = UDPErrorType(uerr)
 	u.ErrorEndpoint = eaddr
+	lg.Debug("read udpmsg error", uerr, eaddr)
 
 	return u, nil
 }
