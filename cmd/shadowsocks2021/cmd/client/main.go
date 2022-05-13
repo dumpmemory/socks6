@@ -4,7 +4,7 @@ import (
 	"net"
 
 	"github.com/studentmain/socks6"
-	"github.com/studentmain/socks6/cmd/ssocks6"
+	"github.com/studentmain/socks6/cmd/shadowsocks2021"
 	"github.com/txthinking/socks5"
 )
 
@@ -24,14 +24,14 @@ func (h hhh) TCPHandle(s *socks5.Server, c *net.TCPConn, r *socks5.Request) erro
 			return err
 		}
 		defer c2.Close()
-		return ssocks6.Relay(c2, c)
+		return shadowsocks2021.Relay(c2, c)
 	}
 	c2, err := h.c.Dial("tcp", r.Address())
 	if err != nil {
 		return err
 	}
 	defer c2.Close()
-	return ssocks6.Relay(c2, c)
+	return shadowsocks2021.Relay(c2, c)
 }
 func (h hhh) UDPHandle(s *socks5.Server, c *net.UDPAddr, r *socks5.Datagram) error {
 	return socks5.ErrUnsupportCmd
@@ -42,7 +42,7 @@ func ssdial(network string, addr string) (net.Conn, error) {
 	if err != nil {
 		return nil, err
 	}
-	sc := ssocks6.NewSSConn(c, "aes-256-gcm", []byte("123456"))
+	sc := shadowsocks2021.NewSSConn(c, []byte("123456"))
 	return sc, nil
 }
 

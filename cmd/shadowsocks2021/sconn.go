@@ -1,12 +1,11 @@
-package ssocks6
+package shadowsocks2021
 
 import (
 	"bytes"
 	"crypto/aes"
 	"crypto/cipher"
-	"crypto/md5"
 	"crypto/rand"
-	"crypto/sha1"
+	"crypto/sha256"
 	"encoding/binary"
 	"errors"
 	"io"
@@ -15,14 +14,13 @@ import (
 	"sync"
 	"time"
 
-	"golang.org/x/crypto/chacha20poly1305"
-	"golang.org/x/crypto/hkdf"
+	"github.com/studentmain/socks6/internal"
 )
 
 type SSConn struct {
 	net.Conn
 
-	key []byte
+	key [32]byte
 
 	rc   cipher.AEAD
 	rctr []byte
@@ -31,19 +29,20 @@ type SSConn struct {
 	wc   cipher.AEAD
 	wctr []byte
 
-	factory func(key, iv []byte) cipher.AEAD
+	factory func(key [32]byte) cipher.AEAD
 }
 
 func (s *SSConn) Read(b []byte) (int, error) {
 	if s.rc == nil {
-		l := s.factory(s.key, []byte{}).NonceSize()
+		l := s.factory(s.key).NonceSize()
 		s.rctr = make([]byte, l)
-		iv := make([]byte, l)
-		if _, err := io.ReadFull(s.Conn, iv); err != nil {
+		iv := new([32]byte)
+		ivs := iv[:]
+		if _, err := io.ReadFull(s.Conn, ivs); err != nil {
 			return 0, err
 		}
 
-		s.rc = s.factory(kdf2(s.key, iv), iv)
+		s.rc = s.factory(nckdf(s.key, *iv))
 	}
 
 	for s.rb.Len() < len(b) {
@@ -80,17 +79,18 @@ func (s *SSConn) readBlk() ([]byte, error) {
 
 func (s *SSConn) Write(b []byte) (int, error) {
 	if s.wc == nil {
-		l := s.factory(s.key, []byte{}).NonceSize()
+		l := s.factory(s.key).NonceSize()
 		s.wctr = make([]byte, l)
-		iv := make([]byte, l)
-		if _, err := rand.Read(iv); err != nil {
+		iv := new([32]byte)
+		ivs := iv[:]
+		if _, err := rand.Read(ivs); err != nil {
 			return 0, err
 		}
-		if _, err := s.Conn.Write(iv); err != nil {
+		if _, err := s.Conn.Write(ivs); err != nil {
 			return 0, err
 		}
 
-		s.wc = s.factory(kdf2(s.key, iv), iv)
+		s.wc = s.factory(nckdf(s.key, *iv))
 	}
 	ll := 2
 	if len(b) > ll {
@@ -111,57 +111,36 @@ func (s *SSConn) Write(b []byte) (int, error) {
 	return len(b), nil
 }
 
-func NewSSConn(conn net.Conn, method string, kk []byte) *SSConn {
-	k := kdf1(kk, 32)
+func NewSSConn(conn net.Conn, kk []byte) *SSConn {
+	k := nhkdf(kk)
 	sc := SSConn{
 		Conn: conn,
 		key:  k,
 	}
-	switch method {
-	case "aes-256-gcm":
-		sc.factory = func(key, iv []byte) cipher.AEAD {
-			a, err := aes.NewCipher(key)
-			if err != nil {
-				panic(err)
-			}
-			g, err := cipher.NewGCM(a)
-			if err != nil {
-				panic(err)
-			}
-			return g
+	sc.factory = func(key [32]byte) cipher.AEAD {
+		a, err := aes.NewCipher(key[:])
+		if err != nil {
+			panic(err)
 		}
-	case "chacha20-poly1305":
-		sc.factory = func(key, iv []byte) cipher.AEAD {
-			c, err := chacha20poly1305.New(key)
-			if err != nil {
-				panic(err)
-			}
-			return c
+		g, err := cipher.NewGCM(a)
+		if err != nil {
+			panic(err)
 		}
+		return g
 	}
 	return &sc
 }
 
-func kdf1(password []byte, keyLen int) []byte {
-	var b, prev []byte
-	h := md5.New()
-	for len(b) < keyLen {
-		h.Write(prev)
-		h.Write([]byte(password))
-		b = h.Sum(b)
-		prev = b[len(b)-h.Size():]
-		h.Reset()
-	}
-	return b[:keyLen]
+func nhkdf(password []byte) [32]byte {
+	return sha256.Sum256(append(password, []byte("shadowsocks2021-key")...))
 }
 
-func kdf2(k, s []byte) []byte {
-	r := make([]byte, len(s))
-	kdf := hkdf.New(sha1.New, k, s, []byte("ssocks6-subkey"))
-	if _, err := io.ReadFull(kdf, r); err != nil {
-		panic(err)
-	}
-	return r
+func nckdf(key, iv [32]byte) [32]byte {
+	a := internal.Must2(aes.NewCipher(key[:]))
+	ret := new([32]byte)
+	a.Encrypt(iv[:16], ret[:16])
+	a.Encrypt(iv[16:], ret[16:])
+	return *ret
 }
 
 func increment(b []byte) {

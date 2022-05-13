@@ -5,7 +5,7 @@ import (
 	"net"
 
 	"github.com/studentmain/socks6"
-	"github.com/studentmain/socks6/cmd/ssocks6"
+	"github.com/studentmain/socks6/cmd/shadowsocks2021"
 )
 
 func main() {
@@ -20,7 +20,7 @@ func main() {
 		if err != nil {
 			panic(err)
 		}
-		sc := ssocks6.NewSSConn(c, "aes-256-gcm", []byte("123456"))
+		sc := shadowsocks2021.NewSSConn(c, []byte("123456"))
 		go sw.ServeStream(context.Background(), sc)
 	}
 }
