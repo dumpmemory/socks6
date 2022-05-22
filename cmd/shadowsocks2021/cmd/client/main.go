@@ -164,7 +164,7 @@ func ssdial(network string, addr string) (net.Conn, error) {
 	if err != nil {
 		return nil, err
 	}
-	sc := shadowsocks2021.NewSSConn(c, []byte("123456"))
+	sc := shadowsocks2021.NewSSConn(c, []byte("123456"), nil)
 	return sc, nil
 }
 

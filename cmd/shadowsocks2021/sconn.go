@@ -17,6 +17,8 @@ import (
 	"github.com/studentmain/socks6/common"
 	"github.com/studentmain/socks6/internal"
 	"github.com/studentmain/socks6/message"
+
+	lru "github.com/hashicorp/golang-lru"
 )
 
 const (
@@ -59,6 +61,7 @@ func init() {
 
 type SSConn struct {
 	net.Conn
+	lru *lru.Cache
 
 	ecm bool
 	key [32]byte
@@ -101,6 +104,12 @@ func (s *SSConn) Read(b []byte) (int, error) {
 				s.ecm = false
 			}
 			return 0, err
+		}
+		if s.lru != nil {
+			found, _ := s.lru.ContainsOrAdd(iv, nil)
+			if found {
+				return 0, io.EOF
+			}
 		}
 
 		s.rc = s.factory(nckdf(s.key, *iv))
@@ -174,7 +183,7 @@ func (s *SSConn) Write(b []byte) (int, error) {
 	return len(b), nil
 }
 
-func NewSSConn(conn net.Conn, kk []byte) *SSConn {
+func NewSSConn(conn net.Conn, kk []byte, lru *lru.Cache) *SSConn {
 	k := nhkdf(kk)
 	sc := SSConn{
 		Conn: conn,

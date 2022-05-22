@@ -5,9 +5,11 @@ import (
 	"net"
 	"time"
 
+	lru "github.com/hashicorp/golang-lru"
 	"github.com/studentmain/socks6"
 	"github.com/studentmain/socks6/auth"
 	"github.com/studentmain/socks6/cmd/shadowsocks2021"
+	"github.com/studentmain/socks6/internal"
 	"github.com/studentmain/socks6/message"
 )
 
@@ -74,12 +76,13 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
+	lru := internal.Must2(lru.New(4096))
 	for {
 		c, err := l.Accept()
 		if err != nil {
 			panic(err)
 		}
-		sc := shadowsocks2021.NewSSConn(c, []byte("123456"))
+		sc := shadowsocks2021.NewSSConn(c, []byte("123456"), lru)
 		go sw.ServeStream(context.Background(), sc)
 	}
 }
