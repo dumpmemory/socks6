@@ -44,8 +44,8 @@ type Client struct {
 // impl
 
 func (c *Client) DialContext(ctx context.Context, network string, addr string) (net.Conn, error) {
+	sa := message.ParseAddr(addr)
 	if network[:3] == "udp" {
-		sa := message.ParseAddr(addr)
 		la := message.AddrIPv4Zero
 		if sa.AddressType == message.AddressTypeIPv6 {
 			la = message.AddrIPv6Zero
@@ -57,7 +57,7 @@ func (c *Client) DialContext(ctx context.Context, network string, addr string) (
 		a.expectAddr = sa
 		return a, nil
 	}
-	return c.ConnectRequest(ctx, addr, nil, nil)
+	return c.ConnectRequest(ctx, sa, nil, nil)
 }
 
 func (c *Client) Dial(network string, addr string) (net.Conn, error) {
@@ -82,9 +82,8 @@ func (c *Client) ListenPacket(network string, addr string) (net.PacketConn, erro
 
 // raw requests
 
-func (c *Client) ConnectRequest(ctx context.Context, addr string, initData []byte, option *message.OptionSet) (net.Conn, error) {
-	addr2 := message.ParseAddr(addr)
-	sconn, opr, err := c.handshake(ctx, message.CommandConnect, addr2, initData, option)
+func (c *Client) ConnectRequest(ctx context.Context, addr net.Addr, initData []byte, option *message.OptionSet) (net.Conn, error) {
+	sconn, opr, err := c.handshake(ctx, message.CommandConnect, addr, initData, option)
 	if err != nil {
 		return nil, err
 	}
@@ -92,7 +91,7 @@ func (c *Client) ConnectRequest(ctx context.Context, addr string, initData []byt
 		netConn: sconn,
 		addrPair: addrPair{
 			local:  opr.Endpoint,
-			remote: addr2,
+			remote: addr,
 		},
 	}, nil
 }
