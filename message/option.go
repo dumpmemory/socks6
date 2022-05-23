@@ -171,6 +171,7 @@ func parseAuthenticationMethodAdvertisementOptionData(d []byte) (OptionData, err
 		m[i] = k
 		i++
 	}
+
 	internal.SortByte(m)
 	return AuthenticationMethodAdvertisementOptionData{
 		InitialDataLength: idl,

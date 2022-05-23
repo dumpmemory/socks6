@@ -9,6 +9,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/studentmain/socks6/common"
 	"github.com/studentmain/socks6/common/lg"
 	"github.com/studentmain/socks6/internal"
 	"github.com/studentmain/socks6/message"
@@ -154,7 +155,7 @@ func (u *ProxyUDPConn) Read(p []byte) (int, error) {
 // ReadFrom implements net.PacketConn
 func (u *ProxyUDPConn) ReadFrom(p []byte) (int, net.Addr, error) {
 	lg.Debug("readfrom")
-	cd := internal.NewCancellableDefer(func() { u.Close() })
+	cd := common.NewCancellableDefer(func() { u.Close() })
 
 	netErr := net.OpError{
 		Op:     "readfrom",

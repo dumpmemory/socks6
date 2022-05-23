@@ -9,8 +9,8 @@ import (
 
 	"github.com/pion/dtls/v2"
 	"github.com/studentmain/socks6/auth"
+	"github.com/studentmain/socks6/common"
 	"github.com/studentmain/socks6/common/lg"
-	"github.com/studentmain/socks6/internal"
 	"github.com/studentmain/socks6/message"
 )
 
@@ -401,7 +401,7 @@ func (c *Client) handshake(
 	}
 	netErr.Source = sconn.LocalAddr()
 
-	cd := internal.NewCancellableDefer(func() {
+	cd := common.NewCancellableDefer(func() {
 		sconn.Close()
 	})
 	defer cd.Defer()

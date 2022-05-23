@@ -11,7 +11,6 @@ import (
 	"github.com/studentmain/socks6/auth"
 	"github.com/studentmain/socks6/common"
 	"github.com/studentmain/socks6/common/lg"
-	"github.com/studentmain/socks6/internal"
 	"github.com/studentmain/socks6/internal/socket"
 	"github.com/studentmain/socks6/message"
 	"golang.org/x/net/icmp"
@@ -56,9 +55,9 @@ type ServerWorker struct {
 	IgnoreFragmentedRequest bool
 	EnableICMP              bool
 
-	backlogListener internal.SyncMap[string, *backlogListener] // map[string]*bl
-	reservedUdpAddr internal.SyncMap[string, uint64]           // map[string]uint64
-	udpAssociation  internal.SyncMap[uint64, *udpAssociation]  // map[uint64]*ua
+	backlogListener common.SyncMap[string, *backlogListener] // map[string]*bl
+	reservedUdpAddr common.SyncMap[string, uint64]           // map[string]uint64
+	udpAssociation  common.SyncMap[uint64, *udpAssociation]  // map[uint64]*ua
 }
 
 // ServerOutbound is a group of function called by ServerWorker when a connection or listener is needed to fullfill client request
@@ -124,9 +123,9 @@ func NewServerWorker() *ServerWorker {
 			DefaultIPv4: common.GuessDefaultIPv4(),
 			DefaultIPv6: common.GuessDefaultIPv6(),
 		},
-		backlogListener: internal.NewSyncMap[string, *backlogListener](),
-		reservedUdpAddr: internal.NewSyncMap[string, uint64](),
-		udpAssociation:  internal.NewSyncMap[uint64, *udpAssociation](),
+		backlogListener: common.NewSyncMap[string, *backlogListener](),
+		reservedUdpAddr: common.NewSyncMap[string, uint64](),
+		udpAssociation:  common.NewSyncMap[uint64, *udpAssociation](),
 	}
 
 	r.CommandHandlers = map[message.CommandCode]CommandHandler{
@@ -166,7 +165,7 @@ func (s *ServerWorker) ServeStream(
 	ctx context.Context,
 	conn net.Conn,
 ) {
-	closeConn := internal.NewCancellableDefer(func() {
+	closeConn := common.NewCancellableDefer(func() {
 		conn.Close()
 	})
 	defer closeConn.Defer()
@@ -433,7 +432,7 @@ func (s *ServerWorker) BindHandler(
 	ctx context.Context,
 	cc ClientConn,
 ) {
-	closeConn := internal.NewCancellableDefer(func() {
+	closeConn := common.NewCancellableDefer(func() {
 		cc.Conn.Close()
 	})
 
@@ -533,7 +532,7 @@ func (s *ServerWorker) UdpAssociateHandler(
 	ctx context.Context,
 	cc ClientConn,
 ) {
-	closeConn := internal.NewCancellableDefer(func() {
+	closeConn := common.NewCancellableDefer(func() {
 		cc.Conn.Close()
 	})
 

@@ -5,7 +5,7 @@ import (
 	"net"
 	"sync"
 
-	"github.com/studentmain/socks6/internal"
+	"github.com/studentmain/socks6/common"
 	"github.com/studentmain/socks6/message"
 )
 
@@ -36,7 +36,7 @@ func (t *ProxyTCPListener) AcceptContext(ctx context.Context) (net.Conn, error) 
 
 	t.lock.Lock()
 
-	unlock := internal.NewCancellableDefer(func() {
+	unlock := common.NewCancellableDefer(func() {
 		t.lock.Unlock()
 	})
 	defer unlock.Defer()

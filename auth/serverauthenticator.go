@@ -6,8 +6,8 @@ import (
 	"net"
 	"time"
 
+	"github.com/studentmain/socks6/common"
 	"github.com/studentmain/socks6/common/lg"
-	"github.com/studentmain/socks6/internal"
 	"github.com/studentmain/socks6/message"
 )
 
@@ -42,13 +42,13 @@ type DefaultServerAuthenticator struct {
 	DisableSession bool
 	DisableToken   bool
 
-	sessions internal.SyncMap[string, *serverSession] // map[base64_rawstd(id)]*session
+	sessions common.SyncMap[string, *serverSession] // map[base64_rawstd(id)]*session
 }
 
 func NewServerAuthenticator() *DefaultServerAuthenticator {
 	return &DefaultServerAuthenticator{
 		Methods:  map[byte]ServerAuthenticationMethod{},
-		sessions: internal.NewSyncMap[string, *serverSession](),
+		sessions: common.NewSyncMap[string, *serverSession](),
 	}
 }
 
