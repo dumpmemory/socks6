@@ -6,8 +6,8 @@ import (
 	"github.com/studentmain/socks6/message"
 )
 
-// ClientConn represents a SOCKS 6 connection received by server
-type ClientConn struct {
+// SocksConn represents a SOCKS 6 connection received by server
+type SocksConn struct {
 	Conn    net.Conn         // base connection
 	Request *message.Request // request sent by client
 
@@ -18,27 +18,27 @@ type ClientConn struct {
 }
 
 // Destination is endpoint included in client's request
-func (c ClientConn) Destination() *message.SocksAddr {
+func (c SocksConn) Destination() *message.SocksAddr {
 	return c.Request.Endpoint
 }
 
 // ConnId return connection's client endpoint string for logging purpose
-func (c ClientConn) ConnId() string {
+func (c SocksConn) ConnId() string {
 	return conn3Tuple(c.Conn)
 }
 
 // WriteReplyCode see WriteReply
-func (c ClientConn) WriteReplyCode(code message.ReplyCode) error {
+func (c SocksConn) WriteReplyCode(code message.ReplyCode) error {
 	return c.WriteReply(code, message.DefaultAddr, message.NewOptionSet())
 }
 
 // WriteReplyAddr see WriteReply
-func (c ClientConn) WriteReplyAddr(code message.ReplyCode, ep net.Addr) error {
+func (c SocksConn) WriteReplyAddr(code message.ReplyCode, ep net.Addr) error {
 	return c.WriteReply(code, ep, message.NewOptionSet())
 }
 
 // WriteReply write operation reply with given parameter to client
-func (c ClientConn) WriteReply(code message.ReplyCode, ep net.Addr, opt *message.OptionSet) error {
+func (c SocksConn) WriteReply(code message.ReplyCode, ep net.Addr, opt *message.OptionSet) error {
 	oprep := message.NewOperationReplyWithCode(code)
 	oprep.Endpoint = message.ConvertAddr(ep)
 	oprep.Options = opt

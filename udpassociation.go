@@ -26,7 +26,7 @@ type udpAssociation struct {
 	id  uint64
 	udp net.PacketConn
 
-	cc          ClientConn
+	cc          SocksConn
 	acceptTcp   bool   // whether to accept datagram over tcp
 	acceptDgram string // which client address is accepted
 	assocOk     bool   // first datagram received
@@ -42,7 +42,7 @@ type udpAssociation struct {
 }
 
 func newUdpAssociation(
-	cc ClientConn,
+	cc SocksConn,
 	udp net.PacketConn,
 	pair net.Addr,
 	addrFilter bool,

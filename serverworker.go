@@ -18,7 +18,7 @@ import (
 
 type CommandHandler func(
 	ctx context.Context,
-	cc ClientConn,
+	cc SocksConn,
 )
 
 // todo socket like api?
@@ -26,7 +26,7 @@ type CommandHandler func(
 // ServerWorker is a customizeable SOCKS 6 server
 type ServerWorker struct {
 	Authenticator auth.ServerAuthenticator
-	Rule          func(cc ClientConn) bool
+	Rule          func(cc SocksConn) bool
 
 	CommandHandlers map[message.CommandCode]CommandHandler
 	// VersionErrorHandler will handle non-SOCKS6 protocol request.
@@ -208,7 +208,7 @@ func (s *ServerWorker) ServeStream(
 		return
 	}
 	lg.Trace(ccid, "authenticate success")
-	cc := ClientConn{
+	cc := SocksConn{
 		Conn:    conn,
 		Request: req,
 
@@ -383,7 +383,7 @@ func (s *ServerWorker) handleFirstDatagram(
 
 func (s *ServerWorker) NoopHandler(
 	ctx context.Context,
-	cc ClientConn,
+	cc SocksConn,
 ) {
 	defer cc.Conn.Close()
 	lg.Trace(cc.ConnId(), "noop")
@@ -392,7 +392,7 @@ func (s *ServerWorker) NoopHandler(
 
 func (s *ServerWorker) ConnectHandler(
 	ctx context.Context,
-	cc ClientConn,
+	cc SocksConn,
 ) {
 	defer cc.Conn.Close()
 	clientAppliedOpt := message.StackOptionInfo{}
@@ -430,7 +430,7 @@ func (s *ServerWorker) ConnectHandler(
 
 func (s *ServerWorker) BindHandler(
 	ctx context.Context,
-	cc ClientConn,
+	cc SocksConn,
 ) {
 	closeConn := common.NewCancellableDefer(func() {
 		cc.Conn.Close()
@@ -530,7 +530,7 @@ func (s *ServerWorker) BindHandler(
 
 func (s *ServerWorker) UdpAssociateHandler(
 	ctx context.Context,
-	cc ClientConn,
+	cc SocksConn,
 ) {
 	closeConn := common.NewCancellableDefer(func() {
 		cc.Conn.Close()

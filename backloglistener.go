@@ -14,14 +14,14 @@ import (
 // backlogListener is used for process backlog enabled bind
 type backlogListener struct {
 	listener net.Listener // listener used for accepting inbound connection
-	cc       ClientConn   // original ClientConn
+	cc       SocksConn    // original ClientConn
 
 	sem   semaphore.Weighted // limiting server accepted connection count
 	queue chan net.Conn      // server accepted connection queue
 	alive bool               // indicate listener is working
 }
 
-func newBacklogListener(l net.Listener, cc ClientConn, backlog uint16) *backlogListener {
+func newBacklogListener(l net.Listener, cc SocksConn, backlog uint16) *backlogListener {
 	return &backlogListener{
 		listener: l,
 		cc:       cc,
@@ -35,7 +35,7 @@ func newBacklogListener(l net.Listener, cc ClientConn, backlog uint16) *backlogL
 // handler relay between an accept request connection and a server accepted connection
 func (b *backlogListener) handler(
 	ctx context.Context,
-	cc ClientConn,
+	cc SocksConn,
 ) {
 	// common handshake step is completed
 	// check for same session
