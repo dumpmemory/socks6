@@ -321,31 +321,37 @@ func (s *ServerWorker) authn(
 	return &auth
 }
 
-func (s *ServerWorker) ServeDatagramSource(
+func (s *ServerWorker) ServeSeqPacket(
 	ctx context.Context,
-	dgramSrc DatagramSource,
+	dgramSrc SeqPacket,
 ) {
-	assoc, h := s.handleFirstDatagram(ctx, *dgramSrc.ReadDatagram())
-	assoc.handleUdpUp(ctx, ClientPacket{
-		Message:  h,
-		Source:   dgramSrc.Addr,
-		Downlink: dgramSrc.Downlink,
+	d0, err := dgramSrc.NextDatagram()
+	if err != nil {
+		lg.Warning("serve seqpacket first datagram", err)
+		return
+	}
+	assoc, h := s.handleFirstDatagram(ctx, d0)
+	assoc.handleUdpUp(ctx, socksDatagram{
+		msg:    h,
+		src:    d0.RemoteAddr(),
+		freply: d0.Reply,
 	})
 
 	for {
-		d := dgramSrc.ReadDatagram()
-		if d == nil {
+		d, err := dgramSrc.NextDatagram()
+		if err != nil {
+			lg.Warning("serve seqpacket datagram", err)
 			return
 		}
-		h, err := message.ParseUDPMessageFrom(bytes.NewReader(d.Data))
+		h, err := message.ParseUDPMessageFrom(bytes.NewReader(d.Data()))
 		if err != nil {
 			lg.Warning(err)
 			return
 		}
-		assoc.handleUdpUp(ctx, ClientPacket{
-			Message:  h,
-			Source:   dgramSrc.Addr,
-			Downlink: dgramSrc.Downlink,
+		assoc.handleUdpUp(ctx, socksDatagram{
+			msg:    h,
+			src:    d.RemoteAddr(),
+			freply: d.Reply,
 		})
 	}
 }
@@ -355,10 +361,10 @@ func (s *ServerWorker) ServeDatagram(
 	dgram Datagram,
 ) {
 	assoc, h := s.handleFirstDatagram(ctx, dgram)
-	assoc.handleUdpUp(ctx, ClientPacket{
-		Message:  h,
-		Source:   dgram.Addr,
-		Downlink: dgram.Downlink,
+	assoc.handleUdpUp(ctx, socksDatagram{
+		msg:    h,
+		src:    dgram.RemoteAddr(),
+		freply: dgram.Reply,
 	})
 }
 
@@ -366,7 +372,7 @@ func (s *ServerWorker) handleFirstDatagram(
 	ctx context.Context,
 	dgram Datagram,
 ) (*udpAssociation, *message.UDPMessage) {
-	h, err := message.ParseUDPMessageFrom(bytes.NewReader(dgram.Data))
+	h, err := message.ParseUDPMessageFrom(bytes.NewReader(dgram.Data()))
 	if err != nil {
 		evm := message.ErrVersionMismatch{}
 		if errors.As(err, &evm) && s.DatagramVersionErrorHandler != nil {

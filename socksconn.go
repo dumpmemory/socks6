@@ -46,27 +46,3 @@ func (c SocksConn) WriteReply(code message.ReplyCode, ep net.Addr, opt *message.
 	_, e := c.Conn.Write(oprep.Marshal())
 	return e
 }
-
-type Datagram struct {
-	Addr     net.Addr
-	Data     []byte
-	Downlink DatagramDownlink
-}
-
-type DatagramSource struct {
-	Addr     net.Addr
-	Data     *chan []byte
-	Downlink DatagramDownlink
-}
-
-func (d DatagramSource) ReadDatagram() *Datagram {
-	dd, ok := <-*d.Data
-	if !ok {
-		return nil
-	}
-	return &Datagram{
-		Addr:     d.Addr,
-		Downlink: d.Downlink,
-		Data:     dd,
-	}
-}

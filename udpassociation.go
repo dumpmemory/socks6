@@ -14,11 +14,10 @@ import (
 // DatagramDownlink is a function used to write datagram to specific UDP endpoint
 type DatagramDownlink func(b []byte) error
 
-// ClientPacket represent a single UDPHeader received from client
-type ClientPacket struct {
-	Message  *message.UDPMessage
-	Source   net.Addr
-	Downlink DatagramDownlink
+type socksDatagram struct {
+	msg    *message.UDPMessage
+	src    net.Addr
+	freply DatagramDownlink
 }
 
 // udpAssociation contain UDP association state
@@ -128,8 +127,8 @@ func (u *udpAssociation) handleTcpUp(ctx context.Context) {
 }
 
 // handleUdpUp process a messages from UDP
-func (u *udpAssociation) handleUdpUp(ctx context.Context, cp ClientPacket) {
-	msg := cp.Message
+func (u *udpAssociation) handleUdpUp(ctx context.Context, cp socksDatagram) {
+	msg := cp.msg
 	if msg.Type != message.UDPMessageDatagram {
 		return
 	}
@@ -140,11 +139,11 @@ func (u *udpAssociation) handleUdpUp(ctx context.Context, cp ClientPacket) {
 	// start assoc if necessary
 	if !u.assocOk {
 		u.assocOk = true
-		u.acceptDgram = cp.Source.String()
+		u.acceptDgram = cp.src.String()
 		u.ack()
-		u.downlink = cp.Downlink
+		u.downlink = cp.freply
 	}
-	if u.acceptDgram != cp.Source.String() {
+	if u.acceptDgram != cp.src.String() {
 		lg.Error(u.cc.ConnId(), "should send association ack via udp first")
 		return
 	}
