@@ -95,3 +95,11 @@ func (u dtlsDatagram) LocalAddr() net.Addr {
 func (u dtlsDatagram) RemoteAddr() net.Addr {
 	return u.conn.RemoteAddr()
 }
+
+type MultiplexedConn interface {
+	Accept() net.Conn
+	Dial() net.Conn
+	LocalAddr() net.Addr
+	RemoteAddr() net.Addr
+	Close() error
+}
