@@ -189,7 +189,7 @@ func (s *ServerWorker) handshakeStream(
 	var conn1 io.Reader = conn
 	if s.IgnoreFragmentedRequest && prevAuth != nil {
 		lg.Debug("ignore fragmented request")
-		conn1 = &common.NetBufferOnlyReader{Conn: conn}
+		conn1 = &nt.NetBufferOnlyReader{Conn: conn}
 	}
 
 	req, err := message.ParseRequestFrom(conn1)

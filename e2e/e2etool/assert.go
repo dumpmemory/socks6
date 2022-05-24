@@ -7,7 +7,8 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/studentmain/socks6/internal"
+	"github.com/studentmain/socks6/common/arrayx"
+	"github.com/studentmain/socks6/common/rnd"
 )
 
 func AssertRead(t assert.TestingT, r io.Reader, b []byte) {
@@ -19,8 +20,8 @@ func AssertReadMask(t assert.TestingT, r io.Reader, b []byte, m []byte) {
 		panic("mask should longer than data")
 	}
 
-	b2 := internal.Dup(b)
-	b3 := internal.Dup(b)
+	b2 := arrayx.Dup(b)
+	b3 := arrayx.Dup(b)
 
 	_, err := io.ReadFull(r, b2)
 	assert.NoError(t, err)
@@ -65,7 +66,7 @@ func AssertClosed(t assert.TestingT, r io.Reader) {
 
 func AssertForward(t assert.TestingT, r io.Reader, w io.Writer) {
 	l := 1024 * 1024
-	data := internal.RandBytes(l)
+	data := rnd.RandBytes(l)
 
 	wg := sync.WaitGroup{}
 	wg.Add(2)

@@ -6,6 +6,7 @@ import (
 	"io"
 	"math"
 
+	"github.com/studentmain/socks6/common/arrayx"
 	"github.com/studentmain/socks6/common/lg"
 	"github.com/studentmain/socks6/internal"
 )
@@ -140,7 +141,7 @@ type RawOptionData struct {
 }
 
 func parseRawOptionData(d []byte) (OptionData, error) {
-	return &RawOptionData{Data: internal.Dup(d)}, nil
+	return &RawOptionData{Data: arrayx.Dup(d)}, nil
 }
 func (r RawOptionData) Len() uint16 {
 	l := len(r.Data)
@@ -172,14 +173,14 @@ func parseAuthenticationMethodAdvertisementOptionData(d []byte) (OptionData, err
 		i++
 	}
 
-	internal.SortByte(m)
+	arrayx.SortByte(m)
 	return AuthenticationMethodAdvertisementOptionData{
 		InitialDataLength: idl,
 		Methods:           m,
 	}, nil
 }
 func (a AuthenticationMethodAdvertisementOptionData) Len() uint16 {
-	l := internal.PaddedLen(len(a.Methods)+2, 4)
+	l := arrayx.PaddedLen(len(a.Methods)+2, 4)
 	return overflowCheck(l)
 }
 func (a AuthenticationMethodAdvertisementOptionData) Marshal() []byte {
@@ -213,7 +214,7 @@ type AuthenticationDataOptionData struct {
 func parseAuthenticationDataOptionData(d []byte) (OptionData, error) {
 	return AuthenticationDataOptionData{
 		Method: d[0],
-		Data:   internal.Dup(d[1:]),
+		Data:   arrayx.Dup(d[1:]),
 	}, nil
 }
 func (s AuthenticationDataOptionData) Len() uint16 {
@@ -238,7 +239,7 @@ type SessionIDOptionData struct {
 }
 
 func parseSessionIDOptionData(d []byte) (OptionData, error) {
-	return SessionIDOptionData{ID: internal.Dup(d)}, nil
+	return SessionIDOptionData{ID: arrayx.Dup(d)}, nil
 }
 func (s SessionIDOptionData) Marshal() []byte {
 	return s.ID

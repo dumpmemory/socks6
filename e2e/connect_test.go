@@ -10,8 +10,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/studentmain/socks6"
 	"github.com/studentmain/socks6/common"
+	"github.com/studentmain/socks6/common/errorh"
+	"github.com/studentmain/socks6/common/rnd"
 	"github.com/studentmain/socks6/e2e/e2etool"
-	"github.com/studentmain/socks6/internal"
 )
 
 func TestConnect(t *testing.T) {
@@ -59,8 +60,8 @@ func TestFragmentedConnect(t *testing.T) {
 	}
 	server.Start(ctx)
 
-	ta := internal.Must2(net.ResolveTCPAddr("tcp", sAddr))
-	clientFd := internal.Must2(net.DialTCP("tcp", nil, ta))
+	ta := errorh.Must2(net.ResolveTCPAddr("tcp", sAddr))
+	clientFd := errorh.Must2(net.DialTCP("tcp", nil, ta))
 	clientFd.SetNoDelay(true)
 	clientFd.SetKeepAlive(false)
 
@@ -100,7 +101,7 @@ func BenchmarkRelay(b *testing.B) {
 		UseSession: false,
 	}
 
-	chunk := internal.RandBytes(1024 * 1024)
+	chunk := rnd.RandBytes(1024 * 1024)
 	fd, err := client.Dial("tcp", echoAddr)
 	assert.NoError(b, err)
 

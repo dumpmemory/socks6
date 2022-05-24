@@ -1,16 +1,14 @@
-package common
+package arrayx
 
 import (
 	"math/bits"
-
-	"github.com/studentmain/socks6/internal"
 )
 
 // BoolArr is boolean bit array over []byte (just like Vector<bool> in C++)
 type BoolArr []byte
 
 func NewBoolArr(size int) BoolArr {
-	l := internal.PaddedLen(size, 8) / 8
+	l := PaddedLen(size, 8) / 8
 	return make([]byte, l)
 }
 

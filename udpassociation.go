@@ -6,7 +6,9 @@ import (
 	"time"
 
 	"github.com/studentmain/socks6/common"
+	"github.com/studentmain/socks6/common/arrayx"
 	"github.com/studentmain/socks6/common/lg"
+	"github.com/studentmain/socks6/common/rnd"
 	"github.com/studentmain/socks6/internal"
 	"github.com/studentmain/socks6/message"
 )
@@ -47,7 +49,7 @@ func newUdpAssociation(
 	addrFilter bool,
 	icmpOn bool,
 ) *udpAssociation {
-	id := internal.RandUint64()
+	id := rnd.RandUint64()
 	ps := ""
 	if pair != nil {
 		ps = pair.String()
@@ -178,7 +180,7 @@ func (u *udpAssociation) handleUdpDown(ctx context.Context) {
 			AssociationID: u.id,
 
 			Endpoint: message.ConvertAddr(a),
-			Data:     internal.Dup(buf[:l]),
+			Data:     arrayx.Dup(buf[:l]),
 		}
 		if !u.assocOk || u.downlink == nil {
 			continue

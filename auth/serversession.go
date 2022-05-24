@@ -3,22 +3,22 @@ package auth
 import (
 	"math"
 
-	"github.com/studentmain/socks6/common"
-	"github.com/studentmain/socks6/internal"
+	"github.com/studentmain/socks6/common/arrayx"
+	"github.com/studentmain/socks6/common/rnd"
 )
 
 type serverSession struct {
 	id         []byte
 	windowBase uint32
-	window     common.BoolArr
+	window     arrayx.BoolArr
 	popcnt     int
 	connCount  int
 }
 
 func newServerSession(idSize int) *serverSession {
 	return &serverSession{
-		id:     internal.RandBytes(idSize),
-		window: common.NewBoolArr(0),
+		id:     rnd.RandBytes(idSize),
+		window: arrayx.NewBoolArr(0),
 	}
 }
 
@@ -41,8 +41,8 @@ func (s *serverSession) allocateWindow(size uint32) (bool, uint32, uint32) {
 	origSize := s.window.Length()
 	// zero window, alloc new window
 	if origSize == 0 {
-		s.windowBase = internal.RandUint32()
-		s.window = common.NewBoolArr(int(size))
+		s.windowBase = rnd.RandUint32()
+		s.window = arrayx.NewBoolArr(int(size))
 		return true, s.windowBase, size
 	}
 	// first not spent, reject
@@ -53,13 +53,13 @@ func (s *serverSession) allocateWindow(size uint32) (bool, uint32, uint32) {
 	// windowBase+=s.popcnt, align to 8
 	spentRatio := float64(s.popcnt) / float64(origSize)
 	baseOffsetF := math.Floor(spentRatio * float64(origSize))
-	baseOffset := internal.PaddedLen(int(baseOffsetF), 8) / 8
+	baseOffset := arrayx.PaddedLen(int(baseOffsetF), 8) / 8
 	s.windowBase += uint32(baseOffset)
 	dst := s.window
 
 	// resize, alloc new
 	if size > uint32(origSize) {
-		dst = make(common.BoolArr, size)
+		dst = make(arrayx.BoolArr, size)
 	}
 	// resized or window shifted
 	if baseOffset > 0 || size > uint32(origSize) {

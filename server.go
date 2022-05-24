@@ -9,6 +9,7 @@ import (
 	"github.com/lucas-clemente/quic-go"
 	"github.com/pion/dtls/v2"
 	"github.com/studentmain/socks6/common"
+	"github.com/studentmain/socks6/common/errorh"
 	"github.com/studentmain/socks6/common/lg"
 	"github.com/studentmain/socks6/common/nt"
 	"github.com/studentmain/socks6/internal"
@@ -83,8 +84,8 @@ func (s *Server) Start(ctx context.Context) {
 }
 
 func (s *Server) startTCP(ctx context.Context, addr string) {
-	addr2 := internal.Must2(net.ResolveTCPAddr("tcp", addr))
-	s.tcp = internal.Must2(net.ListenTCP("tcp", addr2))
+	addr2 := errorh.Must2(net.ResolveTCPAddr("tcp", addr))
+	s.tcp = errorh.Must2(net.ListenTCP("tcp", addr2))
 	lg.Infof("start TCP server at %s", s.tcp.Addr())
 	s.listeners = append(s.listeners, s.tcp)
 	go func() {
@@ -100,7 +101,7 @@ func (s *Server) startTCP(ctx context.Context, addr string) {
 }
 
 func (s *Server) startTLS(ctx context.Context, addr string) {
-	s.tls = internal.Must2(tls.Listen("tcp", addr, s.TlsConfig))
+	s.tls = errorh.Must2(tls.Listen("tcp", addr, s.TlsConfig))
 	lg.Infof("start TLS server at %s", s.tls.Addr())
 	s.listeners = append(s.listeners, s.tls)
 
@@ -117,8 +118,8 @@ func (s *Server) startTLS(ctx context.Context, addr string) {
 }
 
 func (s *Server) startUDP(ctx context.Context, addr string) {
-	addr2 := internal.Must2(net.ResolveUDPAddr("udp", addr))
-	s.udp = internal.Must2(net.ListenUDP("udp", addr2))
+	addr2 := errorh.Must2(net.ResolveUDPAddr("udp", addr))
+	s.udp = errorh.Must2(net.ListenUDP("udp", addr2))
 	lg.Infof("start UDP server at %s", s.udp.LocalAddr())
 	s.listeners = append(s.listeners, s.udp)
 
@@ -168,9 +169,9 @@ func createDTLSConfig(t tls.Config) dtls.Config {
 }
 
 func (s *Server) startDTLS(ctx context.Context, addr string) {
-	addr2 := internal.Must2(net.ResolveUDPAddr("udp", addr))
+	addr2 := errorh.Must2(net.ResolveUDPAddr("udp", addr))
 	dtlsConfig := createDTLSConfig(*s.TlsConfig)
-	s.dtls = internal.Must2(dtls.Listen("udp", addr2, &dtlsConfig))
+	s.dtls = errorh.Must2(dtls.Listen("udp", addr2, &dtlsConfig))
 	lg.Infof("start DTLS server at %s", s.dtls.Addr())
 	s.listeners = append(s.listeners, s.dtls)
 
@@ -194,7 +195,7 @@ func (s *Server) startDTLS(ctx context.Context, addr string) {
 }
 
 func (s *Server) startQUIC(ctx context.Context, addr string) {
-	s.quic = internal.Must2(quic.ListenAddr(addr, s.TlsConfig, &quic.Config{}))
+	s.quic = errorh.Must2(quic.ListenAddr(addr, s.TlsConfig, &quic.Config{}))
 	lg.Infof("start QUIC server at %s", s.quic.Addr())
 	s.listeners = append(s.listeners, s.quic)
 	go func() {

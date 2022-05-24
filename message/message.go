@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"io"
 
+	"github.com/studentmain/socks6/common/arrayx"
 	"github.com/studentmain/socks6/common/lg"
 	"github.com/studentmain/socks6/internal"
 )
@@ -458,7 +459,7 @@ func ParseUDPMessageFrom(b io.Reader) (*UDPMessage, error) {
 		if _, err = io.ReadFull(b, buf[:remainLen]); err != nil {
 			return nil, err
 		}
-		u.Data = internal.Dup(buf[:remainLen])
+		u.Data = arrayx.Dup(buf[:remainLen])
 		lg.Debug("read udpmsg data")
 		return u, nil
 	}
@@ -530,7 +531,7 @@ func ParseHandshake5From(b io.Reader) (*Handshake, error) {
 	if _, err := io.ReadFull(b, buf[:mlen]); err != nil {
 		return nil, err
 	}
-	h.Methods = internal.Dup(buf[:mlen])
+	h.Methods = arrayx.Dup(buf[:mlen])
 	return h, nil
 }
 

@@ -5,6 +5,7 @@ import (
 	"net"
 
 	"github.com/lucas-clemente/quic-go"
+	"github.com/studentmain/socks6/common/arrayx"
 	"github.com/studentmain/socks6/internal"
 )
 
@@ -60,7 +61,7 @@ func (u dtlsSeqPacket) NextDatagram() (Datagram, error) {
 	}
 
 	dgram := dtlsDatagram{
-		data: internal.Dup(buf[:n]),
+		data: arrayx.Dup(buf[:n]),
 		conn: u.conn,
 	}
 	return dgram, nil

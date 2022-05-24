@@ -7,8 +7,8 @@ import (
 	"net"
 	"strconv"
 
+	"github.com/studentmain/socks6/common/arrayx"
 	"github.com/studentmain/socks6/common/lg"
-	"github.com/studentmain/socks6/internal"
 	"golang.org/x/net/idna"
 )
 
@@ -136,7 +136,7 @@ func NewAddr(address string) (*SocksAddr, error) {
 			return nil, ErrFormat.WithVerbose("domain name shouldn't longer than 255")
 		}
 		atyp = AddressTypeDomainName
-		addr = internal.Dup([]byte(asc))
+		addr = arrayx.Dup([]byte(asc))
 	}
 	return &SocksAddr{
 		AddressType: atyp,
@@ -173,7 +173,7 @@ func (a *SocksAddr) Marshal6(pad byte) []byte {
 	npad := 0
 	if a.AddressType == AddressTypeDomainName {
 		l := 1 + len(a.Address)
-		total := internal.PaddedLen(l, 4)
+		total := arrayx.PaddedLen(l, 4)
 		lg.Debugf("serialize socks 6 address domain name, padding %d to %d", total, l)
 		if total > 255 {
 			lg.Panic("address too long")
@@ -253,7 +253,7 @@ func ParseSocksAddr6FromWithLimit(b io.Reader, limit int) (addr *SocksAddr, pad 
 		if _, err := io.ReadFull(b, buf[:l]); err != nil {
 			return nil, 0, 0, err
 		}
-		addr.Address = internal.Dup(buf[:l])
+		addr.Address = arrayx.Dup(buf[:l])
 		lg.Debug("read socks 6 address ip", addr.Address)
 		lg.Debugf("read socks 6 address %+v, padding %d, used %d", addr, padding, int(l)+4)
 		return addr, padding, int(l) + 4, nil
@@ -320,7 +320,7 @@ func ParseSocksAddr5From(b io.Reader) (*SocksAddr, error) {
 		return nil, err
 	}
 	lg.Debug("read socks 5 address host port", buf[:l+2])
-	a.Address = internal.Dup(buf[:l])
+	a.Address = arrayx.Dup(buf[:l])
 	a.Port = binary.BigEndian.Uint16(buf[l:])
 	lg.Debug("read socks 5 address", a)
 	return a, nil
