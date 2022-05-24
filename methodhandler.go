@@ -67,13 +67,18 @@ func (s *ServerWorker) BindHandler(
 	})
 
 	defer closeConn.Defer()
-	// find backlogged listener
-	bl, accept := s.backlogListener.Load(cc.Destination().String())
-	if accept {
-		lg.Info(cc.ConnId(), "trying accept backlogged connection at", bl.listener.Addr())
-		// bl.handler is blocking, needn't cancel defer
-		bl.handler(ctx, cc)
-		return
+
+	subStream := cc.MuxConn != nil
+
+	if !subStream {
+		// find backlogged listener
+		bl, accept := s.backlogListener.Load(cc.Destination().String())
+		if accept {
+			lg.Info(cc.ConnId(), "trying accept backlogged connection at", bl.listener.Addr())
+			// bl.handler is blocking, needn't cancel defer
+			bl.handler(ctx, cc)
+			return
+		}
 	}
 
 	// not a backlogged accept
@@ -113,18 +118,52 @@ func (s *ServerWorker) BindHandler(
 	// bind "handshake" done
 
 	if backlogged {
-		// let backloglistener handle conn
-		closeConn.Cancel()
 		backlog := iBacklog.(uint16)
-		// backlog will only simulated on server
-		// https://github.com/golang/go/issues/39000
-		bl := newBacklogListener(listener, cc, backlog)
+		if !subStream {
 
-		blAddr := listener.Addr().String()
-		s.backlogListener.Store(blAddr, bl)
-		lg.Trace(cc.ConnId(), "start backlog listener worker")
-		go bl.worker(ctx)
-		return
+			// let backloglistener handle conn
+			closeConn.Cancel()
+			// backlog will only simulated on server
+			// https://github.com/golang/go/issues/39000
+			bl := newBacklogListener(listener, cc, backlog)
+
+			blAddr := listener.Addr().String()
+			s.backlogListener.Store(blAddr, bl)
+			lg.Trace(cc.ConnId(), "start backlog listener worker")
+			go bl.worker(ctx)
+			return
+		} else {
+
+			bl := newBacklogMuxListener(ctx, listener, backlog)
+			go func() {
+				defer bl.Close()
+				for {
+					rconn, err2 := bl.Accept()
+					if err2 != nil {
+						return
+					}
+					go func(rconn net.Conn) {
+						defer rconn.Close()
+
+						cconn, err3 := cc.MuxConn.Dial()
+						if err3 != nil {
+							return
+						}
+						defer cconn.Close()
+
+						rep := message.NewOperationReply()
+						rep.Endpoint = message.ConvertAddr(rconn.RemoteAddr())
+						cc.setStreamId(rep)
+						_, err = cconn.Write(rep.Marshal())
+						if err != nil {
+							return
+						}
+
+						relay(ctx, cconn, rconn, time.Hour)
+					}(rconn)
+				}
+			}()
+		}
 	}
 	// non backlogged path
 	defer listener.Close()

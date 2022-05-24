@@ -55,9 +55,9 @@ type ServerWorker struct {
 	IgnoreFragmentedRequest bool
 	EnableICMP              bool
 
-	backlogListener common.SyncMap[string, *backlogListener] // map[string]*bl
-	reservedUdpAddr common.SyncMap[string, uint64]           // map[string]uint64
-	udpAssociation  common.SyncMap[uint64, *udpAssociation]  // map[uint64]*ua
+	backlogListener common.SyncMap[string, *backlogBindWorker] // map[string]*bl
+	reservedUdpAddr common.SyncMap[string, uint64]             // map[string]uint64
+	udpAssociation  common.SyncMap[uint64, *udpAssociation]    // map[uint64]*ua
 }
 
 // ServerOutbound is a group of function called by ServerWorker when a connection or listener is needed to fullfill client request
@@ -121,7 +121,7 @@ func NewServerWorker() *ServerWorker {
 			DefaultIPv4: common.GuessDefaultIPv4(),
 			DefaultIPv6: common.GuessDefaultIPv6(),
 		},
-		backlogListener: common.NewSyncMap[string, *backlogListener](),
+		backlogListener: common.NewSyncMap[string, *backlogBindWorker](),
 		reservedUdpAddr: common.NewSyncMap[string, uint64](),
 		udpAssociation:  common.NewSyncMap[uint64, *udpAssociation](),
 	}
@@ -482,7 +482,7 @@ func (s *ServerWorker) ClearUnusedResource(ctx context.Context) {
 	for !stop {
 		<-tick.C
 
-		s.backlogListener.Range(func(key string, value *backlogListener) bool {
+		s.backlogListener.Range(func(key string, value *backlogBindWorker) bool {
 			bl := value
 			if bl.alive {
 				return true
