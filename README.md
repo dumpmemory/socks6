@@ -23,11 +23,11 @@ Stand-alone server and SOCKS 5 to SOCKS 6 converter client is planned.
 
 currently based on draft 12
 
-done: finished
-n/a: not applicable
-todo: will do
-how: investigating API design
-wtf: want to do, but has technical problem
+- done: finished
+- n/a: not applicable
+- todo: will do
+- how: investigating API design
+- wtf: want to do, but has technical problem
 
 - Message parse and serialize (done)
 - Handshake (#3, done)
@@ -174,9 +174,15 @@ I choose option 2
 
 - UDP
     - Client SHOULD send QUIC datagram
-    - Client and server MAY use UDP over TCP on QUIC stream (to support QUIC impl without RFC9221)
+    - Client and server MAY use UDP over TCP on QUIC stream (to support QUIC impl without RFC9221 and muxconn with no dgram capabili)
     - Server MAY skip association check (if cmd type limit removed, MUST NOT)
 
+New option:
+    StreamID, contains a uint32, unique for each conn. Used by client to enable mux bind.
+- non-mux conn MUST ignore it.
+- In same conn, client MUST either always send it or not send it.
+- When not send by client, 1 backlog bind per conn.
+- Server MUST reply same stream id to ack mux bind
 
 Normative ref:
 - RFC9000

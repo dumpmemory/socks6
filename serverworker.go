@@ -75,12 +75,10 @@ type InternetServerOutbound struct {
 }
 
 func (i InternetServerOutbound) Dial(ctx context.Context, option message.StackOptionInfo, addr *message.SocksAddr) (net.Conn, message.StackOptionInfo, error) {
-	a := message.ConvertAddr(addr)
-	return socket.DialWithOption(ctx, *a, option)
+	return socket.DialWithOption(ctx, *addr, option)
 }
 func (i InternetServerOutbound) Listen(ctx context.Context, option message.StackOptionInfo, addr *message.SocksAddr) (net.Listener, message.StackOptionInfo, error) {
-	a := message.ConvertAddr(addr)
-	return socket.ListenerWithOption(ctx, *a, option)
+	return socket.ListenerWithOption(ctx, *addr, option)
 }
 func (i InternetServerOutbound) ListenPacket(ctx context.Context, option message.StackOptionInfo, addr *message.SocksAddr) (net.PacketConn, message.StackOptionInfo, error) {
 	mcast := false
@@ -165,17 +163,17 @@ func (s *ServerWorker) ServeStream(
 	ctx context.Context,
 	conn net.Conn,
 ) {
-	cc, cmd, ar := s.handleFirstStream(ctx, conn, message.CommandNoop, nil)
+	cc, cmd, ar := s.handshakeStream(ctx, conn, nil)
 	if ar == nil || cc == nil || !ar.Success {
+		conn.Close()
 		return
 	}
 	s.CommandHandlers[cmd](ctx, *cc)
 }
 
-func (s *ServerWorker) handleFirstStream(
+func (s *ServerWorker) handshakeStream(
 	ctx context.Context,
 	conn net.Conn,
-	expectCmd message.CommandCode,
 	prevAuth *auth.ServerAuthenticationResult,
 ) (sc *SocksConn, cmd message.CommandCode, authr *auth.ServerAuthenticationResult) {
 	closeConn := common.NewCancellableDefer(func() {
@@ -188,7 +186,7 @@ func (s *ServerWorker) handleFirstStream(
 	lg.Trace(ccid, "start processing")
 	// create a wrapper reader if necessary
 	var conn1 io.Reader = conn
-	if s.IgnoreFragmentedRequest {
+	if s.IgnoreFragmentedRequest && prevAuth != nil {
 		lg.Debug("ignore fragmented request")
 		conn1 = &common.NetBufferOnlyReader{Conn: conn}
 	}
@@ -225,6 +223,7 @@ func (s *ServerWorker) handleFirstStream(
 		}
 		lg.Trace(ccid, "authenticate success")
 	}
+
 	cc := SocksConn{
 		Conn:        conn,
 		Request:     req,
@@ -232,12 +231,14 @@ func (s *ServerWorker) handleFirstStream(
 		Session:     authResult.SessionID,
 		InitialData: initData,
 	}
+
+	if sid, ok := req.Options.GetData(message.OptionKindStreamID); ok {
+		sidVal := sid.(message.StreamIDOptionData).ID
+		cc.StreamId = sidVal
+	}
 	if s.Rule != nil && !s.Rule(cc) {
 		lg.Info(ccid, "not allowed by rule")
 		conn.Write(message.NewOperationReplyWithCode(message.OperationReplyNotAllowedByRule).Marshal())
-		return nil, req.CommandCode, authResult
-	}
-	if expectCmd != message.CommandNoop && req.CommandCode != message.CommandNoop && req.CommandCode != expectCmd {
 		return nil, req.CommandCode, authResult
 	}
 
@@ -442,10 +443,11 @@ func (s *ServerWorker) ServeMuxConn(
 	if err != nil {
 		return
 	}
-	sc0, cmd0, auth0 := s.handleFirstStream(ctx, c0, message.CommandNoop, nil)
+	sc0, cmd0, auth0 := s.handshakeStream(ctx, c0, nil)
 	if auth0 == nil || !auth0.Success {
 		return
 	}
+	sc0.MuxConn = mux
 	go s.CommandHandlers[cmd0](ctx, *sc0)
 
 	for {
@@ -454,7 +456,9 @@ func (s *ServerWorker) ServeMuxConn(
 			return
 		}
 		go func() {
-			sc, cmd, _ := s.handleFirstStream(ctx, c, cmd0, auth0)
+			// authn skipped
+			sc, cmd, _ := s.handshakeStream(ctx, c, auth0)
+			sc.MuxConn = mux
 			s.CommandHandlers[cmd](ctx, *sc)
 		}()
 	}
@@ -496,20 +500,6 @@ func (s *ServerWorker) ClearUnusedResource(ctx context.Context) {
 			return true
 		})
 	}
-}
-
-// setSessionId append session id option to operation reply when id is not null
-func setSessionId(oprep *message.OperationReply, id []byte) *message.OperationReply {
-	if id == nil {
-		return oprep
-	}
-	oprep.Options.Add(message.Option{
-		Kind: message.OptionKindSessionID,
-		Data: message.SessionIDOptionData{
-			ID: id,
-		},
-	})
-	return oprep
 }
 
 func setAuthMethodInfo(arep *message.AuthenticationReply, result auth.ServerAuthenticationResult) *message.AuthenticationReply {

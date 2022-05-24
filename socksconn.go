@@ -8,12 +8,13 @@ import (
 
 // SocksConn represents a SOCKS 6 connection received by server
 type SocksConn struct {
-	Conn    net.Conn         // base connection
+	Conn    net.Conn
+	MuxConn MultiplexedConn
 	Request *message.Request // request sent by client
 
-	ClientId string // client identifier provided by authenticator
-	Session  []byte // the session this connection belongs to
-
+	ClientId    string // client identifier provided by authenticator
+	Session     []byte // the session this connection belongs to
+	StreamId    uint32 // stream id provided by client
 	InitialData []byte // client's initial data
 }
 
@@ -42,7 +43,35 @@ func (c SocksConn) WriteReply(code message.ReplyCode, ep net.Addr, opt *message.
 	oprep := message.NewOperationReplyWithCode(code)
 	oprep.Endpoint = message.ConvertAddr(ep)
 	oprep.Options = opt
-	setSessionId(oprep, c.Session)
+	c.setSessionId(oprep)
+	c.setStreamId(oprep)
 	_, e := c.Conn.Write(oprep.Marshal())
 	return e
+}
+
+// setSessionId append session id option to operation reply when id is not null
+func (c SocksConn) setSessionId(oprep *message.OperationReply) *message.OperationReply {
+	if c.Session == nil {
+		return oprep
+	}
+	oprep.Options.Add(message.Option{
+		Kind: message.OptionKindSessionID,
+		Data: message.SessionIDOptionData{
+			ID: c.Session,
+		},
+	})
+	return oprep
+}
+
+func (c SocksConn) setStreamId(oprep *message.OperationReply) *message.OperationReply {
+	if c.MuxConn == nil {
+		return oprep
+	}
+	oprep.Options.Add(message.Option{
+		Kind: message.OptionKindStreamID,
+		Data: message.StreamIDOptionData{
+			ID: c.StreamId,
+		},
+	})
+	return oprep
 }
