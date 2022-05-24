@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 
+	"github.com/lucas-clemente/quic-go"
 	"github.com/pion/dtls/v2"
 	"github.com/studentmain/socks6/common"
 	"github.com/studentmain/socks6/common/lg"
@@ -31,6 +32,7 @@ type Server struct {
 	dtls  net.Listener
 	icmp4 net.PacketConn
 	icmp6 net.PacketConn
+	quic  quic.Listener
 
 	listeners []canClose
 }
@@ -193,8 +195,25 @@ func (s *Server) startDTLS(ctx context.Context, addr string) {
 				ds := dtlsSeqPacket{
 					conn: conn,
 				}
-				go s.Worker.ServeSeqPacket(ctx, ds)
+				s.Worker.ServeSeqPacket(ctx, ds)
 			}()
+		}
+	}()
+}
+
+func (s *Server) startQUIC(ctx context.Context, addr string) {
+	s.quic = internal.Must2(quic.ListenAddr(addr, s.TlsConfig, &quic.Config{}))
+	lg.Infof("start QUIC server at %s", s.quic.Addr())
+	s.listeners = append(s.listeners, s.quic)
+	go func() {
+		for {
+			conn, err := s.quic.Accept(ctx)
+			if err != nil {
+				lg.Error("stop QUIC server", err)
+				return
+			}
+			qmc := quicMuxConn{conn: conn}
+			go s.Worker.ServeMuxConn(ctx, qmc)
 		}
 	}()
 }

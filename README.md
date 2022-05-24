@@ -109,6 +109,77 @@ effectively make reflection harder to occur, which in turn reduced RCS.
 ### Address dependent filtering NAT (Restricted cone)
 
 Optional. In some sceneario, UDP Endpoint independent filtering (Full cone) NAT can reflect radar pulse, cause much higher RCS.
-Switch to address dependent filtering can absorb incoming radar pulse, reduce RCS sigficantly without losing critical end-to-end property too much.
+Switch to address dependent filtering can absorb incoming radar pulse, reduce RCS significantly without losing critical end-to-end property too much.
 
 About UDP NAT behavior see [RFC4787](https://datatracker.ietf.org/doc/html/rfc4787)
+
+### QUIC transport
+
+Optional. Should belongs to another Internet Draft or a new Workgroup,<!--consider how we actually use SOCKS 5 and [what the most famous SOCKS 5 implementation has been done](https://www.eff.org/deeplinks/2015/08/speech-enables-speech-china-takes-aim-its-coders), I suggest call it Unauthenticated Firewall Traversal Workgroup.-->
+
+[RFC9221](https://datatracker.ietf.org/doc/html/rfc9221) mentioned
+
+> Unreliable QUIC datagrams can also be used to implement an IP packet tunnel over QUIC, such as for a Virtual Private Network (VPN).
+
+And here comes <q>a Virtual Private Network (VPN)</q>.
+
+Technically SOCKS works on Session Layer (L5), most VPN works on Network Layer (L3), but thanks for our great vendors and service providers, modern Internet even only need two transport layer protocols (By the way, that's why I choose shiny new QUIC transport instead of old school SCTP transport), unbreakable obstacle between the layers has been broken, we are going toward a layerless Internet which all nodes are equal, <!--but some nodes are more equal. The Internet revolution has been betrayed, my friend!-->
+
+Since there are no such Internet Draft not to mention Workgroup yet. Here's my simple draft.
+
+#### Draft
+
+[BCP14 boilerplate](https://datatracker.ietf.org/doc/html/rfc8174#section-2), you know what it is, omitted.
+
+- All QUIC stream use same protocol with TCP, no "control stream"
+- For each QUIC connection, except command NOOP, all stream SHOULD use same command code. i.e. BIND and CONNECT in same connection's different stream is not allowed. BIND and NOOP is allowed. (to reduce impl complexity, can be remove with some restriction)
+
+
+- Client SHOULD try to authenticate over every stream until one stream finished authentication (either success or fail).
+- Server SHOULD only authenticate first incoming stream.
+- All stream in a connection are belongs to same session.
+
+(stack option may wont works as expected?)
+
+Per command requirement:
+- CONNECT
+    - (nothing)
+- BIND
+    - When backlog option enabled, server open a new stream to client, send remote's address via a operation reply (without client send anything). Only a backlog enabled stream per connection. (if cmd type limit removed, a new mux backlog option may needed, should contain a conn scope uniq token to distinguish between different original bind stream in same conn)
+```
+    c               s               r
+    ---------------------------------
+    ---#1 bind sa1-->
+                    listen sa1
+    <--#1 oprep sa1--
+                    <---- sa1<ra1 ---
+
+option 1
+    <--#1 oprep ra1--
+    ---#2 bind ra1-->
+    <--#2 relay -------------- ra1-->
+
+option 2
+    <--#2 oprep ra1--
+    <--#2 relay -------------- ra1-->
+
+option 2a
+    <-#2 oprep ra1(#1)
+    <--#2 relay -------------- ra1-->
+``` 
+
+option 1 is directly copy from tcp workflow, simpler to impl.
+option 2 reduced rtt since server can push "conn" to client.
+I choose option 2
+
+- UDP
+    - Client SHOULD send QUIC datagram
+    - Client and server MAY use UDP over TCP on QUIC stream (to support QUIC impl without RFC9221)
+    - Server MAY skip association check (if cmd type limit removed, MUST NOT)
+
+
+Normative ref:
+- RFC9000
+- RFC9221
+- BCP14
+- I-D.socks6

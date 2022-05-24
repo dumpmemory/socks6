@@ -177,7 +177,7 @@ func (s *ServerWorker) handleFirstStream(
 	conn net.Conn,
 	expectCmd message.CommandCode,
 	prevAuth *auth.ServerAuthenticationResult,
-) (c *SocksConn, cmd message.CommandCode, authr *auth.ServerAuthenticationResult) {
+) (sc *SocksConn, cmd message.CommandCode, authr *auth.ServerAuthenticationResult) {
 	closeConn := common.NewCancellableDefer(func() {
 		conn.Close()
 	})
@@ -253,7 +253,7 @@ func (s *ServerWorker) handleFirstStream(
 	defer s.Authenticator.SessionConnClose(authResult.SessionID)
 	// it's handler's job to close conn
 	closeConn.Cancel()
-	return c, req.CommandCode, authResult
+	return &cc, req.CommandCode, authResult
 }
 
 func (s *ServerWorker) handleRequestError(
