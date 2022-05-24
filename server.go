@@ -10,6 +10,7 @@ import (
 	"github.com/pion/dtls/v2"
 	"github.com/studentmain/socks6/common"
 	"github.com/studentmain/socks6/common/lg"
+	"github.com/studentmain/socks6/common/nt"
 	"github.com/studentmain/socks6/internal"
 	"golang.org/x/net/icmp"
 )
@@ -127,20 +128,13 @@ func (s *Server) startUDP(ctx context.Context, addr string) {
 		defer internal.BytesPool4k.Return(buf)
 
 		for {
-			nRead, rAddr, err := s.udp.ReadFrom(buf)
+			dgram, err := nt.ReadUDPDatagram(s.udp)
 			if err != nil {
 				lg.Error("stop UDP server", err)
 				return
 			}
 
-			go s.Worker.ServeDatagram(
-				ctx,
-				udpDatagram{
-					raddr: rAddr,
-					data:  internal.Dup(buf[:nRead]),
-					conn:  s.udp,
-				},
-			)
+			go s.Worker.ServeDatagram(ctx, dgram)
 		}
 	}()
 }
@@ -192,9 +186,7 @@ func (s *Server) startDTLS(ctx context.Context, addr string) {
 
 				buf := internal.BytesPool4k.Rent()
 				defer internal.BytesPool4k.Return(buf)
-				ds := dtlsSeqPacket{
-					conn: conn,
-				}
+				ds := nt.WrapDTLSConn(conn)
 				s.Worker.ServeSeqPacket(ctx, ds)
 			}()
 		}
@@ -212,7 +204,7 @@ func (s *Server) startQUIC(ctx context.Context, addr string) {
 				lg.Error("stop QUIC server", err)
 				return
 			}
-			qmc := quicMuxConn{conn: conn}
+			qmc := nt.WrapQUICConn(conn)
 			go s.Worker.ServeMuxConn(ctx, qmc)
 		}
 	}()

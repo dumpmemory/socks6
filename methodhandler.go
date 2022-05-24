@@ -8,6 +8,7 @@ import (
 
 	"github.com/studentmain/socks6/common"
 	"github.com/studentmain/socks6/common/lg"
+	"github.com/studentmain/socks6/common/nt"
 	"github.com/studentmain/socks6/message"
 )
 
@@ -252,7 +253,7 @@ func (s *ServerWorker) UdpAssociateHandler(
 			reservedAddr = s6a
 		}
 		// check and create reply option
-		if !common.UdpPortAvaliable(reservedAddr) {
+		if !nt.UdpPortAvaliable(reservedAddr) {
 			reservedAddr = nil
 			appliedPpod.Reserve = false
 		} else {

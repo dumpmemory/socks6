@@ -11,6 +11,7 @@ import (
 	"github.com/studentmain/socks6/auth"
 	"github.com/studentmain/socks6/common"
 	"github.com/studentmain/socks6/common/lg"
+	"github.com/studentmain/socks6/common/nt"
 	"github.com/studentmain/socks6/internal/socket"
 	"github.com/studentmain/socks6/message"
 	"golang.org/x/net/icmp"
@@ -33,7 +34,7 @@ type ServerWorker struct {
 	// VersionErrorHandler should close connection by itself
 	VersionErrorHandler func(ctx context.Context, ver message.ErrVersionMismatch, conn net.Conn)
 
-	DatagramVersionErrorHandler func(ctx context.Context, ver message.ErrVersionMismatch, dgram Datagram)
+	DatagramVersionErrorHandler func(ctx context.Context, ver message.ErrVersionMismatch, dgram nt.Datagram)
 
 	Outbound ServerOutbound
 
@@ -118,8 +119,8 @@ func NewServerWorker() *ServerWorker {
 		VersionErrorHandler: ReplyVersionSpecificError,
 		Authenticator:       defaultAuth,
 		Outbound: InternetServerOutbound{
-			DefaultIPv4: common.GuessDefaultIPv4(),
-			DefaultIPv6: common.GuessDefaultIPv6(),
+			DefaultIPv4: nt.GuessDefaultIPv4(),
+			DefaultIPv6: nt.GuessDefaultIPv6(),
 		},
 		backlogListener: common.NewSyncMap[string, *backlogBindWorker](),
 		reservedUdpAddr: common.NewSyncMap[string, uint64](),
@@ -341,7 +342,7 @@ func (s *ServerWorker) authn(
 
 func (s *ServerWorker) ServeSeqPacket(
 	ctx context.Context,
-	dgramSrc SeqPacket,
+	dgramSrc nt.SeqPacket,
 ) {
 	d0, err := dgramSrc.NextDatagram()
 	if err != nil {
@@ -376,7 +377,7 @@ func (s *ServerWorker) ServeSeqPacket(
 
 func (s *ServerWorker) ServeDatagram(
 	ctx context.Context,
-	dgram Datagram,
+	dgram nt.Datagram,
 ) {
 	assoc, h := s.handleFirstDatagram(ctx, dgram)
 	assoc.handleUdpUp(ctx, socksDatagram{
@@ -388,7 +389,7 @@ func (s *ServerWorker) ServeDatagram(
 
 func (s *ServerWorker) handleFirstDatagram(
 	ctx context.Context,
-	dgram Datagram,
+	dgram nt.Datagram,
 ) (*udpAssociation, *message.UDPMessage) {
 	h, err := message.ParseUDPMessageFrom(bytes.NewReader(dgram.Data()))
 	if err != nil {
@@ -410,7 +411,7 @@ func (s *ServerWorker) ForwardICMP(ctx context.Context, msg *icmp.Message, ip *n
 	if hdr == nil {
 		return
 	}
-	ipSrc, ipDst, proto, err := parseSrcDstAddrFromIPHeader(hdr, ver)
+	ipSrc, ipDst, proto, err := nt.ParseSrcDstAddrFromIPHeader(hdr, ver)
 	if err != nil {
 		lg.Info("ICMP IP header parse fail", err)
 		return
@@ -436,7 +437,7 @@ func (s *ServerWorker) ForwardICMP(ctx context.Context, msg *icmp.Message, ip *n
 
 func (s *ServerWorker) ServeMuxConn(
 	ctx context.Context,
-	mux MultiplexedConn,
+	mux nt.MultiplexedConn,
 ) {
 	defer mux.Close()
 	c0, err := mux.Accept()
@@ -450,6 +451,10 @@ func (s *ServerWorker) ServeMuxConn(
 	sc0.MuxConn = mux
 	go s.CommandHandlers[cmd0](ctx, *sc0)
 
+	if umux, ok := mux.(nt.SeqPacket); ok {
+		// todo go udp fwd
+		_ = umux
+	}
 	for {
 		c, err := mux.Accept()
 		if err != nil {

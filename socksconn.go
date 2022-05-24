@@ -3,13 +3,14 @@ package socks6
 import (
 	"net"
 
+	"github.com/studentmain/socks6/common/nt"
 	"github.com/studentmain/socks6/message"
 )
 
 // SocksConn represents a SOCKS 6 connection received by server
 type SocksConn struct {
 	Conn    net.Conn
-	MuxConn MultiplexedConn
+	MuxConn nt.MultiplexedConn
 	Request *message.Request // request sent by client
 
 	ClientId    string // client identifier provided by authenticator

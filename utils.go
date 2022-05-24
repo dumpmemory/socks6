@@ -3,8 +3,6 @@ package socks6
 import (
 	"context"
 	"crypto/tls"
-	"encoding/binary"
-	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -168,69 +166,6 @@ func getReplyCode(err error) message.ReplyCode {
 		}
 	}
 	return message.OperationReplyServerFailure
-}
-
-// icmp utils
-
-// protocol which has src and dst port (at "well-known" offset)
-var protocolWithPort = map[int]bool{
-	6:   true, // tcp
-	17:  true, // udp
-	33:  true, // dccp
-	132: true, // sctp
-}
-
-func parseSrcDstAddrFromIPHeader(header []byte, version int) (*message.SocksAddr, *message.SocksAddr, int, error) {
-	switch version {
-	case 4:
-		hd, err := icmp.ParseIPv4Header(header)
-		if err != nil {
-			return nil, nil, 0, err
-		}
-		if _, ok := protocolWithPort[hd.Protocol]; !ok {
-			return nil, nil, 0, errors.New("protocol not supported")
-		}
-		if len(header) < hd.Len+4 {
-			return nil, nil, 0, errors.New("port field not exist")
-		}
-		data := header[hd.Len:]
-		s := message.SocksAddr{
-			AddressType: message.AddressTypeIPv4,
-			Address:     hd.Src.To4(),
-			Port:        binary.BigEndian.Uint16(data),
-		}
-		d := message.SocksAddr{
-			AddressType: message.AddressTypeIPv4,
-			Address:     hd.Dst.To4(),
-			Port:        binary.BigEndian.Uint16(data[2:]),
-		}
-		return &s, &d, hd.Protocol, nil
-	case 6:
-		hd, err := ipv6.ParseHeader(header)
-		if err != nil {
-			return nil, nil, 0, err
-		}
-		if _, ok := protocolWithPort[hd.NextHeader]; !ok {
-			return nil, nil, 0, errors.New("protocol not supported")
-		}
-		if len(header) < ipv6.HeaderLen+4 {
-			return nil, nil, 0, errors.New("port field not exist")
-		}
-		data := header[ipv6.HeaderLen:]
-		s := message.SocksAddr{
-			AddressType: message.AddressTypeIPv6,
-			Address:     hd.Src,
-			Port:        binary.BigEndian.Uint16(data),
-		}
-		d := message.SocksAddr{
-			AddressType: message.AddressTypeIPv6,
-			Address:     hd.Dst,
-			Port:        binary.BigEndian.Uint16(data[2:]),
-		}
-		return &s, &d, hd.NextHeader, nil
-	default:
-		return nil, nil, 0, errors.New("what ip version?")
-	}
 }
 
 func convertICMPError(msg *icmp.Message, ip *net.IPAddr, ver int,

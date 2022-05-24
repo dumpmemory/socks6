@@ -1,4 +1,4 @@
-package socks6
+package nt
 
 import (
 	"context"
@@ -9,13 +9,6 @@ import (
 )
 
 // net.Conn is a good abstraction for net stream
-
-type Datagram interface {
-	Data() []byte
-	Reply(b []byte) error
-	LocalAddr() net.Addr
-	RemoteAddr() net.Addr
-}
 
 type udpDatagram struct {
 	data  []byte
@@ -39,11 +32,17 @@ func (u udpDatagram) RemoteAddr() net.Addr {
 	return u.raddr
 }
 
-type SeqPacket interface {
-	NextDatagram() (Datagram, error)
-	Reply(b []byte) error
-	LocalAddr() net.Addr
-	RemoteAddr() net.Addr
+func ReadUDPDatagram(pc net.PacketConn) (Datagram, error) {
+	b := make([]byte, 4096)
+	n, addr, err := pc.ReadFrom(b)
+	if err != nil {
+		return nil, err
+	}
+	return udpDatagram{
+		raddr: addr,
+		data:  b[:n],
+		conn:  pc,
+	}, nil
 }
 
 type dtlsSeqPacket struct {
@@ -77,6 +76,10 @@ func (u dtlsSeqPacket) RemoteAddr() net.Addr {
 	return u.conn.RemoteAddr()
 }
 
+func WrapDTLSConn(conn net.Conn) SeqPacket {
+	return dtlsSeqPacket{conn: conn}
+}
+
 type dtlsDatagram struct {
 	data []byte
 	conn net.Conn
@@ -96,14 +99,6 @@ func (u dtlsDatagram) LocalAddr() net.Addr {
 }
 func (u dtlsDatagram) RemoteAddr() net.Addr {
 	return u.conn.RemoteAddr()
-}
-
-type MultiplexedConn interface {
-	Accept() (net.Conn, error)
-	Dial() (net.Conn, error)
-	LocalAddr() net.Addr
-	RemoteAddr() net.Addr
-	Close() error
 }
 
 type quicMuxConn struct {
@@ -148,6 +143,10 @@ func (u quicMuxConn) LocalAddr() net.Addr {
 }
 func (u quicMuxConn) RemoteAddr() net.Addr {
 	return u.conn.RemoteAddr()
+}
+
+func WrapQUICConn(conn quic.Connection) MultiplexedConn {
+	return quicMuxConn{conn: conn}
 }
 
 type quicConn struct {
