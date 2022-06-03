@@ -73,7 +73,7 @@ func (s *ServerWorker) BindHandler(
 
 	if !subStream {
 		// find backlogged listener
-		bl, accept := s.backlogListener.Load(cc.Destination().String())
+		bl, accept := s.backlogWorker.Load(cc.Destination().String())
 		if accept {
 			lg.Info(cc.ConnId(), "trying accept backlogged connection at", bl.listener.Addr())
 			// bl.handler is blocking, needn't cancel defer
@@ -119,23 +119,21 @@ func (s *ServerWorker) BindHandler(
 	// bind "handshake" done
 
 	if backlogged {
+		// backlog will only simulated on server
+		// https://github.com/golang/go/issues/39000
 		backlog := iBacklog.(uint16)
+		// let backloglisteners handle conn
+		closeConn.Cancel()
 		if !subStream {
-
-			// let backloglistener handle conn
-			closeConn.Cancel()
-			// backlog will only simulated on server
-			// https://github.com/golang/go/issues/39000
-			bl := newBacklogListener(listener, cc, backlog)
+			bl := newBacklogBindWorker(listener, cc, backlog)
 
 			blAddr := listener.Addr().String()
-			s.backlogListener.Store(blAddr, bl)
+			s.backlogWorker.Store(blAddr, bl)
 			lg.Trace(cc.ConnId(), "start backlog listener worker")
 			go bl.worker(ctx)
 			return
 		} else {
-
-			bl := newBacklogMuxListener(ctx, listener, backlog)
+			bl := newBacklogListener(ctx, listener, backlog)
 			go func() {
 				defer bl.Close()
 				for {
@@ -146,12 +144,14 @@ func (s *ServerWorker) BindHandler(
 					go func(rconn net.Conn) {
 						defer rconn.Close()
 
+						// open mux stream
 						cconn, err3 := cc.MuxConn.Dial()
 						if err3 != nil {
 							return
 						}
 						defer cconn.Close()
 
+						// reply remote address without handshake
 						rep := message.NewOperationReply()
 						rep.Endpoint = message.ConvertAddr(rconn.RemoteAddr())
 						cc.setStreamId(rep)

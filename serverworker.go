@@ -56,7 +56,7 @@ type ServerWorker struct {
 	IgnoreFragmentedRequest bool
 	EnableICMP              bool
 
-	backlogListener common.SyncMap[string, *backlogBindWorker] // map[string]*bl
+	backlogWorker   common.SyncMap[string, *backlogBindWorker] // map[string]*bl
 	reservedUdpAddr common.SyncMap[string, uint64]             // map[string]uint64
 	udpAssociation  common.SyncMap[uint64, *udpAssociation]    // map[uint64]*ua
 }
@@ -122,7 +122,7 @@ func NewServerWorker() *ServerWorker {
 			DefaultIPv4: nt.GuessDefaultIPv4(),
 			DefaultIPv6: nt.GuessDefaultIPv6(),
 		},
-		backlogListener: common.NewSyncMap[string, *backlogBindWorker](),
+		backlogWorker:   common.NewSyncMap[string, *backlogBindWorker](),
 		reservedUdpAddr: common.NewSyncMap[string, uint64](),
 		udpAssociation:  common.NewSyncMap[uint64, *udpAssociation](),
 	}
@@ -169,9 +169,12 @@ func (s *ServerWorker) ServeStream(
 		conn.Close()
 		return
 	}
+	defer s.Authenticator.SessionConnClose(ar.SessionID)
 	s.CommandHandlers[cmd](ctx, *cc)
 }
 
+// handshakeStream process handshake stage,
+// i.e. between client request and server auth reply
 func (s *ServerWorker) handshakeStream(
 	ctx context.Context,
 	conn net.Conn,
@@ -223,6 +226,8 @@ func (s *ServerWorker) handshakeStream(
 			return nil, 0, nil
 		}
 		lg.Trace(ccid, "authenticate success")
+	} else {
+		lg.Debug("authn skipped")
 	}
 
 	cc := SocksConn{
@@ -252,7 +257,6 @@ func (s *ServerWorker) handshakeStream(
 	}
 	lg.Trace(ccid, "start command specific process", req.CommandCode)
 
-	defer s.Authenticator.SessionConnClose(authResult.SessionID)
 	// it's handler's job to close conn
 	closeConn.Cancel()
 	return &cc, req.CommandCode, authResult
@@ -448,12 +452,21 @@ func (s *ServerWorker) ServeMuxConn(
 	if auth0 == nil || !auth0.Success {
 		return
 	}
+	defer s.Authenticator.SessionConnClose(auth0.SessionID)
 	sc0.MuxConn = mux
 	go s.CommandHandlers[cmd0](ctx, *sc0)
 
 	if umux, ok := mux.(nt.SeqPacket); ok {
-		// todo go udp fwd
-		_ = umux
+		go func() {
+			for {
+				d, err := umux.NextDatagram()
+				if err != nil {
+					return
+				}
+				// strict check for udp
+				s.ServeDatagram(ctx, d)
+			}
+		}()
 	}
 	for {
 		c, err := mux.Accept()
@@ -487,12 +500,12 @@ func (s *ServerWorker) ClearUnusedResource(ctx context.Context) {
 	for !stop {
 		<-tick.C
 
-		s.backlogListener.Range(func(key string, value *backlogBindWorker) bool {
+		s.backlogWorker.Range(func(key string, value *backlogBindWorker) bool {
 			bl := value
 			if bl.alive {
 				return true
 			}
-			s.backlogListener.Delete(key)
+			s.backlogWorker.Delete(key)
 			return true
 		})
 		s.udpAssociation.Range(func(key uint64, value *udpAssociation) bool {

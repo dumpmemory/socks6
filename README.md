@@ -132,11 +132,8 @@ Since there are no such Internet Draft not to mention Workgroup yet. Here's my s
 [BCP14 boilerplate](https://datatracker.ietf.org/doc/html/rfc8174#section-2), you know what it is, omitted.
 
 - All QUIC stream use same protocol with TCP, no "control stream"
-- For each QUIC connection, except command NOOP, all stream SHOULD use same command code. i.e. BIND and CONNECT in same connection's different stream is not allowed. BIND and NOOP is allowed. (to reduce impl complexity, can be remove with some restriction)
-
-
 - Client SHOULD try to authenticate over every stream until one stream finished authentication (either success or fail).
-- Server SHOULD only authenticate first incoming stream.
+- Server SHOULD only authenticate first incoming stream, when fail, close entire conn.
 - All stream in a connection are belongs to same session.
 
 (stack option may wont works as expected?)
@@ -145,7 +142,8 @@ Per command requirement:
 - CONNECT
     - (nothing)
 - BIND
-    - When backlog option enabled, server open a new stream to client, send remote's address via a operation reply (without client send anything). Only a backlog enabled stream per connection. (if cmd type limit removed, a new mux backlog option may needed, should contain a conn scope uniq token to distinguish between different original bind stream in same conn)
+    - When backlog option enabled, server open a new stream to client, send remote's address via a operation reply (without client send anything). Only a backlog enabled stream per connection.
+    - client can use streamid option to open multiple backlog bind
 ```
     c               s               r
     ---------------------------------
@@ -154,25 +152,17 @@ Per command requirement:
     <--#1 oprep sa1--
                     <---- sa1<ra1 ---
 
-option 1
-    <--#1 oprep ra1--
-    ---#2 bind ra1-->
-    <--#2 relay -------------- ra1-->
-
-option 2
+without streamid
     <--#2 oprep ra1--
     <--#2 relay -------------- ra1-->
 
-option 2a
+with streamid
     <-#2 oprep ra1(#1)
     <--#2 relay -------------- ra1-->
 ``` 
 
-option 1 is directly copy from tcp workflow, simpler to impl.
-option 2 reduced rtt since server can push "conn" to client.
-I choose option 2
-
 - UDP
+    - use assoc id to distinguish between streams
     - Client SHOULD send QUIC datagram
     - Client and server MAY use UDP over TCP on QUIC stream (to support QUIC impl without RFC9221 and muxconn with no dgram capabili)
     - Server MAY skip association check (if cmd type limit removed, MUST NOT)
@@ -181,8 +171,12 @@ New option:
     StreamID, contains a uint32, unique for each conn. Used by client to enable mux bind.
 - non-mux conn MUST ignore it.
 - In same conn, client MUST either always send it or not send it.
-- When not send by client, 1 backlog bind per conn.
-- Server MUST reply same stream id to ack mux bind
+- When not send by client, client MUST NOT open more than 1 backlog bind per conn.
+- Server MUST reply same stream id when ack mux bind
+
+IANA consideration:
+- socks6 over quic port
+- streamid option
 
 Normative ref:
 - RFC9000

@@ -17,7 +17,7 @@ type backlogListener struct {
 	e   error
 }
 
-func newBacklogMuxListener(ctx context.Context, l net.Listener, b uint16) *backlogListener {
+func newBacklogListener(ctx context.Context, l net.Listener, b uint16) *backlogListener {
 	c2, cancel := context.WithCancel(ctx)
 	return &backlogListener{
 		listener: l,

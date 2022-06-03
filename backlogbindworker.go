@@ -21,7 +21,7 @@ type backlogBindWorker struct {
 	alive bool               // indicate listener is working
 }
 
-func newBacklogListener(l net.Listener, cc SocksConn, backlog uint16) *backlogBindWorker {
+func newBacklogBindWorker(l net.Listener, cc SocksConn, backlog uint16) *backlogBindWorker {
 	return &backlogBindWorker{
 		listener: l,
 		cc:       cc,
