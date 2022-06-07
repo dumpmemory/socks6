@@ -3,6 +3,7 @@ package nt
 import (
 	"context"
 	"net"
+	"time"
 
 	"github.com/lucas-clemente/quic-go"
 	"github.com/studentmain/socks6/common/arrayx"
@@ -46,13 +47,14 @@ func ReadUDPDatagram(pc net.PacketConn) (Datagram, error) {
 	}, nil
 }
 
-type dtlsSeqPacket struct {
+type netConnSeqPacket struct {
 	conn net.Conn
+	netCommon
 }
 
-var _ SeqPacket = dtlsSeqPacket{}
+var _ SeqPacket = netConnSeqPacket{}
 
-func (u dtlsSeqPacket) NextDatagram() (Datagram, error) {
+func (u netConnSeqPacket) NextDatagram() (Datagram, error) {
 	buf := internal.BytesPool4k.Rent()
 	defer internal.BytesPool4k.Return(buf)
 	n, err := u.conn.Read(buf)
@@ -66,19 +68,13 @@ func (u dtlsSeqPacket) NextDatagram() (Datagram, error) {
 	}
 	return dgram, nil
 }
-func (u dtlsSeqPacket) Reply(b []byte) error {
+func (u netConnSeqPacket) Reply(b []byte) error {
 	_, err := u.conn.Write(b)
 	return err
 }
-func (u dtlsSeqPacket) LocalAddr() net.Addr {
-	return u.conn.LocalAddr()
-}
-func (u dtlsSeqPacket) RemoteAddr() net.Addr {
-	return u.conn.RemoteAddr()
-}
 
-func WrapDTLSConn(conn net.Conn) SeqPacket {
-	return dtlsSeqPacket{conn: conn}
+func WrapNetConnUDP(conn net.Conn) SeqPacket {
+	return netConnSeqPacket{conn: conn, netCommon: conn}
 }
 
 type dtlsDatagram struct {
@@ -144,6 +140,18 @@ func (u quicMuxConn) LocalAddr() net.Addr {
 }
 func (u quicMuxConn) RemoteAddr() net.Addr {
 	return u.conn.RemoteAddr()
+}
+
+func (u quicMuxConn) SetDeadline(t time.Time) error {
+	return nil
+}
+
+func (u quicMuxConn) SetReadDeadline(t time.Time) error {
+	return nil
+}
+
+func (u quicMuxConn) SetWriteDeadline(t time.Time) error {
+	return nil
 }
 
 func WrapQUICConn(conn quic.Connection) MultiplexedConn {

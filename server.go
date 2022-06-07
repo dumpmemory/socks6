@@ -187,7 +187,7 @@ func (s *Server) startDTLS(ctx context.Context, addr string) {
 
 				buf := internal.BytesPool4k.Rent()
 				defer internal.BytesPool4k.Return(buf)
-				ds := nt.WrapDTLSConn(conn)
+				ds := nt.WrapNetConnUDP(conn)
 				s.Worker.ServeSeqPacket(ctx, ds)
 			}()
 		}
