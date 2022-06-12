@@ -32,11 +32,14 @@ type ProxyUDPConn struct {
 	acked   bool
 	ackwg   sync.WaitGroup
 	lastErr error // todo actually use lastErr ?
+
+	c Client
 }
 
 // init setup association
 func (u *ProxyUDPConn) init() error {
 	// read assoc init
+	// assoc init is always from orig conn
 	a, err := message.ParseUDPMessageFrom(u.origConn)
 	if err != nil {
 		return err
@@ -45,6 +48,16 @@ func (u *ProxyUDPConn) init() error {
 		return ErrUnexpectedMessage
 	}
 	u.assocId = a.AssociationID
+
+	// set client quic mux filter if necessary
+	if !u.overTcp && u.c.QUIC {
+		msp := &muxSeqPacket{
+			SeqPacket: u.dataConn,
+			ch:        make(chan nt.Datagram, 64),
+		}
+		u.dataConn = msp
+		u.c.qudpconn.Store(u.assocId, msp)
+	}
 
 	// needn't wait for ACK before read data
 	// only server can send data (not true when using raw UDP, but why you use it?)
@@ -170,6 +183,8 @@ func (u *ProxyUDPConn) ReadFrom(p []byte) (int, net.Addr, error) {
 		u.parseLock.Lock()
 		defer u.parseLock.Unlock()
 
+		// here, orig conn is data conn without seqpacket wrapper
+		// only read need to operate with stream
 		h2, err := message.ParseUDPMessageFrom(u.origConn)
 		h = *h2
 		if err != nil {
@@ -179,7 +194,7 @@ func (u *ProxyUDPConn) ReadFrom(p []byte) (int, net.Addr, error) {
 	} else {
 		// good old "UDP packet size" problem
 		// also cause some radar "reflection" (UDP is known for it's low RCS, so not a big problem)
-		// UDP allow 64k, path MTU usually not, but IP fragmentation
+		// UDP allow 64k, path MTU usually not, but IP fragmentation exist, but IP fragmentation bad
 		buf := internal.BytesPool4k.Rent()
 		defer internal.BytesPool4k.Return(buf)
 

@@ -1,9 +1,12 @@
 package socks6
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
+	"encoding/binary"
 	"errors"
+	"io"
 	"net"
 	"syscall"
 
@@ -42,6 +45,69 @@ type Client struct {
 	session  []byte
 	token    uint32
 	maxToken uint32
+
+	qc       nt.DualModeMultiplexedConn
+	qudpconn common.SyncMap[uint64, *muxSeqPacket]
+	qbind    common.SyncMap[uint32, ProxyTCPListener]
+	qsid     uint32
+}
+
+type muxSeqPacket struct {
+	nt.SeqPacket
+	ch  chan nt.Datagram
+	err error
+}
+
+func (m *muxSeqPacket) NextDatagram() (nt.Datagram, error) {
+	d, ok := <-m.ch
+	if !ok {
+		return nil, m.err
+	}
+	return d, nil
+}
+
+func (c *Client) muxAccept() {
+	for {
+		conn, err := c.qc.Accept()
+		if err != nil {
+			return
+		}
+		buf := &bytes.Buffer{}
+		r := io.TeeReader(conn, buf)
+
+		rep, err := message.ParseOperationReplyFrom(r)
+		if err != nil {
+			continue
+		}
+		sidop, ok := rep.Options.GetData(message.OptionKindStreamID)
+		if !ok {
+			continue
+		}
+		sid := sidop.(message.StreamIDOptionData).ID
+		ptl, ok := c.qbind.Load(sid)
+		if !ok {
+			continue
+		}
+		ptl.qch <- nt.NewBufferPrefixedConn(conn, buf.Bytes())
+	}
+}
+
+func (c *Client) muxUdp() {
+	for {
+		d, err := c.qc.NextDatagram()
+		if err != nil {
+			return
+		}
+		if len(d.Data()) < 12 {
+			continue
+		}
+		id := binary.BigEndian.Uint64(d.Data()[4:])
+		msp, ok := c.qudpconn.Load(id)
+		if !ok {
+			continue
+		}
+		msp.ch <- d
+	}
 }
 
 // impl
@@ -116,8 +182,15 @@ func (c *Client) BindRequest(ctx context.Context, addr net.Addr, option *message
 				},
 			},
 		})
-		// todo quic downstream, streamid
-
+		// quic downstream, streamid
+		if c.QUIC {
+			option.Add(message.Option{
+				Kind: message.OptionKindStreamID,
+				Data: message.StreamIDOptionData{
+					ID: c.qsid,
+				},
+			})
+		}
 	}
 
 	sconn, opr, err := c.handshake(ctx, message.CommandBind, addr, []byte{}, option)
@@ -129,15 +202,20 @@ func (c *Client) BindRequest(ctx context.Context, addr net.Addr, option *message
 	if ibl, ok := rso[message.StackOptionTCPBacklog]; ok {
 		backlog = ibl.(uint16)
 	}
-
-	return &ProxyTCPListener{
+	ret := &ProxyTCPListener{
 		netConn: sconn,
 		backlog: backlog,
 		bind:    opr.Endpoint,
 		client:  c,
 		used:    false,
 		op:      option,
-	}, nil
+	}
+	if c.QUIC && ret.backlog > 0 {
+		ret.qch = make(chan net.Conn, ret.backlog)
+		c.qbind.Store(c.qsid, *ret)
+		c.qsid++
+	}
+	return ret, nil
 }
 
 func (c *Client) UDPAssociateRequest(ctx context.Context, addr net.Addr, option *message.OptionSet) (*ProxyUDPConn, error) {

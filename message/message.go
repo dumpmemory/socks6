@@ -425,6 +425,13 @@ func (u *UDPMessage) Marshal5() []byte {
 	return ret
 }
 
+func GetAssociationID(b []byte) uint64 {
+	if len(b) < 12 {
+		lg.Panic("too few data")
+	}
+	return binary.BigEndian.Uint64(b[4:])
+}
+
 func ParseUDPMessageFrom(b io.Reader) (*UDPMessage, error) {
 	lg.Debug("read udpmsg")
 	u := &UDPMessage{}
