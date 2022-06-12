@@ -11,6 +11,7 @@ import (
 	"github.com/studentmain/socks6/auth"
 	"github.com/studentmain/socks6/common"
 	"github.com/studentmain/socks6/common/lg"
+	"github.com/studentmain/socks6/common/nt"
 	"github.com/studentmain/socks6/message"
 )
 
@@ -20,6 +21,8 @@ type Client struct {
 	Server string
 	// use TLS and DTLS when connect to server
 	Encrypted bool
+	// use QUIC
+	QUIC bool
 	// send datagram over TCP
 	UDPOverTCP bool
 	// function to create underlying connection, net.Dial will used when it is nil
@@ -113,6 +116,8 @@ func (c *Client) BindRequest(ctx context.Context, addr net.Addr, option *message
 				},
 			},
 		})
+		// todo quic downstream, streamid
+
 	}
 
 	sconn, opr, err := c.handshake(ctx, message.CommandBind, addr, []byte{}, option)
@@ -167,7 +172,7 @@ func (c *Client) UDPAssociateRequest(ctx context.Context, addr net.Addr, option 
 		rbind:    opr.Endpoint,
 	}
 	if pconn.overTcp {
-		pconn.dataConn = pconn.origConn
+		pconn.dataConn = nt.WrapNetConnUDP(pconn.origConn)
 	} else {
 		dconn, err2 := c.connectDatagram()
 		if err2 != nil {
@@ -224,7 +229,7 @@ func (c *Client) connectStream() (net.Conn, error) {
 	return conn, nil
 }
 
-func (c *Client) connectDatagram() (net.Conn, error) {
+func (c *Client) connectDatagram() (nt.SeqPacket, error) {
 	dial := net.Dial
 	if c.DialFunc != nil {
 		dial = c.DialFunc
@@ -236,7 +241,7 @@ func (c *Client) connectDatagram() (net.Conn, error) {
 	if err != nil {
 		return nil, err
 	}
-	return conn, nil
+	return nt.WrapNetConnUDP(conn), nil
 }
 
 func (c *Client) createAuthnOption(ctx context.Context, sconn net.Conn, id byte, dataLen int) ([]message.Option, *auth.ClientAuthenticationChannels) {

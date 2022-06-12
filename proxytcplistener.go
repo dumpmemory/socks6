@@ -21,6 +21,8 @@ type ProxyTCPListener struct {
 	lock sync.Mutex
 	// already accepted
 	used bool
+
+	qch chan net.Conn
 }
 
 var _ net.Listener = &ProxyTCPListener{}
@@ -32,6 +34,15 @@ func (t *ProxyTCPListener) Accept() (net.Conn, error) {
 func (t *ProxyTCPListener) AcceptContext(ctx context.Context) (net.Conn, error) {
 	if t.used {
 		return nil, &net.OpError{}
+	}
+
+	// quic enabled
+	if t.qch != nil {
+		conn, ok := <-t.qch
+		if !ok {
+			return nil, &net.OpError{}
+		}
+		return conn, nil
 	}
 
 	t.lock.Lock()

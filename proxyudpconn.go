@@ -11,14 +11,15 @@ import (
 
 	"github.com/studentmain/socks6/common"
 	"github.com/studentmain/socks6/common/lg"
+	"github.com/studentmain/socks6/common/nt"
 	"github.com/studentmain/socks6/internal"
 	"github.com/studentmain/socks6/message"
 )
 
 // ProxyUDPConn represents a SOCKS 6 UDP client "connection", implements net.PacketConn, net.Conn
 type ProxyUDPConn struct {
-	origConn   net.Conn // original tcp conn
-	dataConn   net.Conn // data conn
+	origConn   net.Conn     // original tcp conn
+	dataConn   nt.SeqPacket // data conn
 	overTcp    bool
 	expectAddr net.Addr // expected remote addr
 	icmp       bool     // accept icmp error report
@@ -77,7 +78,7 @@ func (u *ProxyUDPConn) rexmitFirstPacket() {
 			Endpoint:      message.AddrIPv4Zero,
 			Data:          []byte{},
 		}
-		_, err := u.dataConn.Write(msg.Marshal())
+		err := u.dataConn.Reply(msg.Marshal())
 		if err != nil {
 			u.lastErr = err
 			u.Close()
@@ -169,7 +170,7 @@ func (u *ProxyUDPConn) ReadFrom(p []byte) (int, net.Addr, error) {
 		u.parseLock.Lock()
 		defer u.parseLock.Unlock()
 
-		h2, err := message.ParseUDPMessageFrom(u.dataConn)
+		h2, err := message.ParseUDPMessageFrom(u.origConn)
 		h = *h2
 		if err != nil {
 			netErr.Err = err
@@ -182,12 +183,12 @@ func (u *ProxyUDPConn) ReadFrom(p []byte) (int, net.Addr, error) {
 		buf := internal.BytesPool4k.Rent()
 		defer internal.BytesPool4k.Return(buf)
 
-		l, err := u.dataConn.Read(buf)
+		d, err := u.dataConn.NextDatagram()
 		if err != nil {
 			netErr.Err = err
 			return 0, nil, &netErr
 		}
-		h2, err := message.ParseUDPMessageFrom(bytes.NewReader(buf[:l]))
+		h2, err := message.ParseUDPMessageFrom(bytes.NewReader(d.Data()))
 		h = *h2
 		if err != nil {
 			netErr.Err = err
@@ -261,13 +262,13 @@ func (u *ProxyUDPConn) WriteTo(p []byte, addr net.Addr) (int, error) {
 		Data:          p,
 	}
 
-	n, err := u.dataConn.Write(h.Marshal())
+	err := u.dataConn.Reply(h.Marshal())
 	if err != nil {
 		netErr.Err = err
 		u.Close()
 		return 0, &netErr
 	}
-	return n, nil
+	return len(p), nil
 }
 
 func (u *ProxyUDPConn) Close() error {
