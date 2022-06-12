@@ -4,7 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/binary"
 
-	"github.com/studentmain/socks6/common/errorh"
+	"github.com/samber/lo"
 )
 
 func RandUint16() uint16 {
@@ -22,6 +22,6 @@ func RandUint64() uint64 {
 
 func RandBytes(l int) []byte {
 	r := make([]byte, l)
-	errorh.Must2(rand.Read(r))
+	lo.Must1(rand.Read(r))
 	return r
 }

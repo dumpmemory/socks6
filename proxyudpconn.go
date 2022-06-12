@@ -63,7 +63,7 @@ func (u *ProxyUDPConn) rexmitFirstPacket() {
 	// first try udp, if no ack, fallback to tcp
 
 	// may cause special radar reflection
-	for i := 0; i < 10; i++ {
+	for i := 0; i < 7+rand.Intn(5); i++ {
 		// randomized timeout to somehow mitigate it
 		ms := time.Duration(rand.Intn(5000)+5000) * time.Millisecond
 		<-time.After(ms)

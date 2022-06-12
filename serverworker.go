@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net"
+	"strings"
 	"time"
 
 	"github.com/studentmain/socks6/auth"
@@ -137,6 +139,30 @@ func NewServerWorker() *ServerWorker {
 	return r
 }
 
+var notHttpProxyMsg = "This is a SOCKS 6 proxy, not a HTTP proxy"
+
+var httpDoc = strings.Join([]string{
+	"<!DOCTYPE html>",
+	"<html><head>",
+	"<title>500 Internal Server Error</title>",
+	"</head><body>",
+	"<h1>500 Internal Server Error</h1>",
+	"<p>" + notHttpProxyMsg + "</p>",
+	"</body></html>",
+}, "\r\n")
+
+var httpReply = strings.Join([]string{
+	"HTTP/1.0 500 Internal Server Error",
+	// technically we should identify deployment (e.g. Contoso firewall proxy, proxy.example.com ...)
+	// but how can we know that? hostname?
+	"Proxy-Status: SOCKS6Server; error=proxy_configuration_error; details=\"" + notHttpProxyMsg + "\"",
+	"Content-Type: text/html",
+	"Content-Length: " + fmt.Sprintf("%d", len(httpDoc)),
+	"Connection: close",
+	"",
+	httpDoc,
+}, "\r\n")
+
 // ReplyVersionSpecificError guess which protocol client is using, reply corresponding "version error", then close conn
 func ReplyVersionSpecificError(ctx context.Context, ver message.ErrVersionMismatch, conn net.Conn) {
 	defer conn.Close()
@@ -152,7 +178,7 @@ func ReplyVersionSpecificError(ctx context.Context, ver message.ErrVersionMismat
 		// in case this function is used with a socks5 server
 		conn.Write([]byte{6})
 	case 'c', 'C', 'd', 'D', 'g', 'G', 'h', 'H', 'o', 'O', 'p', 'P', 't', 'T':
-		conn.Write([]byte("HTTP/1.0 400 Bad Request\r\n\r\nThis is a SOCKS 6 proxy, not HTTP proxy\r\n"))
+		conn.Write([]byte(httpReply))
 	default:
 		conn.Write([]byte{6})
 	}

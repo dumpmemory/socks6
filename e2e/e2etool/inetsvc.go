@@ -5,8 +5,8 @@ import (
 	"io"
 	"net"
 
+	"github.com/samber/lo"
 	"github.com/studentmain/socks6/common/arrayx"
-	"github.com/studentmain/socks6/common/errorh"
 	"github.com/studentmain/socks6/common/lg"
 	"github.com/studentmain/socks6/internal"
 )
@@ -63,7 +63,7 @@ func UChargen(p net.PacketConn, d []byte, a net.Addr) {
 }
 
 func ServeTCP(ctx context.Context, addr string, f func(io.ReadWriteCloser)) {
-	s := errorh.Must2(net.Listen("tcp", addr))
+	s := lo.Must1(net.Listen("tcp", addr))
 	defer s.Close()
 	go func() {
 		<-ctx.Done()
@@ -80,7 +80,7 @@ func ServeTCP(ctx context.Context, addr string, f func(io.ReadWriteCloser)) {
 }
 
 func ServeUDP(ctx context.Context, addr string, f func(p net.PacketConn, d []byte, a net.Addr)) {
-	s := errorh.Must2(net.ListenPacket("udp", addr))
+	s := lo.Must1(net.ListenPacket("udp", addr))
 	defer s.Close()
 	go func() {
 		<-ctx.Done()

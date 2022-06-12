@@ -7,10 +7,10 @@ import (
 	"net"
 	"testing"
 
+	"github.com/samber/lo"
 	"github.com/stretchr/testify/assert"
 	"github.com/studentmain/socks6"
 	"github.com/studentmain/socks6/common"
-	"github.com/studentmain/socks6/common/errorh"
 	"github.com/studentmain/socks6/common/rnd"
 	"github.com/studentmain/socks6/e2e/e2etool"
 )
@@ -60,8 +60,8 @@ func TestFragmentedConnect(t *testing.T) {
 	}
 	server.Start(ctx)
 
-	ta := errorh.Must2(net.ResolveTCPAddr("tcp", sAddr))
-	clientFd := errorh.Must2(net.DialTCP("tcp", nil, ta))
+	ta := lo.Must1(net.ResolveTCPAddr("tcp", sAddr))
+	clientFd := lo.Must1(net.DialTCP("tcp", nil, ta))
 	clientFd.SetNoDelay(true)
 	clientFd.SetKeepAlive(false)
 
