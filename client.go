@@ -10,6 +10,7 @@ import (
 	"net"
 	"syscall"
 
+	"github.com/lucas-clemente/quic-go"
 	"github.com/pion/dtls/v2"
 	"github.com/studentmain/socks6/auth"
 	"github.com/studentmain/socks6/common"
@@ -29,7 +30,7 @@ type Client struct {
 	// send datagram over TCP
 	UDPOverTCP bool
 	// function to create underlying connection, net.Dial will used when it is nil
-	DialFunc func(network string, addr string) (net.Conn, error)
+	DialFunc func(ctx context.Context, network string, addr string) (net.Conn, error)
 	// authentication method to be used, can be nil
 	AuthenticationMethod auth.ClientAuthenticationMethod
 
@@ -48,7 +49,7 @@ type Client struct {
 
 	qc       nt.DualModeMultiplexedConn
 	qudpconn common.SyncMap[uint64, *muxSeqPacket]
-	qbind    common.SyncMap[uint32, ProxyTCPListener]
+	qbind    common.SyncMap[uint32, *ProxyTCPListener]
 	qsid     uint32
 }
 
@@ -70,6 +71,8 @@ func (c *Client) muxAccept() {
 	for {
 		conn, err := c.qc.Accept()
 		if err != nil {
+			c.qc.Close()
+			c.qc = nil
 			return
 		}
 		buf := &bytes.Buffer{}
@@ -96,6 +99,8 @@ func (c *Client) muxUdp() {
 	for {
 		d, err := c.qc.NextDatagram()
 		if err != nil {
+			c.qc.Close()
+			c.qc = nil
 			return
 		}
 		if len(d.Data()) < 12 {
@@ -212,7 +217,7 @@ func (c *Client) BindRequest(ctx context.Context, addr net.Addr, option *message
 	}
 	if c.QUIC && ret.backlog > 0 {
 		ret.qch = make(chan net.Conn, ret.backlog)
-		c.qbind.Store(c.qsid, *ret)
+		c.qbind.Store(c.qsid, ret)
 		c.qsid++
 	}
 	return ret, nil
@@ -252,7 +257,7 @@ func (c *Client) UDPAssociateRequest(ctx context.Context, addr net.Addr, option 
 	if pconn.overTcp {
 		pconn.dataConn = nt.WrapNetConnUDP(pconn.origConn)
 	} else {
-		dconn, err2 := c.connectDatagram()
+		dconn, err2 := c.connectDatagram(ctx)
 		if err2 != nil {
 			return nil, &net.OpError{Op: "dial", Net: "socks6", Addr: addr, Err: err2}
 		}
@@ -277,45 +282,72 @@ func (c *Client) NoopRequest(ctx context.Context) error {
 
 // common
 
-func (c *Client) dialEncrypted(network, address string) (net.Conn, error) {
-	switch network {
-	case "tcp", "tcp4", "tcp6":
-		return tls.Dial(network, address, &tls.Config{ServerName: c.Server})
-	case "udp", "udp4", "udp6":
-		baseConn, err := net.Dial("udp", c.Server)
+func (c *Client) getQuicConn(ctx context.Context, addr string) (nt.DualModeMultiplexedConn, error) {
+	if c.qc == nil {
+		q, err := quic.DialAddrEarlyContext(ctx, addr, &tls.Config{ServerName: c.Server}, nil)
 		if err != nil {
 			return nil, err
 		}
-		return dtls.Client(baseConn, &dtls.Config{ServerName: c.Server})
+		c.qc = nt.WrapQUICConn(q)
+		go c.muxAccept()
+		go c.muxUdp()
+	}
+	return c.qc, nil
+}
+
+func (c *Client) dialQuicT(ctx context.Context, network, address string) (net.Conn, error) {
+	q, err := c.getQuicConn(ctx, address)
+	if err != nil {
+		return nil, err
+	}
+	return q.Dial()
+}
+
+func (c *Client) dialEncrypted(ctx context.Context, network, address string) (net.Conn, error) {
+	switch network {
+	case "tcp", "tcp4", "tcp6":
+		d := tls.Dialer{NetDialer: &net.Dialer{}, Config: &tls.Config{ServerName: c.Server}}
+		return d.DialContext(ctx, network, address)
+	case "udp", "udp4", "udp6":
+		a, err := net.ResolveUDPAddr(network, address)
+		if err != nil {
+			return nil, err
+		}
+		return dtls.DialWithContext(ctx, network, a, &dtls.Config{ServerName: c.Server})
 	default:
 		return nil, net.UnknownNetworkError(network)
 	}
 }
 
-func (c *Client) connectStream() (net.Conn, error) {
-	dial := net.Dial
+func (c *Client) connectStream(ctx context.Context) (net.Conn, error) {
+	dial := (&net.Dialer{}).DialContext
 	if c.DialFunc != nil {
 		dial = c.DialFunc
+	} else if c.QUIC {
+		dial = c.dialQuicT
 	} else if c.Encrypted {
 		dial = c.dialEncrypted
 	}
 
-	conn, err := dial("tcp", c.Server)
+	conn, err := dial(ctx, "tcp", c.Server)
 	if err != nil {
 		return nil, err
 	}
 	return conn, nil
 }
 
-func (c *Client) connectDatagram() (nt.SeqPacket, error) {
-	dial := net.Dial
+func (c *Client) connectDatagram(ctx context.Context) (nt.SeqPacket, error) {
+	dial := (&net.Dialer{}).DialContext
 	if c.DialFunc != nil {
 		dial = c.DialFunc
+	} else if c.QUIC {
+		// only udp assoc can setup demux param (assoc id)
+		return c.getQuicConn(ctx, c.Server)
 	} else if c.Encrypted {
 		dial = c.dialEncrypted
 	}
 
-	conn, err := dial("udp", c.Server)
+	conn, err := dial(ctx, "udp", c.Server)
 	if err != nil {
 		return nil, err
 	}
@@ -477,7 +509,7 @@ func (c *Client) handshake(
 		Net:  "socks6",
 		Addr: addr,
 	}
-	sconn, err := c.connectStream()
+	sconn, err := c.connectStream(ctx)
 	if err != nil {
 		netErr.Source = sconn.LocalAddr()
 		return nil, nil, &netErr

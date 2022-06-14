@@ -2,6 +2,8 @@
 
 Maybe production ready, if someone have a production, please let me know.
 
+currently based on draft 12
+
 ## Usage
 
 Use socks6.Server to create a SOCKS 6 over TCP/IP server.
@@ -16,53 +18,13 @@ Change socks6.Client.DialFunc to dial over other protocol.
 
 SOCKS 6 wireformat parser and serializer is located in message package.
 
-
 ## Progress
 
 Stand-alone server and SOCKS 5 to SOCKS 6 converter client is planned.
 
-currently based on draft 12
-
-- done: finished
-- n/a: not applicable
-- todo: will do
-- how: investigating API design
-- wtf: want to do, but has technical problem
-
-- Message parse and serialize (done)
-- Handshake (#3, done)
-    - Initial data (#3, done)
-    - Authenticate (server done, client todo)
-    - Authenticate protocol (#3, server done, client todo)
-    - Version mismatch (#5, server done, client n/a)
-- Commands (#7)
-    - NOOP (#7, done)
-    - CONNECT (#7.1, done)
-    - BIND (#7.2, done)
-    - UDP ASSOCIATE (#7.3, done)
-        - Over TCP
-        - Over UDP/DTLS
-        - Proxy UDP server (#7.3.1, done)
-        - Proxy multicast (#7.3.2, todo)
-        - ICMP Error (#7.3.3, todo)
-- Options (#8)
-    - Stack options (#8.1, server done, client todo)
-        - TOS (#8.1.1, wtf)
-        - Happy eyeballs (#8.1.2, todo)
-        - TTL (#8.1.3, wtf)
-        - No fragmentation (#8.1.4, wtf)
-        - TFO (#8.1.5, wtf)
-        - Multipath (#8.1.6, wtf)
-        - Listen backlog (#8.1.7, done)
-        - Port parity (#8.1.9, how)
-    - Session (#8.4, todo)
-    - Idempotence (#8.5, todo)
-- Authentication methods
-    - Username password (#9, server done, client todo)
-
 Many stack options require `setsockopt()`, which will (indirectly) cause the connetion can't closed by `net.Conn.Close()`.
 Some even needs break TCP model.
-A fd based new network stack is needed in order to support them.
+A new network stack is needed in order to support them, likely coupled with OS TCP/IP stack.
 
 ## Reference
 
@@ -123,9 +85,9 @@ Optional. Should belongs to another Internet Draft or a new Workgroup,<!--consid
 
 And here comes <q>a Virtual Private Network (VPN)</q>.
 
-Technically SOCKS works on Session Layer (L5), most VPN works on Network Layer (L3), but thanks for our great vendors and service providers, modern Internet even only need two transport layer protocols (By the way, that's why I choose shiny new QUIC transport instead of old school SCTP transport), unbreakable obstacle between the layers has been broken, we are going toward a layerless Internet which all nodes are equal, <!--but some nodes are more equal. The Internet revolution has been betrayed, my friend!-->
+Technically SOCKS works on Session Layer (L5), most VPN works on Network Layer (L3), but thanks for our great vendors and service providers, modern Internet even only need two transport layer protocols (By the way, that's why I choose shiny new QUIC transport instead of old school SCTP transport,<!--by the way, it's supposed to over IP instead of UDP, thanks Jon, at least UDP is just L4IP-->), unbreakable obstacle between the layers has been broken, we are going toward a layerless Internet which all nodes are equal, <!--but some nodes are more equal. The Internet revolution has been betrayed, my friend!-->
 
-Since there are no such Internet Draft not to mention Workgroup yet. Here's my simple draft.
+Not tested yet. Since there are no such Internet Draft not to mention Workgroup yet. Here's my simple draft.
 
 #### Draft
 
@@ -164,8 +126,8 @@ with streamid
 - UDP
     - use assoc id to distinguish between streams
     - Client SHOULD send QUIC datagram
-    - Client and server MAY use UDP over TCP on QUIC stream (to support QUIC impl without RFC9221 and muxconn with no dgram capabili)
-    - Server MAY skip association check (if cmd type limit removed, MUST NOT)
+    - Client and server MAY use UDP over TCP on QUIC stream (to support QUIC impl without RFC9221 and muxconn with no dgram capability, i.e. SCTP)
+    - Both side MUST NOT skip association check
 
 New option:
     StreamID, contains a uint32, unique for each conn. Used by client to enable mux bind.
@@ -179,7 +141,11 @@ IANA consideration:
 - streamid option
 
 Normative ref:
-- RFC9000
-- RFC9221
-- BCP14
+- RFC9000 (quic)
+- RFC9221 (quic dgram)
+- BCP14 (keyword)
 - I-D.socks6
+
+Informative ref:
+- RFC9260 (sctp)
+- RFC6951 (sctp over udp)

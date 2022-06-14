@@ -154,7 +154,7 @@ func (u quicMuxConn) SetWriteDeadline(t time.Time) error {
 	return nil
 }
 
-func WrapQUICConn(conn quic.Connection) MultiplexedConn {
+func WrapQUICConn(conn quic.Connection) DualModeMultiplexedConn {
 	return quicMuxConn{conn: conn}
 }
 
