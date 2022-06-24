@@ -513,18 +513,16 @@ func (s *ServerWorker) ServeMuxConn(
 // ClearUnusedResource clear no longer used resources (UDP associations, etc.)
 // only need to call it once for each ServerWorker
 func (s *ServerWorker) ClearUnusedResource(ctx context.Context) {
-	stop := false
-
 	ctx2, cancel := context.WithCancel(ctx)
 	defer cancel()
-	go func() {
-		<-ctx2.Done()
-		stop = true
-	}()
 	tick := time.NewTicker(1 * time.Minute)
 
-	for !stop {
-		<-tick.C
+	for {
+		select {
+		case <-tick.C:
+		case <-ctx2.Done():
+			return
+		}
 
 		s.backlogWorker.Range(func(key string, value *backlogBindWorker) bool {
 			bl := value

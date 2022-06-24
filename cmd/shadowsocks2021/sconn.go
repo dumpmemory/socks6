@@ -14,8 +14,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/studentmain/socks6/common"
-	"github.com/studentmain/socks6/internal"
+	"github.com/samber/lo"
+	"github.com/studentmain/socks6/common/nt"
+	"github.com/studentmain/socks6/common/rnd"
 	"github.com/studentmain/socks6/message"
 
 	lru "github.com/hashicorp/golang-lru"
@@ -79,8 +80,8 @@ type SSConn struct {
 func (s *SSConn) Close() error {
 	if s.ecm {
 		s.Conn.SetDeadline(time.Now().Add(8 * time.Hour))
-		for i := uint16(0); i < internal.RandUint16()+100; i++ {
-			b := make([]byte, internal.RandUint16()+1)
+		for i := uint16(0); i < rnd.RandUint16()+100; i++ {
+			b := make([]byte, rnd.RandUint16()+1)
 			_, err := s.Conn.Read(b)
 			if err != nil {
 				break
@@ -97,7 +98,7 @@ func (s *SSConn) Read(b []byte) (int, error) {
 		iv := new([32]byte)
 		ivs := iv[:]
 
-		arconn := common.NetBufferOnlyReader{Conn: s.Conn}
+		arconn := nt.NetBufferOnlyReader{Conn: s.Conn}
 		s.ecm = true
 		if l1, err := arconn.Read(ivs); err != nil {
 			if l1 == 0 {
@@ -208,7 +209,7 @@ func nhkdf(password []byte) [32]byte {
 }
 
 func nckdf(key, iv [32]byte) [32]byte {
-	a := internal.Must2(aes.NewCipher(key[:]))
+	a := lo.Must(aes.NewCipher(key[:]))
 	ret := new([32]byte)
 	a.Encrypt(iv[:16], ret[:16])
 	a.Encrypt(iv[16:], ret[16:])

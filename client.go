@@ -27,7 +27,7 @@ type Client struct {
 	Encrypted bool
 	// use QUIC
 	QUIC bool
-	// send datagram over TCP
+	// send datagram over TCP, when use QUIC, send datagram over QUIC stream instead of QUIC datagram
 	UDPOverTCP bool
 	// function to create underlying connection, net.Dial will used when it is nil
 	DialFunc func(ctx context.Context, network string, addr string) (net.Conn, error)

@@ -6,18 +6,18 @@ import (
 	"time"
 
 	lru "github.com/hashicorp/golang-lru"
+	"github.com/samber/lo"
 	"github.com/studentmain/socks6"
 	"github.com/studentmain/socks6/auth"
 	"github.com/studentmain/socks6/cmd/shadowsocks2021"
-	"github.com/studentmain/socks6/internal"
 	"github.com/studentmain/socks6/message"
 )
 
-type arsa struct {
+type ssServerAuth struct {
 	auth.DefaultServerAuthenticator
 }
 
-func (a *arsa) Authenticate(
+func (a *ssServerAuth) Authenticate(
 	ctx context.Context,
 	conn net.Conn,
 	req message.Request,
@@ -69,14 +69,14 @@ func main() {
 	sw := socks6.NewServerWorker()
 	sw.IgnoreFragmentedRequest = true
 	sw.AddressDependentFiltering = true
-	sw.Authenticator = &arsa{
+	sw.Authenticator = &ssServerAuth{
 		DefaultServerAuthenticator: *auth.NewServerAuthenticator(),
 	}
 	l, err := net.Listen("tcp", "127.0.0.1:8388")
 	if err != nil {
 		panic(err)
 	}
-	lru := internal.Must2(lru.New(4096))
+	lru := lo.Must(lru.New(4096))
 	for {
 		c, err := l.Accept()
 		if err != nil {

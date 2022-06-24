@@ -56,18 +56,21 @@ func connNet(c net.Conn) string {
 
 func relay(ctx context.Context, c, r net.Conn, timeout time.Duration) error {
 	var wg sync.WaitGroup
-	wg.Add(2)
+	wg.Add(3)
 	var err error = nil
-
+	errCh := make(chan error, 4)
 	ctx2, cancel := context.WithCancel(ctx)
 	defer c.Close()
 	defer r.Close()
 	defer cancel()
 
 	go func() {
-		<-ctx2.Done()
-		if err == nil {
+		defer wg.Done()
+		select {
+		case <-ctx2.Done():
 			err = ctx2.Err()
+		case err = <-errCh:
+			cancel()
 		}
 	}()
 
@@ -75,15 +78,15 @@ func relay(ctx context.Context, c, r net.Conn, timeout time.Duration) error {
 		defer wg.Done()
 		e := relayOneDirection(c, r, timeout)
 		// if already recorded an err, then another direction is already closed
-		if e != nil && err == nil {
-			err = e
+		if e != nil {
+			errCh <- e
 		}
 	}()
 	go func() {
 		defer wg.Done()
 		e := relayOneDirection(r, c, timeout)
-		if e != nil && err == nil {
-			err = e
+		if e != nil {
+			errCh <- e
 		}
 	}()
 	wg.Wait()

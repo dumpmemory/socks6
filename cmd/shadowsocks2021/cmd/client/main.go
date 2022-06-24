@@ -10,16 +10,16 @@ import (
 
 	"github.com/studentmain/socks6"
 	"github.com/studentmain/socks6/cmd/shadowsocks2021"
-	"github.com/studentmain/socks6/internal"
+	"github.com/studentmain/socks6/common/rnd"
 	"github.com/studentmain/socks6/message"
 	"github.com/txthinking/socks5"
 )
 
-type hhh struct {
+type socks5Server struct {
 	c socks6.Client
 }
 
-func (h hhh) TCPHandle(s *socks5.Server, c *net.TCPConn, r *socks5.Request) error {
+func (h socks5Server) TCPHandle(s *socks5.Server, c *net.TCPConn, r *socks5.Request) error {
 	reqAddr := message.ParseAddr(r.Address())
 
 	opset := message.NewOptionSet()
@@ -33,7 +33,7 @@ func (h hhh) TCPHandle(s *socks5.Server, c *net.TCPConn, r *socks5.Request) erro
 		Kind: shadowsocks2021.OptionKindSSPadding,
 		Data: &shadowsocks2021.SSPaddingOptionData{
 			RawOptionData: message.RawOptionData{
-				Data: make([]byte, internal.RandUint16()%256),
+				Data: make([]byte, rnd.RandUint16()%256),
 			},
 		},
 	})
@@ -85,7 +85,7 @@ func (u udpxchg) senddgram(d socks5.Datagram) error {
 	return err
 }
 
-func (h hhh) UDPHandle(s *socks5.Server, addr *net.UDPAddr, d *socks5.Datagram) error {
+func (h socks5Server) UDPHandle(s *socks5.Server, addr *net.UDPAddr, d *socks5.Datagram) error {
 	src := addr.String()
 	var ch chan byte
 
@@ -159,7 +159,7 @@ func (h hhh) UDPHandle(s *socks5.Server, addr *net.UDPAddr, d *socks5.Datagram) 
 	return nil
 }
 
-func ssdial(network string, addr string) (net.Conn, error) {
+func ssdial(ctx context.Context, network string, addr string) (net.Conn, error) {
 	c, err := net.Dial(network, addr)
 	if err != nil {
 		return nil, err
@@ -170,12 +170,13 @@ func ssdial(network string, addr string) (net.Conn, error) {
 
 func main() {
 	c := socks6.Client{
-		Server:   "127.0.0.1:8388",
-		DialFunc: ssdial,
+		Server:     "127.0.0.1:8388",
+		DialFunc:   ssdial,
+		UDPOverTCP: true,
 	}
 	s, err := socks5.NewClassicServer("127.0.0.1:10898", "127.0.0.1", "", "", 5, 5)
 	if err != nil {
 		panic(err)
 	}
-	s.ListenAndServe(hhh{c: c})
+	s.ListenAndServe(socks5Server{c: c})
 }
